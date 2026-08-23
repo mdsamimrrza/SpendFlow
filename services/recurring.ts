@@ -1,0 +1,93 @@
+import { addDays, addMonths, addWeeks, format, isBefore, parseISO } from 'date-fns';
+import Constants from 'expo-constants';
+import { Platform } from 'react-native';
+import { PaymentMethod, RecurringFrequency, RecurringRule } from '@/types';
+import { supabase } from '@/utils/supabase';
+
+const selection = '*, categories(name, icon, color)';
+
+export async function listRecurringRules(userId: string) {
+  const { data, error } = await supabase.from('recurring_rules').select(selection).eq('user_id', userId).order('next_due_date');
+  if (error) throw error;
+  return (data ?? []) as RecurringRule[];
+}
+
+export async function createRecurringRule(userId: string, input: {
+  amount: number;
+  category_id: string;
+  currency: string;
+  description?: string | null;
+  payment_method: PaymentMethod;
+  frequency: RecurringFrequency;
+  next_due_date: string;
+}) {
+  const { data, error } = await supabase.from('recurring_rules').insert({ user_id: userId, ...input, is_active: true }).select(selection).single();
+  if (error) throw error;
+  await scheduleRecurringReminder(data as RecurringRule);
+  return data as RecurringRule;
+}
+
+async function scheduleRecurringReminder(rule: RecurringRule) {
+  if (Platform.OS === 'web' || Constants.appOwnership === 'expo') return;
+
+  try {
+    const Notifications = await import('expo-notifications');
+    const permissions = await Notifications.getPermissionsAsync();
+    if (permissions.status !== 'granted') {
+      const requested = await Notifications.requestPermissionsAsync();
+      if (requested.status !== 'granted') return;
+    }
+    await Notifications.scheduleNotificationAsync({
+      content: { title: 'Recurring expense due', body: rule.description || 'A recurring expense is due today.' },
+      trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: parseISO(rule.next_due_date) },
+    });
+  } catch {
+    // Notifications are optional on web and unsupported devices.
+  }
+}
+
+export async function deleteRecurringRule(id: string) {
+  const { error } = await supabase.from('recurring_rules').delete().eq('id', id);
+  if (error) throw error;
+}
+
+function nextDate(date: Date, frequency: RecurringFrequency) {
+  if (frequency === 'daily') return addDays(date, 1);
+  if (frequency === 'weekly') return addWeeks(date, 1);
+  return addMonths(date, 1);
+}
+
+export async function generateDueRecurringExpenses(userId: string) {
+  const rules = await listRecurringRules(userId);
+  const today = new Date();
+  let generated = 0;
+
+  for (const rule of rules.filter((item) => item.is_active)) {
+    let dueDate = parseISO(rule.next_due_date);
+    let nextDueDate = dueDate;
+    while (!isBefore(today, nextDueDate) && generated < 100) {
+      const { error } = await supabase.from('expenses').insert({
+        user_id: userId,
+        category_id: rule.category_id,
+        amount: rule.amount,
+        currency: rule.currency,
+        description: rule.description,
+        date: format(nextDueDate, 'yyyy-MM-dd'),
+        payment_method: rule.payment_method,
+        is_recurring: true,
+        recurring_rule_id: rule.id,
+        is_synced: true,
+      });
+      if (error) throw error;
+      generated += 1;
+      nextDueDate = nextDate(nextDueDate, rule.frequency);
+    }
+
+    if (nextDueDate.getTime() !== dueDate.getTime()) {
+      const { error } = await supabase.from('recurring_rules').update({ next_due_date: format(nextDueDate, 'yyyy-MM-dd') }).eq('id', rule.id);
+      if (error) throw error;
+    }
+  }
+
+  return generated;
+}
