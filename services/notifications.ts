@@ -52,6 +52,9 @@ const THRESHOLDS = [
   { percent: 100, title: '💥 Monthly Budget Exceeded!', emoji: '💥' },
 ] as const;
 
+// In-memory registry to prevent concurrent / duplicate notifications
+const notifiedThresholdsMemory = new Set<string>();
+
 export async function checkAndNotifyBudgetThreshold(
   monthTotal: number,
   monthlyBudget: number,
@@ -62,26 +65,30 @@ export async function checkAndNotifyBudgetThreshold(
   const currentMonthKey = new Date().toISOString().slice(0, 7); // e.g. "2026-08"
   const pct = Math.floor((monthTotal / monthlyBudget) * 100);
 
-  // Find all crossed thresholds in descending order
-  const crossedThresholds = [...THRESHOLDS].reverse().filter((item) => pct >= item.percent);
-  if (!crossedThresholds.length) return;
+  // Find the SINGLE HIGHEST threshold bracket that matches the current percentage
+  // e.g. at 51%, currentBracket is 50%. At 76%, it is 75%. At 100%+, it is 100%.
+  const currentBracket = [...THRESHOLDS].reverse().find((item) => pct >= item.percent);
+  if (!currentBracket) return;
 
-  // Find the single highest crossed threshold that has not been sent yet
-  let highestUnsent: typeof THRESHOLDS[number] | null = null;
-  for (const item of crossedThresholds) {
-    const storageKey = `@spendflow_alert_sent_${currentMonthKey}_${item.percent}`;
-    const alreadySent = await AsyncStorage.getItem(storageKey).catch(() => null);
-    if (!alreadySent) {
-      highestUnsent = item;
-      break;
-    }
+  const targetStorageKey = `@spendflow_alert_sent_${currentMonthKey}_${currentBracket.percent}`;
+  const memoryKey = `${currentMonthKey}_${currentBracket.percent}`;
+
+  // Check if this specific bracket has already been sent this month
+  if (notifiedThresholdsMemory.has(memoryKey)) {
+    return;
   }
 
-  if (!highestUnsent) return;
+  const alreadySent = await AsyncStorage.getItem(targetStorageKey).catch(() => null);
+  if (alreadySent) {
+    notifiedThresholdsMemory.add(memoryKey);
+    return;
+  }
 
-  // Mark all thresholds at or below highestUnsent as acknowledged so backlog alerts never spam
+  // Mark this bracket AND ALL LOWER BRACKETS as sent/acknowledged IMMEDIATELY
+  // So the app will NEVER backfill or trigger lower milestone notifications (e.g. 25% when reaching 50%)
   for (const item of THRESHOLDS) {
-    if (item.percent <= highestUnsent.percent) {
+    if (item.percent <= currentBracket.percent) {
+      notifiedThresholdsMemory.add(`${currentMonthKey}_${item.percent}`);
       const storageKey = `@spendflow_alert_sent_${currentMonthKey}_${item.percent}`;
       await AsyncStorage.setItem(storageKey, 'true').catch(() => {});
     }
@@ -90,7 +97,7 @@ export async function checkAndNotifyBudgetThreshold(
   const hasPermission = await requestNotificationPermissions();
   if (hasPermission) {
     let bodyMsg = '';
-    if (highestUnsent.percent >= 100) {
+    if (currentBracket.percent >= 100) {
       const excess = monthTotal - monthlyBudget;
       bodyMsg = `You have spent ${formatMoney(monthTotal, currency)} against your ${formatMoney(monthlyBudget, currency)} limit (Over by ${formatMoney(excess, currency)}).`;
     } else {
@@ -100,14 +107,26 @@ export async function checkAndNotifyBudgetThreshold(
 
     await Notifications.scheduleNotificationAsync({
       content: {
-        title: highestUnsent.title,
+        title: currentBracket.title,
         body: bodyMsg,
-        data: { type: 'budget_threshold', percent: highestUnsent.percent },
+        data: { type: 'budget_threshold', percent: currentBracket.percent },
         sound: true,
       },
       trigger: null, // Send immediately
     });
   }
+}
+
+// Helper to ensure clean, human-readable category names and strip raw database IDs / UUIDs
+function cleanCategoryLabel(raw?: string | null): string {
+  if (!raw || !raw.trim()) return '';
+  const val = raw.trim();
+  const stripped = val.replace(/^default-/, '').replace(/^cat_/, '');
+  // If it's a UUID, don't show raw hash string
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}/i.test(stripped)) {
+    return '';
+  }
+  return stripped.charAt(0).toUpperCase() + stripped.slice(1);
 }
 
 // 3. Recurring Bills Notification Helper
@@ -121,10 +140,11 @@ export async function notifyRecurringBillDue(
 
   const hasPermission = await requestNotificationPermissions();
   if (hasPermission) {
+    const formattedAmount = formatMoney(amount, currency);
     await Notifications.scheduleNotificationAsync({
       content: {
         title: '🔔 Recurring Bill Reminder',
-        body: `Reminder: Your recurring payment "${description}" (${formatMoney(amount, currency)}) is due on ${dueDate}.`,
+        body: `Reminder: Your recurring payment "${description}" (${formattedAmount}) is due on ${dueDate}.`,
         data: { type: 'recurring_bill_due' },
         sound: true,
       },
@@ -134,15 +154,23 @@ export async function notifyRecurringBillDue(
 }
 
 // 4. Large Single Purchase Notification
-export async function notifyLargeExpense(amount: number, categoryName: string, currency = 'NPR'): Promise<void> {
+export async function notifyLargeExpense(
+  amount: number,
+  categoryName?: string | null,
+  currency = 'NPR',
+): Promise<void> {
   if (Platform.OS === 'web' || !amount || amount < 5000) return;
 
   const hasPermission = await requestNotificationPermissions();
   if (hasPermission) {
+    const formattedAmount = formatMoney(amount, currency);
+    const category = cleanCategoryLabel(categoryName);
+    const inCategoryText = category ? ` in ${category}` : '';
+
     await Notifications.scheduleNotificationAsync({
       content: {
         title: '💸 Large Purchase Recorded',
-        body: `Recorded purchase of ${formatMoney(amount, currency)} in ${categoryName}.`,
+        body: `Recorded purchase of ${formattedAmount}${inCategoryText}.`,
         data: { type: 'large_expense' },
         sound: true,
       },
@@ -154,7 +182,7 @@ export async function notifyLargeExpense(amount: number, categoryName: string, c
 // 5. Instant Expense Added Confirmation Notification
 export async function notifyExpenseAdded(
   amount: number,
-  categoryName: string,
+  categoryName?: string | null,
   description?: string | null,
   currency = 'NPR',
 ): Promise<void> {
@@ -162,11 +190,25 @@ export async function notifyExpenseAdded(
 
   const hasPermission = await requestNotificationPermissions();
   if (hasPermission) {
-    const descText = description?.trim() ? ` (${description.trim()})` : '';
+    const formattedAmount = formatMoney(amount, currency);
+    const category = cleanCategoryLabel(categoryName);
+    const note = description?.trim();
+
+    let body = `Recorded ${formattedAmount}`;
+    if (note && category) {
+      body = `Logged ${formattedAmount} for "${note}" in ${category}.`;
+    } else if (note) {
+      body = `Logged ${formattedAmount} for "${note}".`;
+    } else if (category) {
+      body = `Logged ${formattedAmount} in ${category}.`;
+    } else {
+      body = `Successfully recorded ${formattedAmount}.`;
+    }
+
     await Notifications.scheduleNotificationAsync({
       content: {
         title: '✅ Expense Recorded',
-        body: `Successfully logged ${formatMoney(amount, currency)} in ${categoryName}${descText}.`,
+        body,
         data: { type: 'expense_added' },
         sound: true,
       },
