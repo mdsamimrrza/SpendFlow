@@ -17,6 +17,7 @@ import { useTheme } from '@/hooks/useTheme';
 import { deleteAccount, signOut, updateProfile } from '@/services/auth';
 import { listCategories, updateCategoryBudget } from '@/services/categories';
 import { seedDemoExpenses } from '@/services/expenses';
+import { resetBudgetAlertHistory, sendTestBudgetAlert } from '@/services/notifications';
 import { Category } from '@/types';
 import { formatMoney } from '@/utils/format';
 
@@ -57,6 +58,7 @@ export default function SettingsScreen() {
     try {
       const numeric = budgetInput ? Number(budgetInput) : null;
       await updateProfile({ monthly_budget: numeric });
+      await resetBudgetAlertHistory();
       await refreshProfile();
       setBudgetSuccessMsg(numeric ? `${t('common_save')}! ${formatMoney(numeric, profile?.preferred_currency)}` : t('settings_no_limit'));
       setTimeout(() => setBudgetSuccessMsg(''), 3500);
@@ -64,6 +66,15 @@ export default function SettingsScreen() {
       Alert.alert(t('common_error'), err instanceof Error ? err.message : t('common_error'));
     } finally {
       setSavingBudget(false);
+    }
+  }
+
+  async function handleTestNotification() {
+    const success = await sendTestBudgetAlert(profile?.preferred_currency || 'NPR');
+    if (success) {
+      Alert.alert('🔔 Notification Dispatched', 'A live test budget alert was sent! Check your top status bar / notification shade.');
+    } else {
+      Alert.alert('Permission Denied', 'Please enable notification permissions for SpendFlow in your Android device settings.');
     }
   }
 
@@ -156,14 +167,35 @@ export default function SettingsScreen() {
               />
             </View>
 
-            {budgetSuccessMsg ? (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
-                <Check size={14} color={theme.colors.success} />
-                <Text variant="caption" style={{ color: theme.colors.success, fontWeight: '600' }}>
-                  {budgetSuccessMsg}
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 }}>
+              <Pressable
+                onPress={handleTestNotification}
+                hitSlop={8}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 6,
+                  paddingVertical: 4,
+                  paddingHorizontal: 8,
+                  borderRadius: theme.radius.sm,
+                  backgroundColor: theme.isDark ? 'rgba(99, 102, 241, 0.12)' : 'rgba(99, 102, 241, 0.08)',
+                }}
+              >
+                <Text style={{ fontSize: 13 }}>🔔</Text>
+                <Text variant="caption" style={{ color: theme.colors.primary, fontWeight: '700' }}>
+                  Send Test Budget Alert
                 </Text>
-              </View>
-            ) : null}
+              </Pressable>
+
+              {budgetSuccessMsg ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                  <Check size={14} color={theme.colors.success} />
+                  <Text variant="caption" style={{ color: theme.colors.success, fontWeight: '600' }}>
+                    {budgetSuccessMsg}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
           </View>
 
           {/* Category Limits Accordion Toggle */}

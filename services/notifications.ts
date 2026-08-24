@@ -68,6 +68,33 @@ const THRESHOLDS = [
 // In-memory registry to prevent concurrent / duplicate notifications
 const notifiedThresholdsMemory = new Set<string>();
 
+export async function resetBudgetAlertHistory(monthKey?: string): Promise<void> {
+  const currentMonthKey = monthKey || new Date().toISOString().slice(0, 7);
+  for (const item of THRESHOLDS) {
+    notifiedThresholdsMemory.delete(`${currentMonthKey}_${item.percent}`);
+    const storageKey = `@spendflow_alert_sent_${currentMonthKey}_${item.percent}`;
+    await AsyncStorage.removeItem(storageKey).catch(() => {});
+  }
+}
+
+export async function sendTestBudgetAlert(currency = 'NPR'): Promise<boolean> {
+  const hasPermission = await requestNotificationPermissions();
+  if (!hasPermission) return false;
+
+  await Notifications.scheduleNotificationAsync({
+    content: {
+      title: '🟡 50% Budget Halfway Mark',
+      body: `You have used 50% (${formatMoney(5000, currency)}) of your ${formatMoney(10000, currency)} budget. ${formatMoney(5000, currency)} remaining.`,
+      data: { type: 'budget_threshold', percent: 50 },
+      sound: true,
+      // @ts-expect-error channelId is supported on Android
+      channelId: 'default',
+    },
+    trigger: null, // Send immediately
+  });
+  return true;
+}
+
 export async function checkAndNotifyBudgetThreshold(
   monthTotal: number,
   monthlyBudget: number,
