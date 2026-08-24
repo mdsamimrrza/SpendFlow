@@ -235,6 +235,9 @@ export async function updateProfile(input: Partial<Pick<UserProfile, 'display_na
   };
 
   await AsyncStorage.setItem('@spendflow_cached_profile', JSON.stringify(result)).catch(() => {});
+  if (result.monthly_budget !== null && result.monthly_budget !== undefined) {
+    await AsyncStorage.setItem(`@spendflow_monthly_budget_${user.id}`, String(result.monthly_budget)).catch(() => {});
+  }
 
   return result;
 }

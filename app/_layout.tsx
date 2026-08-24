@@ -18,6 +18,8 @@ import { isSupabaseConfigured } from '@/utils/supabase';
 import { SecurityProvider } from '@/store/SecurityContext';
 import { BiometricLockOverlay } from '@/components/security/BiometricLockOverlay';
 
+import { initNotifications } from '@/services/notifications';
+
 function RootNavigator() {
   const { session, loading } = useAuth();
   const theme = useTheme();
@@ -33,6 +35,7 @@ function RootNavigator() {
 
   useEffect(() => {
     void deactivateKeepAwake().catch(() => {});
+    void initNotifications().catch(() => {});
   }, []);
 
   useEffect(() => {

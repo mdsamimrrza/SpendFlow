@@ -14,32 +14,45 @@ Notifications.setNotificationHandler({
   }),
 });
 
-// 1. Request Notification Permissions
+// 1. Request Notification Permissions & Initialize Android Channel
 export async function requestNotificationPermissions(): Promise<boolean> {
   if (Platform.OS === 'web') return false;
 
-  const { status: existingStatus } = await Notifications.getPermissionsAsync();
-  let finalStatus = existingStatus;
+  try {
+    if (Platform.OS === 'android') {
+      await Notifications.setNotificationChannelAsync('default', {
+        name: 'SpendFlow Alerts & Budgets',
+        importance: Notifications.AndroidImportance.MAX,
+        vibrationPattern: [0, 250, 250, 250],
+        lightColor: '#4F46E5',
+        enableLights: true,
+        enableVibrate: true,
+        showBadge: true,
+        sound: 'default',
+      });
+    }
 
-  if (existingStatus !== 'granted') {
-    const { status } = await Notifications.requestPermissionsAsync();
-    finalStatus = status;
-  }
+    const { status: existingStatus } = await Notifications.getPermissionsAsync();
+    let finalStatus = existingStatus;
 
-  if (finalStatus !== 'granted') {
+    if (existingStatus !== 'granted') {
+      const { status } = await Notifications.requestPermissionsAsync();
+      finalStatus = status;
+    }
+
+    return finalStatus === 'granted';
+  } catch {
     return false;
   }
+}
 
-  if (Platform.OS === 'android') {
-    await Notifications.setNotificationChannelAsync('default', {
-      name: 'SpendFlow General',
-      importance: Notifications.AndroidImportance.HIGH,
-      vibrationPattern: [0, 250, 250, 250],
-      lightColor: '#0F9F8E',
-    });
+export async function initNotifications(): Promise<void> {
+  if (Platform.OS === 'web') return;
+  try {
+    await requestNotificationPermissions();
+  } catch {
+    // Ignore init errors
   }
-
-  return true;
 }
 
 // 2. Graduated Budget Multi-Threshold System (25%, 50%, 75%, 90%, 98%, 100%+)
@@ -111,6 +124,8 @@ export async function checkAndNotifyBudgetThreshold(
         body: bodyMsg,
         data: { type: 'budget_threshold', percent: currentBracket.percent },
         sound: true,
+        // @ts-expect-error channelId is supported on Android
+        channelId: 'default',
       },
       trigger: null, // Send immediately
     });
@@ -147,6 +162,8 @@ export async function notifyRecurringBillDue(
         body: `Reminder: Your recurring payment "${description}" (${formattedAmount}) is due on ${dueDate}.`,
         data: { type: 'recurring_bill_due' },
         sound: true,
+        // @ts-expect-error channelId is supported on Android
+        channelId: 'default',
       },
       trigger: null, // Send immediately
     });
@@ -173,6 +190,8 @@ export async function notifyLargeExpense(
         body: `Recorded purchase of ${formattedAmount}${inCategoryText}.`,
         data: { type: 'large_expense' },
         sound: true,
+        // @ts-expect-error channelId is supported on Android
+        channelId: 'default',
       },
       trigger: null, // Send immediately
     });
@@ -211,6 +230,8 @@ export async function notifyExpenseAdded(
         body,
         data: { type: 'expense_added' },
         sound: true,
+        // @ts-expect-error channelId is supported on Android
+        channelId: 'default',
       },
       trigger: null, // Send immediately
     });

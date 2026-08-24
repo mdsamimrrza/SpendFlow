@@ -15,6 +15,54 @@ export function notifyExpensesChanged() {
   listeners.forEach((listener) => listener());
 }
 
+async function getEffectiveMonthlyBudget(userId?: string): Promise<number> {
+  try {
+    // 1. Check user profile cache
+    const profileJson = await AsyncStorage.getItem('@spendflow_cached_profile');
+    if (profileJson) {
+      const parsed = JSON.parse(profileJson);
+      if (parsed?.monthly_budget && Number(parsed.monthly_budget) > 0) {
+        return Number(parsed.monthly_budget);
+      }
+    }
+    // 2. Check direct budget cache
+    if (userId) {
+      const directBudget = await AsyncStorage.getItem(`@spendflow_monthly_budget_${userId}`);
+      if (directBudget && Number(directBudget) > 0) {
+        return Number(directBudget);
+      }
+    }
+  } catch {
+    // Ignore cache parse error
+  }
+  return 0;
+}
+
+async function triggerExpenseNotifications(
+  userId: string | undefined,
+  amount: number,
+  categoryId?: string | null,
+  description?: string | null,
+  currency = 'NPR',
+  currentItems: Expense[] = [],
+) {
+  try {
+    void notifyExpenseAdded(amount, categoryId, description, currency);
+    void notifyLargeExpense(amount, categoryId, currency);
+
+    const month = currentMonthRange();
+    const monthItems = currentItems.filter((item) => item.date >= month.from && item.date <= month.to);
+    const monthTotal = sumExpenses(monthItems, currency);
+    const monthlyBudget = await getEffectiveMonthlyBudget(userId);
+
+    if (monthlyBudget > 0) {
+      void checkAndNotifyBudgetThreshold(monthTotal + amount, monthlyBudget, currency);
+    }
+  } catch {
+    // Ignore background notification check errors
+  }
+}
+
 export function useExpenses(userId?: string, filters?: ExpenseFilters, sort: SortKey = 'date_desc') {
   const filterKey = JSON.stringify(filters ?? {});
   const [items, setItems] = useState<Expense[]>([]);
@@ -121,31 +169,13 @@ export function useExpenses(userId?: string, filters?: ExpenseFilters, sort: Sor
       });
 
       notifyExpensesChanged();
-      try {
-        void notifyExpenseAdded(Number(input.amount), input.category_id || 'Expense', input.description, input.currency);
-      } catch {
-        // Notification check
-      }
+      void triggerExpenseNotifications(userId, Number(input.amount), input.category_id, input.description, input.currency, items);
       return;
     }
     if (id) await updateExpense(id, input);
     else await createExpense(userId, input);
     notifyExpensesChanged();
-    // Trigger Smart Notification Checks in Background
-    try {
-      void notifyExpenseAdded(Number(input.amount), input.category_id || 'Expense', input.description, input.currency);
-      void notifyLargeExpense(Number(input.amount), input.category_id || 'Expense', input.currency);
-      const month = currentMonthRange();
-      const monthItems = items.filter((item) => item.date >= month.from && item.date <= month.to);
-      const monthTotal = sumExpenses(monthItems, input.currency);
-      const monthlyBudgetRaw = await AsyncStorage.getItem(`@spendflow_monthly_budget_${userId}`);
-      const monthlyBudget = monthlyBudgetRaw ? Number(monthlyBudgetRaw) : 0;
-      if (monthlyBudget > 0) {
-        void checkAndNotifyBudgetThreshold(monthTotal + Number(input.amount), monthlyBudget, input.currency);
-      }
-    } catch {
-      // Ignore background notification check errors
-    }
+    void triggerExpenseNotifications(userId, Number(input.amount), input.category_id, input.description, input.currency, items);
   };
 
   const remove = useCallback(async (id: string) => {
