@@ -16,6 +16,34 @@ interface AuthContextValue {
 
 export const AuthContext = createContext<AuthContextValue | null>(null);
 
+import * as Linking from 'expo-linking';
+
+async function handleOAuthUrl(url: string) {
+  if (!url) return;
+  try {
+    const hashMatch = url.match(/#(.+)/);
+    if (hashMatch) {
+      const params = new URLSearchParams(hashMatch[1]);
+      const access_token = params.get('access_token');
+      const refresh_token = params.get('refresh_token');
+      if (access_token && refresh_token) {
+        await supabase.auth.setSession({ access_token, refresh_token });
+        return;
+      }
+    }
+    const queryMatch = url.match(/\?([^#]+)/);
+    if (queryMatch) {
+      const params = new URLSearchParams(queryMatch[1]);
+      const code = params.get('code');
+      if (code) {
+        await supabase.auth.exchangeCodeForSession(code);
+      }
+    }
+  } catch {
+    // Ignore invalid link formats
+  }
+}
+
 export function AuthProvider({ children }: PropsWithChildren) {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -38,6 +66,16 @@ export function AuthProvider({ children }: PropsWithChildren) {
   useEffect(() => {
     let mounted = true;
 
+    // Check initial deep link
+    void Linking.getInitialURL().then((url) => {
+      if (url) void handleOAuthUrl(url);
+    });
+
+    // Listen for incoming OAuth deep links
+    const linkSub = Linking.addEventListener('url', ({ url }) => {
+      void handleOAuthUrl(url);
+    });
+
     async function hydrateSession() {
       try {
         const nextSession = await refreshSession();
@@ -59,9 +97,11 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
     return () => {
       mounted = false;
+      linkSub.remove();
       listener.subscription.unsubscribe();
     };
   }, [refreshSession]);
+
 
   useEffect(() => {
     if (!userId) {

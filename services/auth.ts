@@ -43,7 +43,20 @@ export async function resetPassword(email: string) {
   if (error) throw error;
 }
 
+import { Platform } from 'react-native';
+
 export async function signInWithGoogle() {
+  if (Platform.OS === 'web') {
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: typeof window !== 'undefined' ? window.location.origin : undefined,
+      },
+    });
+    if (error) throw error;
+    return data;
+  }
+
   const redirectTo = AuthSession.makeRedirectUri({ scheme: 'spendflow' });
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
@@ -60,16 +73,52 @@ export async function signInWithGoogle() {
   if (!data.url) throw new Error('Google sign-in could not start.');
 
   const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
-  if (result.type !== 'success') throw new Error('Google sign-in was cancelled.');
+  if (result.type !== 'success') {
+    throw new Error('Google sign-in was cancelled.');
+  }
 
-  const parsed = new URL(result.url);
-  const code = parsed.searchParams.get('code');
-  if (!code) throw new Error('Google sign-in did not return an auth code.');
+  const returnedUrl = result.url;
 
-  const exchanged = await supabase.auth.exchangeCodeForSession(code);
-  if (exchanged.error) throw exchanged.error;
-  return exchanged.data;
+  // 1. Check hash fragment (Implicit token flow)
+  const hashMatch = returnedUrl.match(/#(.+)/);
+  if (hashMatch) {
+    const hashParams = new URLSearchParams(hashMatch[1]);
+    const access_token = hashParams.get('access_token');
+    const refresh_token = hashParams.get('refresh_token');
+    if (access_token && refresh_token) {
+      const sessionResult = await supabase.auth.setSession({
+        access_token,
+        refresh_token,
+      });
+      if (sessionResult.error) throw sessionResult.error;
+      return sessionResult.data;
+    }
+  }
+
+  // 2. Check query params (Authorization code flow)
+  const queryMatch = returnedUrl.match(/\?([^#]+)/);
+  if (queryMatch) {
+    const queryParams = new URLSearchParams(queryMatch[1]);
+    const code = queryParams.get('code');
+    if (code) {
+      const exchanged = await supabase.auth.exchangeCodeForSession(code);
+      if (exchanged.error) throw exchanged.error;
+      return exchanged.data;
+    }
+  }
+
+  // 3. Check if session was already set
+  const { data: currentSession } = await supabase.auth.getSession();
+  if (currentSession?.session) {
+    return currentSession;
+  }
+
+  throw new URLSearchParams(returnedUrl).get('error_description')
+    ? new Error(new URLSearchParams(returnedUrl).get('error_description')!)
+    : new Error('Google sign-in did not return authentication tokens.');
 }
+
+
 
 export async function signOut() {
   const { error } = await supabase.auth.signOut();

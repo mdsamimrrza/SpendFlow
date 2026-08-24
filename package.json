@@ -45,7 +45,9 @@
     "typecheck": "tsc --noEmit",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "build:apk": "npx eas build -p android --profile preview"
   },
+
   "private": true
 }

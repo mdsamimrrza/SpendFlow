@@ -77,6 +77,30 @@ export default function AuthScreen() {
   }
 
 
+  async function handleGoogleSignIn() {
+    setLoading(true);
+    setStatus({ text: 'Connecting to Google...', type: 'info' });
+    try {
+      const res = await signInWithGoogle();
+      if (res && 'session' in res && res.session) {
+        setStatus(null);
+        router.replace('/(tabs)');
+        return;
+      }
+      const s = await refreshSession();
+      if (s) {
+        setStatus(null);
+        router.replace('/(tabs)');
+        return;
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Google sign-in was cancelled or failed.';
+      setStatus({ text: msg, type: 'error' });
+    } finally {
+      setLoading(false);
+    }
+  }
+
   function showValidationError() {
     const firstError = Object.values(form.formState.errors)[0]?.message;
     setStatus({
@@ -111,8 +135,10 @@ export default function AuthScreen() {
           <Button
             title="Continue with Google"
             variant="secondary"
-            onPress={() => signInWithGoogle().catch((error) => setStatus({ text: error.message, type: 'error' }))}
+            loading={loading}
+            onPress={handleGoogleSignIn}
           />
+
           <Pressable onPress={() => switchMode(mode === 'signin' ? 'signup' : 'signin')} style={{ minHeight: 44, justifyContent: 'center' }}>
             <Text variant="label" style={{ color: theme.colors.primary, textAlign: 'center' }}>
               {mode === 'signin' ? 'Create a new account' : 'I already have an account'}
