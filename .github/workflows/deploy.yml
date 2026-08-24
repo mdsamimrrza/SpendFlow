@@ -26,8 +26,8 @@ jobs:
       - name: 📦 Install Dependencies
         run: npm ci
 
-      - name: ⚡ Trigger Expo EAS Update (Instant Deploy)
-        run: eas update --auto --non-interactive
+      - name: ⚡ Trigger EAS Production Build (Expo.dev APK)
+        run: eas build --platform android --profile production --non-interactive --no-wait
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
