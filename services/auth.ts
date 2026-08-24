@@ -125,6 +125,8 @@ export async function signOut() {
   if (error) throw error;
 }
 
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
 export async function ensureProfile() {
   const {
     data: { user },
@@ -148,24 +150,54 @@ export async function ensureProfile() {
   if (error) throw error;
 
   await seedDefaultCategories(user.id);
-  return data as UserProfile;
+
+  const localBudgetRaw = await AsyncStorage.getItem(`@spendflow_monthly_budget_${user.id}`).catch(() => null);
+  const localBudget = localBudgetRaw ? Number(localBudgetRaw) : null;
+
+  return {
+    ...data,
+    monthly_budget: data?.monthly_budget ?? localBudget,
+  } as UserProfile;
 }
 
-export async function updateProfile(input: Partial<Pick<UserProfile, 'display_name' | 'preferred_currency' | 'theme_preference'>>) {
+export async function updateProfile(input: Partial<Pick<UserProfile, 'display_name' | 'preferred_currency' | 'theme_preference' | 'monthly_budget'>>) {
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) throw new Error('No authenticated user found.');
 
-  const { data, error } = await supabase
-    .from('users')
-    .update({ ...input, updated_at: new Date().toISOString() })
-    .eq('id', user.id)
-    .select('*')
-    .single();
-  if (error) throw error;
-  return data as UserProfile;
+  if (input.monthly_budget !== undefined) {
+    if (input.monthly_budget === null || input.monthly_budget <= 0) {
+      await AsyncStorage.removeItem(`@spendflow_monthly_budget_${user.id}`).catch(() => {});
+    } else {
+      await AsyncStorage.setItem(`@spendflow_monthly_budget_${user.id}`, String(input.monthly_budget)).catch(() => {});
+    }
+  }
+
+  let dbProfile: UserProfile | null = null;
+  try {
+    const { data, error } = await supabase
+      .from('users')
+      .update({ ...input, updated_at: new Date().toISOString() })
+      .eq('id', user.id)
+      .select('*')
+      .single();
+    if (!error && data) dbProfile = data as UserProfile;
+  } catch {
+    // Graceful fallback if database column does not exist
+  }
+
+  const localBudgetRaw = await AsyncStorage.getItem(`@spendflow_monthly_budget_${user.id}`).catch(() => null);
+  const localBudget = localBudgetRaw ? Number(localBudgetRaw) : null;
+
+  return {
+    ...(dbProfile ?? {}),
+    id: user.id,
+    email: user.email ?? '',
+    monthly_budget: input.monthly_budget !== undefined ? input.monthly_budget : (dbProfile?.monthly_budget ?? localBudget),
+  } as UserProfile;
 }
+
 
 export async function deleteAccount() {
   const {

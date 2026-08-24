@@ -62,6 +62,18 @@ export default function SettingsScreen() {
         onChange={(preferred_currency) => updateProfile({ preferred_currency }).then(refreshProfile)}
       />
       <Text variant="h2">Monthly budgets</Text>
+      <Input
+        label="🎯 Overall Target Monthly Budget"
+        placeholder="No overall limit set"
+        keyboardType="decimal-pad"
+        defaultValue={profile?.monthly_budget ? String(profile.monthly_budget) : ''}
+        onEndEditing={(event: NativeSyntheticEvent<TextInputEndEditingEventData>) => {
+          const value = event.nativeEvent.text.trim();
+          updateProfile({ monthly_budget: value ? Number(value) : null }).then(refreshProfile).catch(() => undefined);
+        }}
+      />
+      <Text variant="caption" muted style={{ marginTop: -theme.spacing.sm }}>Category budgets:</Text>
+
       {categories.map((category) => (
         <Input
           key={category.id}

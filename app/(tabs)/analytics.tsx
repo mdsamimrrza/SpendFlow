@@ -3,7 +3,9 @@ import { BarChart3 } from 'lucide-react-native';
 import { useCallback, useState } from 'react';
 import { RefreshControl, ScrollView, View } from 'react-native';
 import { CategoryBreakdown, TrendBars } from '@/components/expense/Charts';
+import { OverallBudgetCard } from '@/components/expense/OverallBudgetCard';
 import { SummaryCard } from '@/components/expense/SummaryCard';
+
 import { Select } from '@/components/ui/Select';
 import { Text } from '@/components/ui/Text';
 import { PERIODS } from '@/constants/app';
@@ -52,6 +54,7 @@ export default function AnalyticsScreen() {
         <SummaryCard title="Total" value={formatMoney(total, profile?.preferred_currency)} icon={BarChart3} />
         <SummaryCard title="Largest" value={formatMoney(largest, profile?.preferred_currency)} detail={`${expenses.items.length} transactions`} icon={BarChart3} />
       </View>
+      <OverallBudgetCard expenses={expenses.items} />
       <CategoryBreakdown expenses={expenses.items} />
       <TrendBars expenses={expenses.items} />
       <View style={{ gap: theme.spacing.md }}>

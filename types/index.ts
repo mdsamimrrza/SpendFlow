@@ -10,9 +10,11 @@ export interface UserProfile {
   avatar_url: string | null;
   preferred_currency: string;
   theme_preference: ThemePreference;
+  monthly_budget?: number | null;
   created_at: string;
   updated_at: string;
 }
+
 
 export interface Category {
   id: string;

@@ -4,6 +4,8 @@ import { FlatList, Pressable, RefreshControl, View } from 'react-native';
 import { CategoryBreakdown, TrendBars } from '@/components/expense/Charts';
 import { BudgetProgress } from '@/components/expense/BudgetProgress';
 import { ExpenseItem } from '@/components/expense/ExpenseItem';
+
+
 import { SummaryCard } from '@/components/expense/SummaryCard';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -88,11 +90,15 @@ export default function HomeScreen() {
               </View>
               <ThemeToggle />
             </View>
+
             <View style={{ flexDirection: 'row', gap: theme.spacing.md }}>
               <SummaryCard title="Today" value={formatMoney(todayTotal, profile?.preferred_currency)} icon={Wallet} />
               <SummaryCard title="This Month" value={formatMoney(monthTotal, profile?.preferred_currency)} detail={`${delta >= 0 ? '+' : ''}${delta}% vs last month`} icon={TrendingUp} />
             </View>
             <CategoryBreakdown expenses={expenses.items} />
+
+
+
             <BudgetProgress categories={categories} expenses={expenses.items} />
             <TrendBars expenses={expenses.items} />
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
