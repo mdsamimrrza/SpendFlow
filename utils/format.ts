@@ -40,6 +40,16 @@ export function formatTimeForInput(value?: string | null) {
   return `${hour12}:${match[2]} ${period}`;
 }
 
+export function currentFormattedTime() {
+  const now = new Date();
+  const hour24 = now.getHours();
+  const minute = now.getMinutes();
+  const period = hour24 >= 12 ? 'PM' : 'AM';
+  const hour12 = hour24 % 12 || 12;
+  return `${hour12}:${String(minute).padStart(2, '0')} ${period}`;
+}
+
+
 export function currentMonthRange() {
   const now = new Date();
   return {
@@ -50,11 +60,25 @@ export function currentMonthRange() {
   };
 }
 
-export function sumExpenses(expenses: Expense[]) {
-  return expenses.reduce((total, expense) => total + Number(expense.amount), 0);
+import { convertCurrency } from '@/services/currency';
+
+export function sumExpenses(
+  expenses: Expense[],
+  targetCurrency = 'NPR',
+  rates?: Record<string, number>,
+) {
+  return expenses.reduce((total, expense) => {
+    const amount = Number(expense.amount) || 0;
+    const converted = convertCurrency(amount, expense.currency || 'NPR', targetCurrency, rates);
+    return total + converted;
+  }, 0);
 }
 
-export function groupByCategory(expenses: Expense[]) {
+export function groupByCategory(
+  expenses: Expense[],
+  targetCurrency = 'NPR',
+  rates?: Record<string, number>,
+) {
   const totals = new Map<string, { label: string; color: string; icon: string; total: number }>();
   for (const expense of expenses) {
     const category = expense.categories;
@@ -65,8 +89,11 @@ export function groupByCategory(expenses: Expense[]) {
       icon: category?.icon ?? '📌',
       total: 0,
     };
-    current.total += Number(expense.amount);
+    const amount = Number(expense.amount) || 0;
+    const converted = convertCurrency(amount, expense.currency || 'NPR', targetCurrency, rates);
+    current.total += converted;
     totals.set(key, current);
   }
   return [...totals.values()].sort((a, b) => b.total - a.total);
 }
+

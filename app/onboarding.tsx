@@ -15,7 +15,7 @@ export default function OnboardingScreen() {
 
   async function finish() {
     await completeOnboarding();
-    router.replace(session ? '/(tabs)' : '/(auth)');
+    router.replace(session ? '/' : '/(auth)');
   }
 
   return (

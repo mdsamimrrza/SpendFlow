@@ -15,7 +15,7 @@ import { deleteAccount, signOut, updateProfile } from '@/services/auth';
 import { seedDemoExpenses } from '@/services/expenses';
 import { useAuth } from '@/hooks/useAuth';
 import { useTheme } from '@/hooks/useTheme';
-import { ThemePreference } from '@/types';
+import { ThemeToggle } from '@/components/ui/ThemeToggle';
 
 export default function SettingsScreen() {
   const { profile, refreshProfile } = useAuth();
@@ -44,7 +44,10 @@ export default function SettingsScreen() {
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: theme.colors.background }} contentContainerStyle={{ padding: theme.spacing.lg, gap: theme.spacing.lg, paddingBottom: 100 }}>
-      <Text variant="h1">Settings</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+        <Text variant="h1">Settings</Text>
+        <ThemeToggle />
+      </View>
       <Card style={{ flexDirection: 'row', alignItems: 'center', gap: theme.spacing.md }}>
         <Avatar uri={profile?.avatar_url} name={profile?.display_name ?? profile?.email} />
         <View style={{ flex: 1 }}>
@@ -57,12 +60,6 @@ export default function SettingsScreen() {
         value={profile?.preferred_currency ?? 'NPR'}
         options={CURRENCIES.map((currency) => ({ label: currency, value: currency }))}
         onChange={(preferred_currency) => updateProfile({ preferred_currency }).then(refreshProfile)}
-      />
-      <Select<ThemePreference>
-        label="Theme"
-        value={profile?.theme_preference ?? 'system'}
-        options={[{ label: 'System', value: 'system' }, { label: 'Light', value: 'light' }, { label: 'Dark', value: 'dark' }]}
-        onChange={(theme_preference) => updateProfile({ theme_preference }).then(refreshProfile)}
       />
       <Text variant="h2">Monthly budgets</Text>
       {categories.map((category) => (

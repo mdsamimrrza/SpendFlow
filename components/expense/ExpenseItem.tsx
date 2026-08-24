@@ -8,8 +8,20 @@ import { formatMoney } from '@/utils/format';
 import { useTheme } from '@/hooks/useTheme';
 import { Text } from '@/components/ui/Text';
 
+import { useAuth } from '@/hooks/useAuth';
+import { useExchangeRates } from '@/hooks/useExchangeRates';
+
 export function ExpenseItem({ expense, onDelete }: { expense: Expense; onDelete?: (expense: Expense) => void }) {
   const theme = useTheme();
+  const { profile } = useAuth();
+  const { convert } = useExchangeRates();
+
+  const preferredCurrency = profile?.preferred_currency ?? 'NPR';
+  const isDifferentCurrency = expense.currency && expense.currency !== preferredCurrency;
+  const convertedAmount = isDifferentCurrency
+    ? convert(Number(expense.amount), expense.currency, preferredCurrency)
+    : Number(expense.amount);
+
   return (
     <Link href={`/expense/${expense.id}`} asChild>
       <Pressable
@@ -44,9 +56,17 @@ export function ExpenseItem({ expense, onDelete }: { expense: Expense; onDelete?
             {expense.date} · {expense.payment_method}
           </Text>
         </View>
-        <Text variant="label" style={{ fontVariant: ['tabular-nums'] }}>
-          {formatMoney(Number(expense.amount), expense.currency)}
-        </Text>
+        <View style={{ alignItems: 'flex-end', gap: 2 }}>
+          <Text variant="label" style={{ fontVariant: ['tabular-nums'] }}>
+            {formatMoney(Number(expense.amount), expense.currency)}
+          </Text>
+          {isDifferentCurrency ? (
+            <Text variant="caption" muted style={{ fontVariant: ['tabular-nums'] }}>
+              ≈ {formatMoney(convertedAmount, preferredCurrency)}
+            </Text>
+          ) : null}
+        </View>
+
         {onDelete ? (
           <Pressable
             accessibilityRole="button"

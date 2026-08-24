@@ -9,6 +9,7 @@ interface AuthContextValue {
   session: Session | null;
   profile: UserProfile | null;
   loading: boolean;
+  refreshSession: () => Promise<Session | null>;
   refreshProfile: () => Promise<void>;
   signOut: () => Promise<void>;
 }
@@ -21,6 +22,14 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const [loading, setLoading] = useState(true);
   const userId = session?.user.id ?? null;
 
+  const refreshSession = useCallback(async () => {
+    const { data, error } = await supabase.auth.getSession();
+    if (error) throw error;
+    setSession(data.session);
+    setLoading(false);
+    return data.session;
+  }, []);
+
   const refreshProfile = useCallback(async () => {
     const nextProfile = await ensureProfile();
     setProfile(nextProfile);
@@ -31,14 +40,10 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
     async function hydrateSession() {
       try {
-        const { data, error } = await supabase.auth.getSession();
+        const nextSession = await refreshSession();
         if (!mounted) return;
-        if (error) {
-          setLoading(false);
-          return;
-        }
-        setSession(data.session);
-        if (!data.session) setLoading(false);
+        setSession(nextSession);
+        setLoading(false);
       } catch {
         if (mounted) setLoading(false);
       }
@@ -49,31 +54,26 @@ export function AuthProvider({ children }: PropsWithChildren) {
     const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       if (!mounted) return;
       setSession(nextSession);
-      if (!nextSession) setLoading(false);
+      setLoading(false);
     });
 
     return () => {
       mounted = false;
       listener.subscription.unsubscribe();
     };
-  }, []);
+  }, [refreshSession]);
 
   useEffect(() => {
     if (!userId) {
       setProfile(null);
-      setLoading(false);
       return;
     }
 
     let mounted = true;
-    setLoading(true);
     void refreshProfile()
       .then(() => generateDueRecurringExpenses(userId))
       .catch(() => {
         if (mounted) setProfile(null);
-      })
-      .finally(() => {
-        if (mounted) setLoading(false);
       });
 
     return () => {
@@ -86,10 +86,11 @@ export function AuthProvider({ children }: PropsWithChildren) {
       session,
       profile,
       loading,
+      refreshSession,
       refreshProfile,
       signOut: signOutService,
     }),
-    [loading, profile, refreshProfile, session],
+    [loading, profile, refreshProfile, refreshSession, session],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

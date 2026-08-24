@@ -13,6 +13,7 @@ import { Category, PaymentMethod, RecurringFrequency, RecurringRule } from '@/ty
 import { useAuth } from '@/hooks/useAuth';
 import { useTheme } from '@/hooks/useTheme';
 import { isoDate } from '@/utils/format';
+import { ThemeToggle } from '@/components/ui/ThemeToggle';
 
 const frequencies: { label: string; value: RecurringFrequency }[] = [
   { label: 'Daily', value: 'daily' },
@@ -68,7 +69,10 @@ export default function RecurringScreen() {
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: theme.colors.background }} contentContainerStyle={{ padding: theme.spacing.lg, gap: theme.spacing.lg, paddingBottom: 100 }}>
-      <Text variant="h1">Recurring</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+        <Text variant="h1">Recurring</Text>
+        <ThemeToggle />
+      </View>
       <Card style={{ gap: theme.spacing.md }}>
         <Text variant="h3">Add recurring expense</Text>
         <Input label="Amount" keyboardType="decimal-pad" value={amount} onChangeText={setAmount} />

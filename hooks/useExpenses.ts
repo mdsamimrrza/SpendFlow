@@ -4,6 +4,13 @@ import { Expense, ExpenseFilters, ExpenseInput, SortKey } from '@/types';
 import { enqueueOfflineOperation } from '@/utils/offlineQueue';
 import { createExpense, getCachedExpenses, listExpenses, softDeleteExpense, updateExpense } from '@/services/expenses';
 
+type ExpenseChangeListener = () => void;
+const listeners = new Set<ExpenseChangeListener>();
+
+export function notifyExpensesChanged() {
+  listeners.forEach((listener) => listener());
+}
+
 export function useExpenses(userId?: string, filters?: ExpenseFilters, sort: SortKey = 'date_desc') {
   const filterKey = JSON.stringify(filters ?? {});
   const [items, setItems] = useState<Expense[]>([]);
@@ -46,6 +53,16 @@ export function useExpenses(userId?: string, filters?: ExpenseFilters, sort: Sor
     void loadPage(0, true);
   }, [filterKey, sort, userId]);
 
+  useEffect(() => {
+    const handleChanged = () => {
+      void loadPage(0, true);
+    };
+    listeners.add(handleChanged);
+    return () => {
+      listeners.delete(handleChanged);
+    };
+  }, [loadPage]);
+
   const refresh = useCallback(async () => {
     if (loadingPage.current) return;
     setRefreshing(true);
@@ -63,12 +80,12 @@ export function useExpenses(userId?: string, filters?: ExpenseFilters, sort: Sor
     const online = Boolean(state.isConnected && state.isInternetReachable !== false);
     if (!online) {
       await enqueueOfflineOperation({ type: id ? 'update' : 'create', payload: { ...input, id } });
-      await refresh();
+      notifyExpensesChanged();
       return;
     }
     if (id) await updateExpense(id, input);
     else await createExpense(userId, input);
-    await refresh();
+    notifyExpensesChanged();
   };
 
   const remove = async (id: string) => {
@@ -80,10 +97,12 @@ export function useExpenses(userId?: string, filters?: ExpenseFilters, sort: Sor
         payload: { id, amount: 1, category_id: '', currency: 'NPR', date: new Date().toISOString().slice(0, 10), payment_method: 'Cash' },
       });
       setItems((current) => current.filter((item) => item.id !== id));
+      notifyExpensesChanged();
       return;
     }
     await softDeleteExpense(id);
     setItems((current) => current.filter((item) => item.id !== id));
+    notifyExpensesChanged();
   };
 
   return { items, loading, loadingMore, refreshing, error, hasMore, refresh, loadMore, save, remove };

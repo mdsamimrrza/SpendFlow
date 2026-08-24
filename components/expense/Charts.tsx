@@ -2,13 +2,18 @@ import { View } from 'react-native';
 import Svg, { Circle, Rect } from 'react-native-svg';
 import { Text } from '@/components/ui/Text';
 import { Card } from '@/components/ui/Card';
+import { useAuth } from '@/hooks/useAuth';
+import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { useTheme } from '@/hooks/useTheme';
 import { Expense } from '@/types';
 import { formatMoney, groupByCategory } from '@/utils/format';
 
-export function CategoryBreakdown({ expenses }: { expenses: Expense[] }) {
+export function CategoryBreakdown({ expenses, targetCurrency }: { expenses: Expense[]; targetCurrency?: string }) {
   const theme = useTheme();
-  const data = groupByCategory(expenses).slice(0, 5);
+  const { profile } = useAuth();
+  const { rates } = useExchangeRates();
+  const currency = targetCurrency ?? profile?.preferred_currency ?? 'NPR';
+  const data = groupByCategory(expenses, currency, rates).slice(0, 5);
   const total = data.reduce((sum, item) => sum + item.total, 0);
   return (
     <Card style={{ gap: theme.spacing.md }}>
@@ -58,10 +63,15 @@ export function CategoryBreakdown({ expenses }: { expenses: Expense[] }) {
   );
 }
 
-export function TrendBars({ expenses }: { expenses: Expense[] }) {
+export function TrendBars({ expenses, targetCurrency }: { expenses: Expense[]; targetCurrency?: string }) {
   const theme = useTheme();
+  const { profile } = useAuth();
+  const { rates, convert } = useExchangeRates();
+  const currency = targetCurrency ?? profile?.preferred_currency ?? 'NPR';
+
   const days = expenses.reduce<Record<string, number>>((acc, expense) => {
-    acc[expense.date] = (acc[expense.date] ?? 0) + Number(expense.amount);
+    const converted = convert(Number(expense.amount), expense.currency || 'NPR', currency);
+    acc[expense.date] = (acc[expense.date] ?? 0) + converted;
     return acc;
   }, {});
   const data = Object.entries(days)
@@ -80,8 +90,9 @@ export function TrendBars({ expenses }: { expenses: Expense[] }) {
         })}
       </Svg>
       <Text variant="caption" muted>
-        Peak day: {formatMoney(max, expenses[0]?.currency ?? 'NPR')}
+        Peak day: {formatMoney(max, currency)}
       </Text>
     </Card>
   );
 }
+
