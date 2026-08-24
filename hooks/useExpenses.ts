@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createExpense, getCachedExpenses, listExpenses, softDeleteExpense, updateExpense } from '@/services/expenses';
 import { checkAndNotifyBudgetThreshold, notifyExpenseAdded, notifyLargeExpense } from '@/services/notifications';
+import { EXPENSE_CACHE_KEY } from '@/constants/app';
 import { Expense, ExpenseFilters, ExpenseInput, SortKey } from '@/types';
 import { currentMonthRange, sumExpenses } from '@/utils/format';
 import { enqueueOfflineOperation } from '@/utils/offlineQueue';
@@ -83,7 +84,39 @@ export function useExpenses(userId?: string, filters?: ExpenseFilters, sort: Sor
     const online = Boolean(state.isConnected && state.isInternetReachable !== false);
     if (!online) {
       await enqueueOfflineOperation({ type: id ? 'update' : 'create', payload: { ...input, id } });
+      const localId = id || `offline-${Date.now()}`;
+      const localExpense: Expense = {
+        id: localId,
+        user_id: userId,
+        amount: Number(input.amount),
+        currency: input.currency,
+        date: input.date,
+        time: input.time || '12:00:00',
+        payment_method: input.payment_method,
+        description: input.description || null,
+        notes: input.notes || null,
+        receipt_image_url: input.receipt_image_url || null,
+        category_id: input.category_id,
+        is_recurring: false,
+        recurring_rule_id: null,
+        is_synced: false,
+        deleted_at: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      setItems((current) => {
+        const next = id ? current.map((item) => (item.id === id ? localExpense : item)) : [localExpense, ...current];
+        void AsyncStorage.setItem(EXPENSE_CACHE_KEY, JSON.stringify(next)).catch(() => {});
+        return next;
+      });
+
       notifyExpensesChanged();
+      try {
+        void notifyExpenseAdded(Number(input.amount), input.category_id || 'Expense', input.description, input.currency);
+      } catch {
+        // Notification check
+      }
       return;
     }
     if (id) await updateExpense(id, input);

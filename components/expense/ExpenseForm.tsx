@@ -159,17 +159,22 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
         setSaving(true);
         try {
           const asset = result.assets[0];
-          const url = await uploadReceipt(
-            profile.id,
-            asset.uri,
-            asset.fileName,
-            asset.mimeType,
-            asset.base64,
-          );
-          setForm((current) => ({ ...current, receipt_image_url: url }));
+          try {
+            const url = await uploadReceipt(
+              profile.id,
+              asset.uri,
+              asset.fileName,
+              asset.mimeType,
+              asset.base64,
+            );
+            setForm((current) => ({ ...current, receipt_image_url: url }));
+          } catch {
+            // Offline fallback: Store local device URI so receipt is attached seamlessly offline
+            setForm((current) => ({ ...current, receipt_image_url: asset.uri }));
+          }
           await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
         } catch (err) {
-          setError(err instanceof Error ? err.message : 'Could not upload receipt.');
+          setError(err instanceof Error ? err.message : 'Could not attach receipt.');
         } finally {
           setSaving(false);
         }
