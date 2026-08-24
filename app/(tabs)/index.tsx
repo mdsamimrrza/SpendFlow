@@ -20,11 +20,11 @@ import { Category } from '@/types';
 import { currentMonthRange, formatMoney, isoDate, sumExpenses } from '@/utils/format';
 
 export default function HomeScreen() {
-  const { profile } = useAuth();
+  const { profile, session } = useAuth();
   const theme = useTheme();
   const router = useRouter();
   const { rates } = useExchangeRates();
-  const expenses = useExpenses(profile?.id);
+  const expenses = useExpenses(profile?.id ?? session?.user?.id);
   const sync = useSync(profile?.id);
   const [, setCategories] = useState<Category[]>([]);
   const month = currentMonthRange();

@@ -48,7 +48,7 @@ const PERIOD_CHIPS: { label: string; value: HistoryPeriod }[] = [
 ];
 
 export default function HistoryScreen() {
-  const { profile } = useAuth();
+  const { profile, session } = useAuth();
   const theme = useTheme();
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<SortKey>('date_desc');
@@ -100,7 +100,7 @@ export default function HistoryScreen() {
     [search, dateRange.fromDate, dateRange.toDate],
   );
 
-  const expenses = useExpenses(profile?.id, filters, sort);
+  const expenses = useExpenses(profile?.id ?? session?.user?.id, filters, sort);
 
   useFocusEffect(
     useCallback(() => {
@@ -144,11 +144,11 @@ export default function HistoryScreen() {
     const groups: { [dateStr: string]: { title: string; total: number; data: Expense[] } } = {};
 
     expenses.items.forEach((item) => {
-      const dateKey = item.date;
-      if (!groups[dateKey]) {
-        let title = dateKey;
+      const rawDate = item.date ? item.date.slice(0, 10) : new Date().toISOString().slice(0, 10);
+      if (!groups[rawDate]) {
+        let title = rawDate;
         try {
-          const parsed = parseISO(dateKey);
+          const parsed = parseISO(rawDate);
           if (isTodayFn(parsed)) {
             title = `Today · ${format(parsed, 'MMM d')}`;
           } else if (isYesterdayFn(parsed)) {
@@ -157,14 +157,14 @@ export default function HistoryScreen() {
             title = format(parsed, 'EEEE, MMM d, yyyy');
           }
         } catch {
-          title = dateKey;
+          title = rawDate;
         }
 
-        groups[dateKey] = { title, total: 0, data: [] };
+        groups[rawDate] = { title, total: 0, data: [] };
       }
 
-      groups[dateKey].data.push(item);
-      groups[dateKey].total += Number(item.amount);
+      groups[rawDate].data.push(item);
+      groups[rawDate].total += Number(item.amount);
     });
 
     return Object.keys(groups).map((key) => groups[key]);

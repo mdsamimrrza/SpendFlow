@@ -11,6 +11,7 @@ import { deactivateKeepAwake } from 'expo-keep-awake';
 import { useAuth } from '@/hooks/useAuth';
 import { useTheme } from '@/hooks/useTheme';
 import { Text } from '@/components/ui/Text';
+import { AnimatedSplashScreen } from '@/components/ui/AnimatedSplashScreen';
 import { isSupabaseConfigured } from '@/utils/supabase';
 
 function RootNavigator() {
@@ -71,19 +72,7 @@ function RootNavigator() {
         <Stack.Screen name="expense/[id]" />
         <Stack.Screen name="export" options={{ presentation: 'modal' }} />
       </Stack>
-      {isLoading ? (
-        <View
-          style={{
-            position: 'absolute',
-            inset: 0,
-            alignItems: 'center',
-            justifyContent: 'center',
-            backgroundColor: theme.colors.background,
-          }}
-        >
-          <ActivityIndicator color={theme.colors.primary} />
-        </View>
-      ) : null}
+      <AnimatedSplashScreen visible={isLoading} />
     </View>
   );
 }

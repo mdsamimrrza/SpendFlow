@@ -113,7 +113,19 @@ export function AuthProvider({ children }: PropsWithChildren) {
     void refreshProfile()
       .then(() => generateDueRecurringExpenses(userId))
       .catch(() => {
-        if (mounted) setProfile(null);
+        if (mounted && session?.user) {
+          setProfile({
+            id: session.user.id,
+            email: session.user.email ?? '',
+            display_name: (session.user.user_metadata?.display_name as string) ?? null,
+            avatar_url: (session.user.user_metadata?.avatar_url as string) ?? null,
+            preferred_currency: 'NPR',
+            theme_preference: 'system',
+            monthly_budget: null,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          });
+        }
       });
 
     return () => {

@@ -16,7 +16,7 @@ export async function listExpenses(userId: string, page = 0, filters?: ExpenseFi
   if (filters?.minAmount !== undefined) query = query.gte('amount', filters.minAmount);
   if (filters?.maxAmount !== undefined) query = query.lte('amount', filters.maxAmount);
   if (filters?.paymentMethod && filters.paymentMethod !== 'All') query = query.eq('payment_method', filters.paymentMethod);
-  if (filters?.search) query = query.textSearch('search_vector', filters.search, { type: 'websearch', config: 'english' });
+  if (filters?.search) query = query.or(`description.ilike.%${filters.search}%,notes.ilike.%${filters.search}%`);
   if (sort === 'amount_asc' || sort === 'amount_desc') query = query.order('amount', { ascending: sort === 'amount_asc' });
   else query = query.order('date', { ascending: sort === 'date_asc' }).order('created_at', { ascending: false });
   const { data, error } = await query;

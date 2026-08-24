@@ -115,31 +115,35 @@ export async function ensureProfile() {
     data: { user },
     error: userError,
   } = await supabase.auth.getUser();
-  if (userError) throw userError;
-  if (!user?.email) throw new Error('No authenticated user found.');
+  if (userError || !user?.email) throw userError ?? new Error('No authenticated user found.');
 
-  const { data: existing } = await supabase
-    .from('users')
-    .select('*')
-    .eq('id', user.id)
-    .maybeSingle();
+  let data: UserProfile | null = null;
+  try {
+    const { data: existing } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', user.id)
+      .maybeSingle();
 
-  const profilePayload = {
-    id: user.id,
-    email: user.email,
-    display_name: existing?.display_name ?? (user.user_metadata.display_name as string | undefined) ?? (user.user_metadata.full_name as string | undefined) ?? null,
-    avatar_url: existing?.avatar_url ?? (user.user_metadata.avatar_url as string | undefined) ?? null,
-    monthly_budget: existing?.monthly_budget ?? null,
-  };
+    const profilePayload = {
+      id: user.id,
+      email: user.email,
+      display_name: existing?.display_name ?? (user.user_metadata.display_name as string | undefined) ?? (user.user_metadata.full_name as string | undefined) ?? null,
+      avatar_url: existing?.avatar_url ?? (user.user_metadata.avatar_url as string | undefined) ?? null,
+      monthly_budget: existing?.monthly_budget ?? null,
+    };
 
-  const { data, error } = await supabase
-    .from('users')
-    .upsert(profilePayload, { onConflict: 'id' })
-    .select('*')
-    .single();
-  if (error) throw error;
+    const { data: upsertedData } = await supabase
+      .from('users')
+      .upsert(profilePayload, { onConflict: 'id' })
+      .select('*')
+      .single();
+    if (upsertedData) data = upsertedData as UserProfile;
+  } catch {
+    // Offline or table schema fallback
+  }
 
-  await seedDefaultCategories(user.id);
+  await seedDefaultCategories(user.id).catch(() => []);
 
   const localBudgetRaw = await AsyncStorage.getItem(`@spendflow_monthly_budget_${user.id}`).catch(() => null);
   const localBudget = localBudgetRaw ? Number(localBudgetRaw) : null;
@@ -150,8 +154,15 @@ export async function ensureProfile() {
   }
 
   return {
-    ...data,
+    id: user.id,
+    email: user.email,
+    display_name: data?.display_name ?? (user.user_metadata.display_name as string | undefined) ?? (user.user_metadata.full_name as string | undefined) ?? null,
+    avatar_url: data?.avatar_url ?? (user.user_metadata.avatar_url as string | undefined) ?? null,
+    preferred_currency: data?.preferred_currency ?? 'NPR',
+    theme_preference: data?.theme_preference ?? 'system',
     monthly_budget: finalBudget,
+    created_at: data?.created_at ?? new Date().toISOString(),
+    updated_at: data?.updated_at ?? new Date().toISOString(),
   } as UserProfile;
 }
 
@@ -179,7 +190,7 @@ export async function updateProfile(input: Partial<Pick<UserProfile, 'display_na
       .single();
     if (!error && data) dbProfile = data as UserProfile;
   } catch {
-    // Failsafe fallback if database table column is synced or offline
+    // Failsafe fallback if database table column is missing or offline
   }
 
   const localBudgetRaw = await AsyncStorage.getItem(`@spendflow_monthly_budget_${user.id}`).catch(() => null);

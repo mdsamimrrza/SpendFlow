@@ -17,11 +17,11 @@ import { PeriodKey } from '@/types';
 import { filterExpensesByPeriod, formatMoney, groupByCategory, sumExpenses } from '@/utils/format';
 
 export default function AnalyticsScreen() {
-  const { profile } = useAuth();
+  const { profile, session } = useAuth();
   const theme = useTheme();
   const { rates, convert } = useExchangeRates();
   const [period, setPeriod] = useState<PeriodKey>('month');
-  const expenses = useExpenses(profile?.id);
+  const expenses = useExpenses(profile?.id ?? session?.user?.id);
 
   useFocusEffect(
     useCallback(() => {
