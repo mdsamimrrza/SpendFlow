@@ -1,11 +1,23 @@
-import { File, Paths } from 'expo-file-system';
-import * as Sharing from 'expo-sharing';
+import { Platform } from 'react-native';
 import writeXlsxFile from 'write-excel-file/browser';
 import { Expense } from '@/types';
 import { formatMoney, groupByCategory } from '@/utils/format';
 
 function rowsToCsv(rows: string[][]) {
-  return rows.map((row) => row.map((cell) => `"${cell.replaceAll('"', '""')}"`).join(',')).join('\n');
+  return rows.map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(',')).join('\n');
+}
+
+function downloadWebFile(blob: Blob, filename: string) {
+  if (typeof window === 'undefined') return;
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.style.display = 'none';
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  window.URL.revokeObjectURL(url);
+  document.body.removeChild(a);
 }
 
 export async function exportCsv(expenses: Expense[]) {
@@ -21,8 +33,20 @@ export async function exportCsv(expenses: Expense[]) {
       expense.notes ?? '',
     ]),
   ];
+
+  const csvContent = rowsToCsv(rows);
+
+  if (Platform.OS === 'web') {
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    downloadWebFile(blob, 'spendflow-expenses.csv');
+    return;
+  }
+
+  // Native Mobile (Android / iOS)
+  const { File, Paths } = await import('expo-file-system');
+  const Sharing = await import('expo-sharing');
   const file = new File(Paths.cache, 'spendflow-expenses.csv');
-  file.write(rowsToCsv(rows));
+  file.write(csvContent);
   await Sharing.shareAsync(file.uri, { mimeType: 'text/csv', dialogTitle: 'Share SpendFlow CSV' });
 }
 
@@ -43,13 +67,24 @@ export async function exportExcel(expenses: Expense[]) {
     [{ value: 'Category' }, { value: 'Total' }],
     ...summary.map((item) => [{ value: `${item.icon} ${item.label}` }, { value: formatMoney(item.total, expenses[0]?.currency ?? 'NPR') }]),
   ];
-  const file = new File(Paths.cache, 'spendflow-expenses.xlsx');
-  const workbook = writeXlsxFile([
+
+  const workbook = await writeXlsxFile([
     { sheet: 'Expenses', data: expenseRows },
     { sheet: 'Category Summary', data: summaryRows },
   ]);
   const blob = await workbook.toBlob();
-  file.write(new Uint8Array(await blob.arrayBuffer()));
+
+  if (Platform.OS === 'web') {
+    downloadWebFile(blob, 'spendflow-expenses.xlsx');
+    return;
+  }
+
+  // Native Mobile (Android / iOS)
+  const { File, Paths } = await import('expo-file-system');
+  const Sharing = await import('expo-sharing');
+  const file = new File(Paths.cache, 'spendflow-expenses.xlsx');
+  const arrayBuffer = await blob.arrayBuffer();
+  file.write(new Uint8Array(arrayBuffer));
   await Sharing.shareAsync(file.uri, {
     mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     dialogTitle: 'Share SpendFlow Excel',

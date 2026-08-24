@@ -33,22 +33,16 @@ import { ThemeToggle } from '@/components/ui/ThemeToggle';
 import { SORT_OPTIONS } from '@/constants/app';
 import { useAuth } from '@/hooks/useAuth';
 import { useExpenses } from '@/hooks/useExpenses';
+import { useLanguage } from '@/hooks/useLanguage';
 import { useTheme } from '@/hooks/useTheme';
 import { Expense, SortKey } from '@/types';
 import { formatMoney, sumExpenses } from '@/utils/format';
 
 type HistoryPeriod = 'all' | 'today' | 'week' | 'month' | 'custom';
 
-const PERIOD_CHIPS: { label: string; value: HistoryPeriod }[] = [
-  { label: 'All', value: 'all' },
-  { label: 'Today', value: 'today' },
-  { label: 'This Week', value: 'week' },
-  { label: 'This Month', value: 'month' },
-  { label: 'Custom 📅', value: 'custom' },
-];
-
 export default function HistoryScreen() {
   const { profile, session } = useAuth();
+  const { t } = useLanguage();
   const theme = useTheme();
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<SortKey>('date_desc');
@@ -59,6 +53,14 @@ export default function HistoryScreen() {
   });
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [calendarOpen, setCalendarOpen] = useState(false);
+
+  const PERIOD_CHIPS: { label: string; value: HistoryPeriod }[] = [
+    { label: t('history_period_all'), value: 'all' },
+    { label: t('history_period_today'), value: 'today' },
+    { label: t('history_period_week'), value: 'week' },
+    { label: t('history_period_month'), value: 'month' },
+    { label: t('history_period_custom'), value: 'custom' },
+  ];
 
   const preferredCurrency = profile?.preferred_currency ?? 'NPR';
 
@@ -108,36 +110,10 @@ export default function HistoryScreen() {
     }, [expenses.refresh]),
   );
 
-  const handleApplyCustomRange = (range: DateRange) => {
-    setCustomRange(range);
-    setPeriod('custom');
-  };
-
-  const handleClearFilters = () => {
-    setSearch('');
-    setPeriod('all');
-    setCustomRange({ startDate: null, endDate: null });
-    setSort('date_desc');
-  };
-
-  const formattedCustomLabel = useMemo(() => {
-    if (!customRange.startDate) return 'Custom Range';
-    try {
-      const s = format(parseISO(customRange.startDate), 'MMM d');
-      if (customRange.endDate && customRange.endDate !== customRange.startDate) {
-        const e = format(parseISO(customRange.endDate), 'MMM d, yyyy');
-        return `${s} - ${e}`;
-      }
-      return format(parseISO(customRange.startDate), 'MMM d, yyyy');
-    } catch {
-      return 'Custom Range';
-    }
-  }, [customRange]);
-
-  // Total amount in filtered list
-  const totalAmount = useMemo(() => {
-    return sumExpenses(expenses.items, preferredCurrency);
-  }, [expenses.items, preferredCurrency]);
+  const totalAmount = useMemo(
+    () => sumExpenses(expenses.items, preferredCurrency),
+    [expenses.items, preferredCurrency],
+  );
 
   // Group expenses by date for sleek SectionList headers
   const groupedSections = useMemo(() => {
@@ -150,9 +126,9 @@ export default function HistoryScreen() {
         try {
           const parsed = parseISO(rawDate);
           if (isTodayFn(parsed)) {
-            title = `Today · ${format(parsed, 'MMM d')}`;
+            title = `${t('history_section_today')} · ${format(parsed, 'MMM d')}`;
           } else if (isYesterdayFn(parsed)) {
-            title = `Yesterday · ${format(parsed, 'MMM d')}`;
+            title = `${t('history_section_yesterday')} · ${format(parsed, 'MMM d')}`;
           } else {
             title = format(parsed, 'EEEE, MMM d, yyyy');
           }
@@ -168,14 +144,31 @@ export default function HistoryScreen() {
     });
 
     return Object.keys(groups).map((key) => groups[key]);
-  }, [expenses.items]);
+  }, [expenses.items, t]);
 
-  const activeChipLabel = (val: HistoryPeriod) => {
-    if (val === 'custom' && customRange.startDate) {
-      return formattedCustomLabel;
+  const formattedCustomLabel = useMemo(() => {
+    if (!customRange.startDate) return t('history_period_custom');
+    if (!customRange.endDate || customRange.startDate === customRange.endDate) {
+      try {
+        return format(parseISO(customRange.startDate), 'MMM d');
+      } catch {
+        return customRange.startDate;
+      }
     }
-    return PERIOD_CHIPS.find((c) => c.value === val)?.label || 'All';
-  };
+    try {
+      return `${format(parseISO(customRange.startDate), 'MMM d')} - ${format(parseISO(customRange.endDate), 'MMM d')}`;
+    } catch {
+      return `${customRange.startDate} - ${customRange.endDate}`;
+    }
+  }, [customRange, t]);
+
+  const activeChipLabel = useCallback(
+    (p: HistoryPeriod) => {
+      if (p === 'custom' && customRange.startDate) return formattedCustomLabel;
+      return PERIOD_CHIPS.find((c) => c.value === p)?.label || t('history_period_all');
+    },
+    [customRange.startDate, formattedCustomLabel, PERIOD_CHIPS, t],
+  );
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
@@ -190,9 +183,9 @@ export default function HistoryScreen() {
             {/* Top Bar */}
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
               <View style={{ gap: 2 }}>
-                <Text variant="h1">Transaction History</Text>
+                <Text variant="h1">{t('history_title')}</Text>
                 <Text variant="caption" muted>
-                  {expenses.items.length} {expenses.items.length === 1 ? 'transaction' : 'transactions'} recorded
+                  {expenses.items.length} {t('history_transactions')}
                 </Text>
               </View>
               <ThemeToggle />
@@ -201,7 +194,7 @@ export default function HistoryScreen() {
             {/* Total Spending Summary Hero Card */}
             <Card style={{ padding: theme.spacing.lg, gap: theme.spacing.xs, backgroundColor: theme.isDark ? '#141E33' : '#EEF2FF', borderColor: theme.colors.primary }}>
               <Text variant="caption" style={{ color: theme.colors.primary, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8 }}>
-                Total Spending ({period === 'all' ? 'All Time' : activeChipLabel(period)})
+                {t('history_total_spending')} ({period === 'all' ? t('history_period_all') : activeChipLabel(period)})
               </Text>
               <Text variant="h1" style={{ fontSize: 32, lineHeight: 40, color: theme.colors.primary, fontWeight: '800' }}>
                 {formatMoney(totalAmount, preferredCurrency)}
@@ -250,7 +243,7 @@ export default function HistoryScreen() {
             <View style={{ flexDirection: 'row', gap: theme.spacing.xs, alignItems: 'center' }}>
               <View style={{ flex: 1 }}>
                 <Input
-                  placeholder="Search transactions..."
+                  placeholder={t('history_search_placeholder')}
                   value={search}
                   onChangeText={setSearch}
                 />
@@ -303,8 +296,8 @@ export default function HistoryScreen() {
           ) : (
             <EmptyState
               icon={Search}
-              title="No matching transactions"
-              message="Try adjusting your search keywords or date period filters."
+              title={t('history_no_transactions_title')}
+              message={t('history_no_transactions_message')}
             />
           )
         }
@@ -317,68 +310,36 @@ export default function HistoryScreen() {
             </View>
           ) : expenses.items.length && !expenses.hasMore ? (
             <Text muted style={{ paddingVertical: theme.spacing.lg, textAlign: 'center', fontSize: 13 }}>
-              All transactions loaded.
+              {t('common_done')}
             </Text>
           ) : null
         }
       />
 
-      {/* Filter & Sort BottomSheet */}
+      {/* Sort / Filter BottomSheet */}
       <BottomSheet visible={filtersOpen} onClose={() => setFiltersOpen(false)}>
-        <Text variant="h2">Sort & Date Filter</Text>
-
-        <Select label="Sort Order" value={sort} options={SORT_OPTIONS} onChange={setSort} />
-
-        <Pressable
-          onPress={() => {
-            setFiltersOpen(false);
-            setCalendarOpen(true);
-          }}
-          style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: 14,
-            borderRadius: theme.radius.md,
-            backgroundColor: theme.colors.surfaceElevated,
-            borderWidth: 1,
-            borderColor: theme.colors.primary,
-          }}
-        >
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.spacing.sm }}>
-            <CalendarIcon size={18} color={theme.colors.primary} />
-            <Text variant="body" style={{ fontWeight: '600' }}>
-              {customRange.startDate ? formattedCustomLabel : 'Choose Custom Date Range'}
-            </Text>
-          </View>
-          <Text variant="caption" style={{ color: theme.colors.primary, fontWeight: '700' }}>
-            Open Calendar
-          </Text>
-        </Pressable>
-
-        <View style={{ flexDirection: 'row', gap: theme.spacing.md, marginTop: theme.spacing.sm }}>
-          <Button
-            title="Reset Filters"
-            variant="secondary"
-            onPress={() => {
-              handleClearFilters();
+        <View style={{ gap: theme.spacing.lg }}>
+          <Select
+            label={t('history_sort_date_new')}
+            value={sort}
+            options={SORT_OPTIONS}
+            onChange={(nextSort) => {
+              setSort(nextSort as SortKey);
               setFiltersOpen(false);
             }}
-            style={{ flex: 1 }}
           />
-          <Button
-            title="Done"
-            onPress={() => setFiltersOpen(false)}
-            style={{ flex: 1 }}
-          />
+          <Button title={t('common_done')} onPress={() => setFiltersOpen(false)} />
         </View>
       </BottomSheet>
 
-      {/* Calendar Date Picker Modal */}
+      {/* Custom Date Range Calendar Modal */}
       <CalendarModal
         visible={calendarOpen}
         onClose={() => setCalendarOpen(false)}
-        onApply={handleApplyCustomRange}
+        onApply={(range) => {
+          setCustomRange(range);
+          setCalendarOpen(false);
+        }}
         initialRange={customRange}
       />
     </View>

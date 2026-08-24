@@ -106,18 +106,31 @@ export async function signInWithGoogle() {
 }
 
 export async function signOut() {
+  await AsyncStorage.multiRemove([
+    '@spendflow_cached_profile',
+  ]).catch(() => {});
   const { error } = await supabase.auth.signOut();
   if (error) throw error;
 }
 
-export async function ensureProfile() {
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser();
-  if (userError || !user?.email) throw userError ?? new Error('No authenticated user found.');
+export async function ensureProfile(): Promise<UserProfile> {
+  // Check active session first to avoid network 403 Forbidden errors when logged out
+  const { data: sessionData } = await supabase.auth.getSession().catch(() => ({ data: { session: null } }));
+  const user = sessionData?.session?.user;
 
-  let data: UserProfile | null = null;
+  if (!user || !user.email) {
+    const cached = await AsyncStorage.getItem('@spendflow_cached_profile').catch(() => null);
+    if (cached) {
+      try {
+        return JSON.parse(cached) as UserProfile;
+      } catch {
+        // Ignore JSON error
+      }
+    }
+    throw new Error('No authenticated user found.');
+  }
+
+  let dbProfile: UserProfile | null = null;
   try {
     const { data: existing } = await supabase
       .from('users')
@@ -125,48 +138,61 @@ export async function ensureProfile() {
       .eq('id', user.id)
       .maybeSingle();
 
-    const profilePayload = {
-      id: user.id,
-      email: user.email,
-      display_name: existing?.display_name ?? (user.user_metadata.display_name as string | undefined) ?? (user.user_metadata.full_name as string | undefined) ?? null,
-      avatar_url: existing?.avatar_url ?? (user.user_metadata.avatar_url as string | undefined) ?? null,
-      monthly_budget: existing?.monthly_budget ?? null,
-    };
+    if (existing) {
+      dbProfile = existing as UserProfile;
+    } else {
+      const profilePayload = {
+        id: user.id,
+        email: user.email,
+        display_name: (user.user_metadata.display_name as string | undefined) ?? (user.user_metadata.full_name as string | undefined) ?? null,
+        avatar_url: (user.user_metadata.avatar_url as string | undefined) ?? null,
+        monthly_budget: null,
+      };
 
-    const { data: upsertedData } = await supabase
-      .from('users')
-      .upsert(profilePayload, { onConflict: 'id' })
-      .select('*')
-      .single();
-    if (upsertedData) data = upsertedData as UserProfile;
+      const { data: upsertedData } = await supabase
+        .from('users')
+        .upsert(profilePayload, { onConflict: 'id' })
+        .select('*')
+        .single();
+      if (upsertedData) dbProfile = upsertedData as UserProfile;
+    }
   } catch {
-    // Offline or table schema fallback
+    // Offline or table fallback
   }
 
   await seedDefaultCategories(user.id).catch(() => []);
 
+  // Check local budget cache
   const localBudgetRaw = await AsyncStorage.getItem(`@spendflow_monthly_budget_${user.id}`).catch(() => null);
   const localBudget = localBudgetRaw ? Number(localBudgetRaw) : null;
 
-  const finalBudget = data?.monthly_budget ?? localBudget;
-  if (finalBudget && !localBudget) {
+  const finalBudget = dbProfile?.monthly_budget !== undefined && dbProfile?.monthly_budget !== null
+    ? Number(dbProfile.monthly_budget)
+    : localBudget;
+
+  if (finalBudget !== null && finalBudget !== undefined) {
     await AsyncStorage.setItem(`@spendflow_monthly_budget_${user.id}`, String(finalBudget)).catch(() => {});
   }
 
-  return {
+  const result: UserProfile = {
     id: user.id,
     email: user.email,
-    display_name: data?.display_name ?? (user.user_metadata.display_name as string | undefined) ?? (user.user_metadata.full_name as string | undefined) ?? null,
-    avatar_url: data?.avatar_url ?? (user.user_metadata.avatar_url as string | undefined) ?? null,
-    preferred_currency: data?.preferred_currency ?? 'NPR',
-    theme_preference: data?.theme_preference ?? 'system',
+    display_name: dbProfile?.display_name ?? (user.user_metadata.display_name as string | undefined) ?? (user.user_metadata.full_name as string | undefined) ?? null,
+    avatar_url: dbProfile?.avatar_url ?? (user.user_metadata.avatar_url as string | undefined) ?? null,
+    preferred_currency: dbProfile?.preferred_currency ?? 'NPR',
+    theme_preference: dbProfile?.theme_preference ?? 'system',
     monthly_budget: finalBudget,
-    created_at: data?.created_at ?? new Date().toISOString(),
-    updated_at: data?.updated_at ?? new Date().toISOString(),
-  } as UserProfile;
+    created_at: dbProfile?.created_at ?? new Date().toISOString(),
+    updated_at: dbProfile?.updated_at ?? new Date().toISOString(),
+  };
+
+  // Cache latest profile
+  await AsyncStorage.setItem('@spendflow_cached_profile', JSON.stringify(result)).catch(() => {});
+
+  return result;
 }
 
-export async function updateProfile(input: Partial<Pick<UserProfile, 'display_name' | 'preferred_currency' | 'theme_preference' | 'monthly_budget'>>) {
+export async function updateProfile(input: Partial<Pick<UserProfile, 'display_name' | 'preferred_currency' | 'theme_preference' | 'monthly_budget'>>): Promise<UserProfile> {
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -190,18 +216,27 @@ export async function updateProfile(input: Partial<Pick<UserProfile, 'display_na
       .single();
     if (!error && data) dbProfile = data as UserProfile;
   } catch {
-    // Failsafe fallback if database table column is missing or offline
+    // Database table column fallback
   }
 
   const localBudgetRaw = await AsyncStorage.getItem(`@spendflow_monthly_budget_${user.id}`).catch(() => null);
   const localBudget = localBudgetRaw ? Number(localBudgetRaw) : null;
 
-  return {
-    ...(dbProfile ?? {}),
+  const result: UserProfile = {
     id: user.id,
     email: user.email ?? '',
+    display_name: dbProfile?.display_name ?? input.display_name ?? null,
+    avatar_url: dbProfile?.avatar_url ?? null,
+    preferred_currency: dbProfile?.preferred_currency ?? input.preferred_currency ?? 'NPR',
+    theme_preference: dbProfile?.theme_preference ?? input.theme_preference ?? 'system',
     monthly_budget: dbProfile?.monthly_budget ?? input.monthly_budget ?? localBudget,
-  } as UserProfile;
+    created_at: dbProfile?.created_at ?? new Date().toISOString(),
+    updated_at: dbProfile?.updated_at ?? new Date().toISOString(),
+  };
+
+  await AsyncStorage.setItem('@spendflow_cached_profile', JSON.stringify(result)).catch(() => {});
+
+  return result;
 }
 
 export async function deleteAccount() {

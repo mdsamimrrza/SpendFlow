@@ -1,5 +1,7 @@
 import { Session } from '@supabase/supabase-js';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, PropsWithChildren, useCallback, useEffect, useMemo, useState } from 'react';
+import * as Linking from 'expo-linking';
 import { ensureProfile, signOut as signOutService } from '@/services/auth';
 import { generateDueRecurringExpenses } from '@/services/recurring';
 import { UserProfile } from '@/types';
@@ -15,8 +17,6 @@ interface AuthContextValue {
 }
 
 export const AuthContext = createContext<AuthContextValue | null>(null);
-
-import * as Linking from 'expo-linking';
 
 async function handleOAuthUrl(url: string) {
   if (!url) return;
@@ -48,19 +48,48 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
-  const userId = session?.user.id ?? null;
+  const userId = session?.user?.id ?? null;
 
   const refreshSession = useCallback(async () => {
-    const { data, error } = await supabase.auth.getSession();
-    if (error) throw error;
-    setSession(data.session);
-    setLoading(false);
-    return data.session;
+    try {
+      const { data, error } = await supabase.auth.getSession();
+      if (error) throw error;
+      setSession(data.session);
+      return data.session;
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   const refreshProfile = useCallback(async () => {
-    const nextProfile = await ensureProfile();
-    setProfile(nextProfile);
+    try {
+      const nextProfile = await ensureProfile();
+      setProfile(nextProfile);
+    } catch {
+      const { data: sessionData } = await supabase.auth.getSession().catch(() => ({ data: { session: null } }));
+      if (!sessionData?.session) {
+        setProfile(null);
+        return;
+      }
+      // Offline fallback: check cached profile
+      const cached = await AsyncStorage.getItem('@spendflow_cached_profile').catch(() => null);
+      if (cached) {
+        try {
+          setProfile(JSON.parse(cached) as UserProfile);
+        } catch {
+          // ignore
+        }
+      }
+    }
+  }, []);
+
+  const signOut = useCallback(async () => {
+    try {
+      await signOutService();
+    } finally {
+      setSession(null);
+      setProfile(null);
+    }
   }, []);
 
   useEffect(() => {
@@ -76,13 +105,25 @@ export function AuthProvider({ children }: PropsWithChildren) {
       void handleOAuthUrl(url);
     });
 
+    // Load cached profile instantly on startup for fast UI render
+    void AsyncStorage.getItem('@spendflow_cached_profile').then((cached) => {
+      if (mounted && cached && !profile) {
+        try {
+          setProfile(JSON.parse(cached) as UserProfile);
+        } catch {
+          // ignore
+        }
+      }
+    });
+
     async function hydrateSession() {
       try {
         const nextSession = await refreshSession();
         if (!mounted) return;
         setSession(nextSession);
-        setLoading(false);
       } catch {
+        // Keep existing state
+      } finally {
         if (mounted) setLoading(false);
       }
     }
@@ -100,12 +141,10 @@ export function AuthProvider({ children }: PropsWithChildren) {
       linkSub.remove();
       listener.subscription.unsubscribe();
     };
-  }, [refreshSession]);
-
+  }, [profile, refreshSession]);
 
   useEffect(() => {
     if (!userId) {
-      setProfile(null);
       return;
     }
 
@@ -131,7 +170,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
     return () => {
       mounted = false;
     };
-  }, [refreshProfile, userId]);
+  }, [refreshProfile, session, userId]);
 
   const value = useMemo<AuthContextValue>(
     () => ({
@@ -140,9 +179,9 @@ export function AuthProvider({ children }: PropsWithChildren) {
       loading,
       refreshSession,
       refreshProfile,
-      signOut: signOutService,
+      signOut,
     }),
-    [loading, profile, refreshProfile, refreshSession, session],
+    [loading, profile, refreshProfile, refreshSession, session, signOut],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

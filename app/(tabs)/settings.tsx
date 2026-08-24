@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { Alert, KeyboardAvoidingView, NativeSyntheticEvent, Platform, Pressable, ScrollView, TextInputEndEditingEventData, View } from 'react-native';
+import { Alert, KeyboardAvoidingView, NativeSyntheticEvent, Platform, Pressable, ScrollView, Switch, TextInputEndEditingEventData, View } from 'react-native';
 import { Link, useRouter } from 'expo-router';
-import { Check, ChevronRight, Database, Download, FlaskConical, Globe, LogOut, ShieldCheck, Target, Trash2 } from 'lucide-react-native';
+import { Check, ChevronRight, Database, Download, Fingerprint, FlaskConical, Globe, Languages, Lock, LogOut, ShieldCheck, Target, Trash2 } from 'lucide-react-native';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -11,6 +11,8 @@ import { Text } from '@/components/ui/Text';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
 import { CURRENCIES } from '@/constants/app';
 import { useAuth } from '@/hooks/useAuth';
+import { useLanguage } from '@/hooks/useLanguage';
+import { useSecurity } from '@/hooks/useSecurity';
 import { useTheme } from '@/hooks/useTheme';
 import { deleteAccount, signOut, updateProfile } from '@/services/auth';
 import { listCategories, updateCategoryBudget } from '@/services/categories';
@@ -20,6 +22,8 @@ import { formatMoney } from '@/utils/format';
 
 export default function SettingsScreen() {
   const { profile, refreshProfile } = useAuth();
+  const { language, setLanguage, t } = useLanguage();
+  const { isBiometricEnabled, isBiometricSupported, biometricTypeName, toggleBiometric } = useSecurity();
   const theme = useTheme();
   const router = useRouter();
   const [seeding, setSeeding] = useState(false);
@@ -43,25 +47,21 @@ export default function SettingsScreen() {
 
   function handleBudgetInputChange(rawText: string) {
     const cleaned = rawText.replace(/[^0-9.]/g, '');
-    setBudgetInput(cleaned);
+    const parts = cleaned.split('.');
+    const sanitized = parts.length > 2 ? `${parts[0]}.${parts.slice(1).join('')}` : cleaned;
+    setBudgetInput(sanitized);
   }
 
   async function saveOverallBudget() {
-    const numeric = budgetInput.trim() ? Number(budgetInput.trim()) : null;
-    if (budgetInput.trim() && (isNaN(Number(budgetInput)) || Number(budgetInput) < 0)) {
-      Alert.alert('Invalid Budget', 'Please enter a valid positive number for your monthly budget.');
-      return;
-    }
-
     setSavingBudget(true);
-    setBudgetSuccessMsg('');
     try {
+      const numeric = budgetInput ? Number(budgetInput) : null;
       await updateProfile({ monthly_budget: numeric });
       await refreshProfile();
-      setBudgetSuccessMsg(numeric ? `Saved! Budget set to ${formatMoney(numeric, profile?.preferred_currency)}` : 'Budget cleared');
+      setBudgetSuccessMsg(numeric ? `${t('common_save')}! ${formatMoney(numeric, profile?.preferred_currency)}` : t('settings_no_limit'));
       setTimeout(() => setBudgetSuccessMsg(''), 3500);
     } catch (err) {
-      Alert.alert('Save Failed', err instanceof Error ? err.message : 'Could not save monthly budget.');
+      Alert.alert(t('common_error'), err instanceof Error ? err.message : t('common_error'));
     } finally {
       setSavingBudget(false);
     }
@@ -75,7 +75,7 @@ export default function SettingsScreen() {
       Alert.alert(count ? 'Demo Data Loaded' : 'Already Loaded', count ? `${count} expenses were added.` : 'Demo expenses are already in your account.');
       if (count) router.replace('/');
     } catch (error) {
-      Alert.alert('Could not load demo data', error instanceof Error ? error.message : 'Please try again.');
+      Alert.alert(t('common_error'), error instanceof Error ? error.message : t('common_error'));
     } finally {
       setSeeding(false);
     }
@@ -98,7 +98,7 @@ export default function SettingsScreen() {
       >
         {/* 1. APP BAR HEADER */}
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Text variant="h1">Settings</Text>
+          <Text variant="h1">{t('settings_title')}</Text>
           <ThemeToggle />
         </View>
 
@@ -117,7 +117,7 @@ export default function SettingsScreen() {
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}>
                 <ShieldCheck size={14} color={theme.colors.success} />
                 <Text variant="caption" style={{ color: theme.colors.success, fontWeight: '700' }}>
-                  Cloud Synced & Secured
+                  {t('settings_cloud_synced')}
                 </Text>
               </View>
             </View>
@@ -130,16 +130,12 @@ export default function SettingsScreen() {
             <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: theme.colors.surfaceElevated, alignItems: 'center', justifyContent: 'center' }}>
               <Target size={18} color={theme.colors.primary} />
             </View>
-            <Text variant="h3">Financial & Budget Targets</Text>
+            <Text variant="h3">{t('settings_financial_targets')}</Text>
           </View>
-
-          <Text variant="caption" muted style={{ marginTop: -4 }}>
-            Set your overall monthly budget limit to track remaining balance and health indicators on your main Dashboard.
-          </Text>
 
           <View style={{ gap: theme.spacing.xs }}>
             <Text variant="caption" muted style={{ fontWeight: '600' }}>
-              Overall Monthly Budget ({profile?.preferred_currency ?? 'NPR'})
+              {t('settings_monthly_budget')} ({profile?.preferred_currency ?? 'NPR'})
             </Text>
 
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.spacing.sm }}>
@@ -153,7 +149,7 @@ export default function SettingsScreen() {
               </View>
 
               <Button
-                title="Save Budget"
+                title={t('settings_save_budget')}
                 loading={savingBudget}
                 onPress={saveOverallBudget}
                 style={{ height: 48, paddingHorizontal: 16 }}
@@ -185,10 +181,10 @@ export default function SettingsScreen() {
           >
             <View style={{ gap: 2 }}>
               <Text variant="label" style={{ fontWeight: '600' }}>
-                Category Monthly Budgets
+                {t('settings_category_budgets')}
               </Text>
               <Text variant="caption" muted>
-                {configuredCategoryCount > 0 ? `${configuredCategoryCount} category limits set` : 'Set individual limits per category'}
+                {configuredCategoryCount > 0 ? `${configuredCategoryCount} ${t('settings_category_budgets')}` : t('settings_set_limit')}
               </Text>
             </View>
             <ChevronRight
@@ -204,7 +200,7 @@ export default function SettingsScreen() {
                 <Input
                   key={category.id}
                   label={`${category.icon} ${category.name}`}
-                  placeholder="No limit"
+                  placeholder={t('settings_no_limit')}
                   keyboardType="numeric"
                   defaultValue={category.budget_monthly ? String(category.budget_monthly) : ''}
                   onEndEditing={(event: NativeSyntheticEvent<TextInputEndEditingEventData>) => {
@@ -219,7 +215,89 @@ export default function SettingsScreen() {
           ) : null}
         </Card>
 
+        {/* 4. LANGUAGE & REGION CARD */}
+        <Card style={{ gap: theme.spacing.md, padding: theme.spacing.lg }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.spacing.xs }}>
+            <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: theme.colors.surfaceElevated, alignItems: 'center', justifyContent: 'center' }}>
+              <Languages size={18} color={theme.colors.primary} />
+            </View>
+            <Text variant="h3">{t('settings_language')} / Language</Text>
+          </View>
 
+          <View style={{ flexDirection: 'row', gap: theme.spacing.xs }}>
+            <Pressable
+              onPress={() => setLanguage('en')}
+              style={{
+                flex: 1,
+                paddingVertical: theme.spacing.md,
+                paddingHorizontal: 4,
+                borderRadius: theme.radius.md,
+                borderWidth: 1.5,
+                borderColor: language === 'en' ? theme.colors.primary : theme.colors.border,
+                backgroundColor: language === 'en' ? (theme.isDark ? 'rgba(129, 140, 248, 0.15)' : 'rgba(79, 70, 229, 0.08)') : theme.colors.surfaceElevated,
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 2,
+              }}
+            >
+              <Text style={{ fontSize: 20 }}>🇺🇸</Text>
+              <Text variant="caption" style={{ fontWeight: '700', color: language === 'en' ? theme.colors.primary : theme.colors.text }}>
+                English
+              </Text>
+              <Text variant="caption" muted style={{ fontSize: 10 }}>
+                (EN)
+              </Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => setLanguage('hi')}
+              style={{
+                flex: 1,
+                paddingVertical: theme.spacing.md,
+                paddingHorizontal: 4,
+                borderRadius: theme.radius.md,
+                borderWidth: 1.5,
+                borderColor: language === 'hi' ? theme.colors.primary : theme.colors.border,
+                backgroundColor: language === 'hi' ? (theme.isDark ? 'rgba(129, 140, 248, 0.15)' : 'rgba(79, 70, 229, 0.08)') : theme.colors.surfaceElevated,
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 2,
+              }}
+            >
+              <Text style={{ fontSize: 20 }}>🇮🇳</Text>
+              <Text variant="caption" style={{ fontWeight: '700', color: language === 'hi' ? theme.colors.primary : theme.colors.text }}>
+                हिंदी
+              </Text>
+              <Text variant="caption" muted style={{ fontSize: 10 }}>
+                (HI)
+              </Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => setLanguage('ne')}
+              style={{
+                flex: 1,
+                paddingVertical: theme.spacing.md,
+                paddingHorizontal: 4,
+                borderRadius: theme.radius.md,
+                borderWidth: 1.5,
+                borderColor: language === 'ne' ? theme.colors.primary : theme.colors.border,
+                backgroundColor: language === 'ne' ? (theme.isDark ? 'rgba(129, 140, 248, 0.15)' : 'rgba(79, 70, 229, 0.08)') : theme.colors.surfaceElevated,
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 2,
+              }}
+            >
+              <Text style={{ fontSize: 20 }}>🇳🇵</Text>
+              <Text variant="caption" style={{ fontWeight: '700', color: language === 'ne' ? theme.colors.primary : theme.colors.text }}>
+                नेपाली
+              </Text>
+              <Text variant="caption" muted style={{ fontSize: 10 }}>
+                (NE)
+              </Text>
+            </Pressable>
+          </View>
+        </Card>
 
         {/* 5. APP PREFERENCES CARD */}
         <Card style={{ gap: theme.spacing.md, padding: theme.spacing.lg }}>
@@ -227,11 +305,11 @@ export default function SettingsScreen() {
             <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: theme.colors.surfaceElevated, alignItems: 'center', justifyContent: 'center' }}>
               <Globe size={18} color={theme.colors.primary} />
             </View>
-            <Text variant="h3">App Preferences</Text>
+            <Text variant="h3">{t('settings_app_preferences')}</Text>
           </View>
 
           <Select
-            label="Preferred Currency"
+            label={t('settings_currency')}
             value={profile?.preferred_currency ?? 'NPR'}
             options={CURRENCIES.map((currency) => ({ label: currency, value: currency }))}
             onChange={(preferred_currency) => updateProfile({ preferred_currency }).then(refreshProfile)}
@@ -244,39 +322,107 @@ export default function SettingsScreen() {
             <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: theme.colors.surfaceElevated, alignItems: 'center', justifyContent: 'center' }}>
               <Database size={18} color={theme.colors.primary} />
             </View>
-            <Text variant="h3">Data Management</Text>
+            <Text variant="h3">{t('settings_data_management')}</Text>
           </View>
 
           <Link href="/export" asChild>
-            <Button title="Export Expense Data (CSV)" variant="secondary" icon={Download} />
+            <Button title={t('settings_export_csv')} variant="secondary" icon={Download} />
           </Link>
-          <Button title="Load Demo Expenses" variant="secondary" icon={FlaskConical} loading={seeding} onPress={loadDemoData} />
+          <Button title={t('settings_load_demo')} variant="secondary" icon={FlaskConical} loading={seeding} onPress={loadDemoData} />
         </Card>
 
-        {/* 7. ACCOUNT & DANGER ZONE */}
-        <Card style={{ gap: theme.spacing.md, padding: theme.spacing.lg, borderColor: theme.colors.danger, borderWidth: 1 }}>
-          <Text variant="h3" style={{ color: theme.colors.danger }}>Account & Security</Text>
-
-          <View style={{ gap: theme.spacing.sm }}>
-            <Button title="Sign Out" variant="secondary" icon={LogOut} onPress={signOut} />
-            <Button
-              title="Delete Account"
-              variant="destructive"
-              icon={Trash2}
-              onPress={() =>
-                Alert.alert('Delete Account?', 'This will permanently remove your SpendFlow account and all expense history.', [
-                  { text: 'Cancel', style: 'cancel' },
-                  { text: 'Delete', style: 'destructive', onPress: () => deleteAccount() },
-                ])
-              }
+        {/* 7. APP SECURITY & BIOMETRIC LOCK CARD */}
+        <Card style={{ gap: theme.spacing.md, padding: theme.spacing.lg }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.spacing.xs }}>
+              <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: theme.colors.surfaceElevated, alignItems: 'center', justifyContent: 'center' }}>
+                <Fingerprint size={18} color={theme.colors.primary} />
+              </View>
+              <Text variant="h3">{t('settings_biometric_lock')}</Text>
+            </View>
+            <Switch
+              value={isBiometricEnabled}
+              onValueChange={(val) => {
+                void toggleBiometric(val).then((success) => {
+                  if (!success && val) {
+                    Alert.alert(t('common_error'), t('security_not_supported'));
+                  }
+                });
+              }}
+              trackColor={{ false: theme.colors.border, true: theme.colors.primary }}
+              thumbColor="#FFFFFF"
             />
           </View>
+
+          <Text variant="caption" muted style={{ lineHeight: 18 }}>
+            {t('settings_biometric_desc')} ({biometricTypeName})
+          </Text>
+
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: theme.colors.surfaceElevated, padding: theme.spacing.sm, borderRadius: theme.radius.sm }}>
+            <ShieldCheck size={16} color={isBiometricEnabled ? theme.colors.success : theme.colors.textMuted} />
+            <Text variant="caption" style={{ color: isBiometricEnabled ? theme.colors.success : theme.colors.textMuted, fontWeight: '700' }}>
+              {isBiometricEnabled ? `${t('settings_biometric_enabled')} (${biometricTypeName})` : t('settings_biometric_disabled')}
+            </Text>
+          </View>
+        </Card>
+
+        {/* 8. ACCOUNT SESSION (SIGN OUT) */}
+        <Card style={{ gap: theme.spacing.sm, padding: theme.spacing.lg }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.spacing.xs }}>
+            <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: theme.colors.surfaceElevated, alignItems: 'center', justifyContent: 'center' }}>
+              <LogOut size={18} color={theme.colors.primary} />
+            </View>
+            <Text variant="h3">{t('settings_profile')}</Text>
+          </View>
+
+          <Text variant="caption" muted style={{ marginBottom: 4 }}>
+            {profile?.email}
+          </Text>
+
+          <Button title={t('settings_sign_out')} variant="secondary" icon={LogOut} onPress={signOut} />
+        </Card>
+
+        {/* 9. SEPARATE DANGER ZONE (DELETE ACCOUNT) */}
+        <Card style={{ gap: theme.spacing.sm, padding: theme.spacing.md, backgroundColor: theme.isDark ? 'rgba(239, 68, 68, 0.06)' : 'rgba(239, 68, 68, 0.04)', borderColor: 'rgba(239, 68, 68, 0.25)', borderWidth: 1, marginTop: theme.spacing.sm }}>
+          <Text variant="caption" style={{ color: theme.colors.danger, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+            ⚠️ Danger Zone
+          </Text>
+          <Text variant="caption" muted style={{ fontSize: 11, lineHeight: 16 }}>
+            Permanently delete your account and all associated transactions. This action cannot be undone.
+          </Text>
+
+          <Pressable
+            onPress={() =>
+              Alert.alert(t('settings_delete_account'), t('settings_delete_confirm'), [
+                { text: t('common_cancel'), style: 'cancel' },
+                { text: t('common_delete'), style: 'destructive', onPress: () => deleteAccount() },
+              ])
+            }
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 6,
+              paddingVertical: 10,
+              paddingHorizontal: 12,
+              borderRadius: theme.radius.sm,
+              borderWidth: 1,
+              borderColor: 'rgba(239, 68, 68, 0.35)',
+              backgroundColor: theme.isDark ? 'rgba(239, 68, 68, 0.12)' : 'rgba(239, 68, 68, 0.08)',
+              marginTop: 4,
+            }}
+          >
+            <Trash2 size={14} color={theme.colors.danger} />
+            <Text variant="caption" style={{ color: theme.colors.danger, fontWeight: '700' }}>
+              {t('settings_delete_account')}
+            </Text>
+          </Pressable>
         </Card>
 
         {/* App Version Footer */}
         <View style={{ alignItems: 'center', gap: 4, marginTop: theme.spacing.xs }}>
           <Text variant="caption" muted style={{ fontWeight: '600' }}>SpendFlow v1.0.0</Text>
-          <Text variant="caption" muted style={{ fontSize: 11 }}>Cloud Synced Personal Expense Manager</Text>
+          <Text variant="caption" muted style={{ fontSize: 11 }}>See Where Your Money Flows</Text>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>

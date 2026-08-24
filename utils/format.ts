@@ -29,7 +29,7 @@ export function parseTimeInput(value?: string | null) {
   return `${String(hour24).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00`;
 }
 
-export function formatTimeForInput(value?: string | null) {
+export function formatTime12(value?: string | null) {
   if (!value) return '';
 
   const match = value.match(/^(\d{1,2}):(\d{2})/);
@@ -39,6 +39,10 @@ export function formatTimeForInput(value?: string | null) {
   const period = hour24 >= 12 ? 'PM' : 'AM';
   const hour12 = hour24 % 12 || 12;
   return `${hour12}:${match[2]} ${period}`;
+}
+
+export function formatTimeForInput(value?: string | null) {
+  return formatTime12(value);
 }
 
 export function currentFormattedTime() {
@@ -107,6 +111,21 @@ export function sumExpenses(
     const converted = convertCurrency(amount, expense.currency || 'NPR', targetCurrency, rates);
     return total + converted;
   }, 0);
+}
+
+export function formatBudgetPercent(spent: number, budget: number): string {
+  if (budget <= 0) return '0%';
+  const ratio = spent / budget;
+  if (spent >= budget) {
+    return `${Math.round(ratio * 100)}%`;
+  }
+  // When there is still budget remaining, never falsely round up to 100%
+  const rounded = Math.round(ratio * 100);
+  if (rounded >= 100) {
+    const oneDec = Math.floor(ratio * 1000) / 10;
+    return `${oneDec}%`;
+  }
+  return `${rounded}%`;
 }
 
 export function groupByCategory(

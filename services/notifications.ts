@@ -62,37 +62,51 @@ export async function checkAndNotifyBudgetThreshold(
   const currentMonthKey = new Date().toISOString().slice(0, 7); // e.g. "2026-08"
   const pct = Math.floor((monthTotal / monthlyBudget) * 100);
 
-  for (const item of THRESHOLDS) {
-    if (pct >= item.percent) {
-      const storageKey = `@spendflow_alert_sent_${currentMonthKey}_${item.percent}`;
-      const alreadySent = await AsyncStorage.getItem(storageKey).catch(() => null);
+  // Find all crossed thresholds in descending order
+  const crossedThresholds = [...THRESHOLDS].reverse().filter((item) => pct >= item.percent);
+  if (!crossedThresholds.length) return;
 
-      if (!alreadySent) {
-        const hasPermission = await requestNotificationPermissions();
-        if (hasPermission) {
-          let bodyMsg = '';
-          if (item.percent >= 100) {
-            const excess = monthTotal - monthlyBudget;
-            bodyMsg = `You have spent ${formatMoney(monthTotal, currency)} against your ${formatMoney(monthlyBudget, currency)} limit (Over by ${formatMoney(excess, currency)}).`;
-          } else {
-            const remaining = monthlyBudget - monthTotal;
-            bodyMsg = `You have used ${pct}% (${formatMoney(monthTotal, currency)}) of your ${formatMoney(monthlyBudget, currency)} budget. ${formatMoney(remaining, currency)} remaining.`;
-          }
-
-          await Notifications.scheduleNotificationAsync({
-            content: {
-              title: item.title,
-              body: bodyMsg,
-              data: { type: 'budget_threshold', percent: item.percent },
-              sound: true,
-            },
-            trigger: null, // Send immediately
-          });
-
-          await AsyncStorage.setItem(storageKey, 'true');
-        }
-      }
+  // Find the single highest crossed threshold that has not been sent yet
+  let highestUnsent: typeof THRESHOLDS[number] | null = null;
+  for (const item of crossedThresholds) {
+    const storageKey = `@spendflow_alert_sent_${currentMonthKey}_${item.percent}`;
+    const alreadySent = await AsyncStorage.getItem(storageKey).catch(() => null);
+    if (!alreadySent) {
+      highestUnsent = item;
+      break;
     }
+  }
+
+  if (!highestUnsent) return;
+
+  // Mark all thresholds at or below highestUnsent as acknowledged so backlog alerts never spam
+  for (const item of THRESHOLDS) {
+    if (item.percent <= highestUnsent.percent) {
+      const storageKey = `@spendflow_alert_sent_${currentMonthKey}_${item.percent}`;
+      await AsyncStorage.setItem(storageKey, 'true').catch(() => {});
+    }
+  }
+
+  const hasPermission = await requestNotificationPermissions();
+  if (hasPermission) {
+    let bodyMsg = '';
+    if (highestUnsent.percent >= 100) {
+      const excess = monthTotal - monthlyBudget;
+      bodyMsg = `You have spent ${formatMoney(monthTotal, currency)} against your ${formatMoney(monthlyBudget, currency)} limit (Over by ${formatMoney(excess, currency)}).`;
+    } else {
+      const remaining = monthlyBudget - monthTotal;
+      bodyMsg = `You have used ${pct}% (${formatMoney(monthTotal, currency)}) of your ${formatMoney(monthlyBudget, currency)} budget. ${formatMoney(remaining, currency)} remaining.`;
+    }
+
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: highestUnsent.title,
+        body: bodyMsg,
+        data: { type: 'budget_threshold', percent: highestUnsent.percent },
+        sound: true,
+      },
+      trigger: null, // Send immediately
+    });
   }
 }
 

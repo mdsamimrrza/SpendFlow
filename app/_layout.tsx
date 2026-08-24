@@ -5,6 +5,7 @@ import { useEffect } from 'react';
 import { ActivityIndicator, Platform, View } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AuthProvider } from '@/store/AuthContext';
+import { LanguageProvider } from '@/store/LanguageContext';
 import { OnboardingProvider, useOnboarding } from '@/store/OnboardingContext';
 import { ThemeProvider } from '@/store/ThemeContext';
 import { deactivateKeepAwake } from 'expo-keep-awake';
@@ -13,6 +14,9 @@ import { useTheme } from '@/hooks/useTheme';
 import { Text } from '@/components/ui/Text';
 import { AnimatedSplashScreen } from '@/components/ui/AnimatedSplashScreen';
 import { isSupabaseConfigured } from '@/utils/supabase';
+
+import { SecurityProvider } from '@/store/SecurityContext';
+import { BiometricLockOverlay } from '@/components/security/BiometricLockOverlay';
 
 function RootNavigator() {
   const { session, loading } = useAuth();
@@ -38,8 +42,8 @@ function RootNavigator() {
     const inOnboarding = segmentKey === 'onboarding';
 
     if (session) {
-      if (inAuthGroup || inOnboarding || segmentKey === '') {
-        router.replace('/');
+      if (inAuthGroup || inOnboarding || segmentKey === '' || segmentKey === '(auth)') {
+        router.replace('/(tabs)');
       }
     } else {
       if (!onboardingDone && !inOnboarding) {
@@ -73,6 +77,7 @@ function RootNavigator() {
         <Stack.Screen name="export" options={{ presentation: 'modal' }} />
       </Stack>
       <AnimatedSplashScreen visible={isLoading} />
+      <BiometricLockOverlay />
     </View>
   );
 }
@@ -80,13 +85,17 @@ function RootNavigator() {
 export default function Layout() {
   return (
     <SafeAreaProvider>
-      <AuthProvider>
-        <ThemeProvider>
-          <OnboardingProvider>
-            <RootNavigator />
-          </OnboardingProvider>
-        </ThemeProvider>
-      </AuthProvider>
+      <LanguageProvider>
+        <AuthProvider>
+          <SecurityProvider>
+            <ThemeProvider>
+              <OnboardingProvider>
+                <RootNavigator />
+              </OnboardingProvider>
+            </ThemeProvider>
+          </SecurityProvider>
+        </AuthProvider>
+      </LanguageProvider>
     </SafeAreaProvider>
   );
 }

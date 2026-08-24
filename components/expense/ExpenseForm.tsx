@@ -17,6 +17,7 @@ import { TimePickerModal } from '@/components/ui/TimePickerModal';
 import { CURRENCIES, PAYMENT_METHODS } from '@/constants/app';
 import { useAuth } from '@/hooks/useAuth';
 import { useExpenses } from '@/hooks/useExpenses';
+import { useLanguage } from '@/hooks/useLanguage';
 import { useTheme } from '@/hooks/useTheme';
 import { listCategories } from '@/services/categories';
 import { getExpense, softDeleteExpense } from '@/services/expenses';
@@ -46,6 +47,7 @@ const schema = z.object({
 
 export function ExpenseForm({ expenseId }: { expenseId?: string }) {
   const { profile } = useAuth();
+  const { t } = useLanguage();
   const theme = useTheme();
   const router = useRouter();
   const expenses = useExpenses(profile?.id);
@@ -68,6 +70,43 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
     receipt_image_url: null,
   });
 
+  const [rawAmount, setRawAmount] = useState('');
+
+  useEffect(() => {
+    if (!profile?.id) return;
+    listCategories(profile.id).then((nextCategories) => {
+      setCategories(nextCategories);
+      if (!expenseId && nextCategories[0]) {
+        setForm((current) => ({ ...current, category_id: nextCategories[0].id }));
+      }
+    });
+  }, [expenseId, profile?.id]);
+
+  useEffect(() => {
+    if (!expenseId) return;
+    getExpense(expenseId).then((expense) => {
+      if (expense) {
+        setForm({
+          amount: Number(expense.amount),
+          category_id: expense.category_id,
+          currency: expense.currency,
+          description: expense.description ?? '',
+          date: expense.date,
+          time: formatTimeForInput(expense.time),
+          payment_method: expense.payment_method,
+          notes: expense.notes ?? '',
+          receipt_image_url: expense.receipt_image_url,
+        });
+        setRawAmount(String(expense.amount));
+      }
+    });
+  }, [expenseId]);
+
+  const categoryOptions = useMemo(
+    () => categories.map((category) => ({ label: `${category.icon} ${category.name}`, value: category.id })),
+    [categories],
+  );
+
   function handleBack() {
     if (router.canGoBack()) {
       router.back();
@@ -76,57 +115,23 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
     }
   }
 
-  useEffect(() => {
-    if (!profile?.id) return;
-    listCategories(profile.id).then((rows) => {
-      setCategories(rows);
-      setForm((current) => ({ ...current, category_id: current.category_id || rows[0]?.id || '' }));
-    });
-  }, [profile?.id]);
-
-  useEffect(() => {
-    if (!expenseId) return;
-    getExpense(expenseId).then((expense) =>
-      setForm({
-        amount: Number(expense.amount),
-        category_id: expense.category_id,
-        currency: expense.currency,
-        description: expense.description,
-        date: expense.date,
-        time: formatTimeForInput(expense.time),
-        payment_method: expense.payment_method,
-        notes: expense.notes,
-        receipt_image_url: expense.receipt_image_url,
-      }),
-    );
-  }, [expenseId]);
-
-  const categoryOptions = useMemo(
-    () => categories.map((category) => ({ label: `${category.icon} ${category.name}`, value: category.id })),
-    [categories],
-  );
-
-  async function submit() {
-    setSaving(true);
-    setError(null);
-    const parsed = schema.safeParse(form);
-    if (!parsed.success) {
-      setError(parsed.error.issues[0]?.message ?? 'Check the form.');
-      setSaving(false);
-      return;
-    }
-    try {
-      await expenses.save({ ...parsed.data, time: parseTimeInput(parsed.data.time) }, expenseId);
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      handleBack();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not save expense.');
-    } finally {
-      setSaving(false);
-    }
+  function handleAmountChange(text: string) {
+    const cleaned = text.replace(/[^0-9.]/g, '');
+    const parts = cleaned.split('.');
+    const sanitized = parts.length > 2 ? `${parts[0]}.${parts.slice(1).join('')}` : cleaned;
+    setRawAmount(sanitized);
+    setForm((current) => ({ ...current, amount: sanitized ? Number(sanitized) : 0 }));
   }
 
-  async function pickImage(fromCamera = false) {
+  async function chooseReceipt() {
+    Alert.alert(t('expense_attach_receipt'), '', [
+      { text: t('expense_take_photo'), onPress: () => pickImage(true) },
+      { text: t('expense_choose_photo'), onPress: () => pickImage(false) },
+      { text: t('common_cancel'), style: 'cancel' },
+    ]);
+  }
+
+  async function pickImage(fromCamera: boolean) {
     setError(null);
     try {
       if (fromCamera) {
@@ -174,22 +179,38 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
           }
           await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
         } catch (err) {
-          setError(err instanceof Error ? err.message : 'Could not attach receipt.');
+          setError(err instanceof Error ? err.message : t('common_error'));
         } finally {
           setSaving(false);
         }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not open image picker.');
+      setError(err instanceof Error ? err.message : t('common_error'));
     }
   }
 
-  function chooseReceipt() {
-    Alert.alert('Attach Receipt', 'Choose a receipt image source:', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: '📷 Take Photo', onPress: () => pickImage(true) },
-      { text: '🖼️ Choose from Gallery', onPress: () => pickImage(false) },
-    ]);
+  async function submit() {
+    setError(null);
+    const parsed = schema.safeParse(form);
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message ?? 'Invalid expense form data.');
+      return;
+    }
+    setSaving(true);
+    try {
+      const payloadToSave: ExpenseInput = {
+        ...parsed.data,
+        time: parseTimeInput(parsed.data.time),
+      };
+
+      await expenses.save(payloadToSave, expenseId);
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+      handleBack();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('common_error'));
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -200,63 +221,68 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
     >
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ padding: theme.spacing.lg, gap: theme.spacing.lg, paddingBottom: 120 }}
+        contentContainerStyle={{ padding: theme.spacing.lg, gap: theme.spacing.lg, paddingBottom: 130 }}
         keyboardShouldPersistTaps="handled"
-        automaticallyAdjustKeyboardInsets
       >
-        {/* 1. TOP HEADER & BACK BUTTON */}
+        {/* 1. APP BAR HEADER */}
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Pressable onPress={handleBack} hitSlop={8} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={t('common_back')}
+            onPress={handleBack}
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: 20,
+              backgroundColor: theme.colors.surfaceElevated,
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderWidth: 1,
+              borderColor: theme.colors.border,
+            }}
+          >
             <ArrowLeft size={20} color={theme.colors.text} />
-            <Text variant="label" style={{ fontWeight: '600' }}>Back</Text>
           </Pressable>
-          <Text variant="h3">{expenseId ? 'Edit Expense' : 'New Expense'}</Text>
-          <View style={{ width: 44 }} />
+          <Text variant="h2">{expenseId ? t('expense_edit_title') : t('expense_add_title')}</Text>
+          <View style={{ width: 40 }} />
         </View>
 
-        {/* 2. HERO AMOUNT CARD (LEFT-ALIGNED CLEAN HERO DISPLAY) */}
-        <Card style={{ gap: theme.spacing.xs, padding: theme.spacing.lg, alignItems: 'flex-start' }}>
+        {/* 2. AMOUNT HERO INPUT CARD */}
+        <Card style={{ padding: theme.spacing.xl, alignItems: 'center', gap: theme.spacing.sm }}>
           <Text variant="caption" muted style={{ textTransform: 'uppercase', letterSpacing: 0.8, fontWeight: '700' }}>
-            Amount ({form.currency})
+            {t('expense_amount')} ({form.currency})
           </Text>
-
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginVertical: theme.spacing.xs, width: '100%' }}>
-            <Text variant="h1" style={{ fontSize: 32, lineHeight: 40, fontWeight: '700', color: theme.colors.primary }}>
-              {form.currency}
-            </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', width: '100%' }}>
             <TextInput
-              keyboardType="decimal-pad"
+              value={rawAmount}
+              onChangeText={handleAmountChange}
               placeholder="0.00"
               placeholderTextColor={theme.colors.textMuted}
-              value={form.amount ? String(form.amount) : ''}
-              onChangeText={(amount) => setForm((current) => ({ ...current, amount: Number(amount) }))}
+              keyboardType="numeric"
+              autoFocus={!expenseId}
               style={{
-                flex: 1,
-                fontSize: 36,
-                lineHeight: 44,
-                fontWeight: '700',
-                color: theme.colors.text,
-                padding: 0,
-                margin: 0,
-                textAlign: 'left',
+                fontSize: 44,
+                fontWeight: '800',
+                color: theme.colors.primary,
+                textAlign: 'center',
+                minWidth: 140,
+                paddingVertical: 4,
               }}
             />
           </View>
         </Card>
 
-        {/* 3. TRANSACTION DETAILS CARD */}
+        {/* 3. CORE DETAILS CARD */}
         <Card style={{ gap: theme.spacing.md, padding: theme.spacing.lg }}>
-          <Text variant="h3">Transaction Details</Text>
-
           <Select
-            label="Category"
+            label={t('expense_category')}
             value={form.category_id}
             options={categoryOptions}
             onChange={(category_id) => setForm((current) => ({ ...current, category_id }))}
           />
 
           <Select
-            label="Currency"
+            label={t('settings_currency')}
             value={form.currency}
             options={CURRENCIES.map((currency) => ({ label: currency, value: currency }))}
             onChange={(currency) => setForm((current) => ({ ...current, currency }))}
@@ -265,7 +291,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
           {/* Payment Method Pill Selector */}
           <View style={{ gap: theme.spacing.xs }}>
             <Text variant="caption" muted style={{ fontWeight: '600' }}>
-              Payment Method
+              {t('expense_payment_method')}
             </Text>
             <View style={{ flexDirection: 'row', gap: theme.spacing.xs }}>
               {PAYMENT_METHODS.map((method) => {
@@ -303,10 +329,10 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
 
         {/* 4. DATE & TIME CARD */}
         <Card style={{ gap: theme.spacing.md, padding: theme.spacing.lg }}>
-          <Text variant="h3">Date & Time</Text>
+          <Text variant="h3">{t('expense_date')} & {t('expense_time')}</Text>
           <Pressable onPress={() => setCalendarOpen(true)}>
             <Input
-              label="Date"
+              label={t('expense_date')}
               value={form.date}
               editable={false}
               pointerEvents="none"
@@ -315,7 +341,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
           </Pressable>
 
           <TimeInput
-            label="Time"
+            label={t('expense_time')}
             value={form.time}
             onChangeTime={(time) => setForm((current) => ({ ...current, time }))}
             onOpenModal={() => setTimePickerOpen(true)}
@@ -324,16 +350,16 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
 
         {/* 5. DESCRIPTION & NOTES CARD */}
         <Card style={{ gap: theme.spacing.md, padding: theme.spacing.lg }}>
-          <Text variant="h3">Description & Notes</Text>
+          <Text variant="h3">{t('expense_description')} & {t('expense_notes')}</Text>
           <Input
-            label="Description (Optional)"
-            placeholder="e.g. Lunch with team, Groceries"
+            label={`${t('expense_description')} (${t('expense_notes_placeholder').slice(0, 8)})`}
+            placeholder={t('expense_description_placeholder')}
             value={form.description ?? ''}
             onChangeText={(description) => setForm((current) => ({ ...current, description }))}
           />
           <Input
-            label="Notes (Optional)"
-            placeholder="Add extra details..."
+            label={t('expense_notes')}
+            placeholder={t('expense_notes_placeholder')}
             multiline
             numberOfLines={3}
             value={form.notes ?? ''}
@@ -343,9 +369,9 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
 
         {/* 6. RECEIPT ATTACHMENT CARD */}
         <Card style={{ gap: theme.spacing.md, padding: theme.spacing.lg }}>
-          <Text variant="h3">Receipt Photo</Text>
+          <Text variant="h3">{t('expense_receipt')}</Text>
           <Button
-            title={form.receipt_image_url ? 'Change Receipt Photo' : 'Attach Receipt Photo'}
+            title={form.receipt_image_url ? t('expense_attach_receipt') : t('expense_attach_receipt')}
             variant="secondary"
             icon={ImagePlus}
             onPress={chooseReceipt}
@@ -392,17 +418,17 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
 
         {/* 7. ACTION BUTTONS */}
         <View style={{ gap: theme.spacing.md }}>
-          <Button title={expenseId ? 'Save Changes' : 'Add Expense'} loading={saving} onPress={submit} />
+          <Button title={expenseId ? t('expense_update') : t('expense_save')} loading={saving} onPress={submit} />
 
           {expenseId ? (
             <Button
-              title="Delete Expense"
+              title={t('expense_delete')}
               variant="destructive"
               icon={Trash2}
               onPress={() =>
-                Alert.alert('Delete expense?', 'This expense will be soft deleted.', [
-                  { text: 'Cancel', style: 'cancel' },
-                  { text: 'Delete', style: 'destructive', onPress: () => softDeleteExpense(expenseId).then(() => handleBack()) },
+                Alert.alert(t('expense_delete'), t('expense_delete_confirm'), [
+                  { text: t('common_cancel'), style: 'cancel' },
+                  { text: t('common_delete'), style: 'destructive', onPress: () => softDeleteExpense(expenseId).then(() => handleBack()) },
                 ])
               }
             />

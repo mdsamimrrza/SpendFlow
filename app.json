@@ -30,8 +30,14 @@
       [
         "expo-notifications",
         {
-          "icon": "./assets/icon.png",
-          "color": "#0F9F8E"
+          "icon": "./assets/android-icon-monochrome.png",
+          "color": "#4F46E5"
+        }
+      ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Allow SpendFlow to use Face ID to securely unlock your expense tracker."
         }
       ]
     ],

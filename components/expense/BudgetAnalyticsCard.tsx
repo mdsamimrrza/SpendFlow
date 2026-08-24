@@ -6,6 +6,7 @@ import { Card } from '@/components/ui/Card';
 import { Text } from '@/components/ui/Text';
 import { useAuth } from '@/hooks/useAuth';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
+import { useLanguage } from '@/hooks/useLanguage';
 import { useTheme } from '@/hooks/useTheme';
 import { Expense } from '@/types';
 import { formatMoney } from '@/utils/format';
@@ -20,6 +21,7 @@ export function BudgetAnalyticsCard({ expenses, targetCurrency }: BudgetAnalytic
   const router = useRouter();
   const { profile } = useAuth();
   const { convert } = useExchangeRates();
+  const { t } = useLanguage();
 
   const currency = targetCurrency ?? profile?.preferred_currency ?? 'NPR';
   const now = new Date();
@@ -35,13 +37,11 @@ export function BudgetAnalyticsCard({ expenses, targetCurrency }: BudgetAnalytic
   const monthlyBudget = profile?.monthly_budget ? Number(profile.monthly_budget) : 0;
   const isBudgetSet = monthlyBudget > 0;
 
-  const ratio = isBudgetSet ? totalMonthlySpend / monthlyBudget : 0;
-  const isOverBudget = isBudgetSet && totalMonthlySpend > monthlyBudget;
-
   // Daily budget calculations
   const dailyAllowance = isBudgetSet ? monthlyBudget / daysInMonth : 0;
   const actualDailyPace = totalMonthlySpend / Math.max(currentDay, 1);
   const projectedEndMonthTotal = actualDailyPace * daysInMonth;
+  const isOverBudget = isBudgetSet && totalMonthlySpend > monthlyBudget;
   const isHighBurnRate = isBudgetSet && actualDailyPace > dailyAllowance;
 
   return (
@@ -49,7 +49,7 @@ export function BudgetAnalyticsCard({ expenses, targetCurrency }: BudgetAnalytic
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.spacing.xs }}>
           <PieChart size={20} color={theme.colors.primary} />
-          <Text variant="h3">Budget Performance Analysis</Text>
+          <Text variant="h3">{t('budget_perf_title')}</Text>
         </View>
       </View>
 
@@ -64,10 +64,10 @@ export function BudgetAnalyticsCard({ expenses, targetCurrency }: BudgetAnalytic
           }}
         >
           <Text style={{ textAlign: 'center', color: theme.colors.textMuted }}>
-            Set an overall monthly target budget in Settings to unlock daily burn rate analysis and end-of-month projections!
+            {t('budget_perf_set_prompt')}
           </Text>
           <Pressable
-            onPress={() => router.push('/(tabs)/settings')}
+            onPress={() => router.push('/settings')}
             style={{
               marginTop: theme.spacing.xs,
               paddingHorizontal: 12,
@@ -77,7 +77,7 @@ export function BudgetAnalyticsCard({ expenses, targetCurrency }: BudgetAnalytic
             }}
           >
             <Text variant="label" style={{ color: '#FFFFFF' }}>
-              ⚙️ Set Budget in Settings
+              ⚙️ {t('home_set_budget')}
             </Text>
           </Pressable>
         </View>
@@ -88,12 +88,12 @@ export function BudgetAnalyticsCard({ expenses, targetCurrency }: BudgetAnalytic
             {/* Daily Allowance */}
             <View style={{ flex: 1, backgroundColor: theme.colors.surfaceElevated, padding: theme.spacing.md, borderRadius: theme.radius.md, gap: 4 }}>
               <Text variant="caption" muted>
-                Daily Budget Target
+                {t('budget_perf_daily_target')}
               </Text>
               <Text variant="h3" style={{ color: theme.colors.primary }}>
                 {formatMoney(dailyAllowance, currency)}
                 <Text variant="caption" muted>
-                  /day
+                  {t('budget_perf_per_day')}
                 </Text>
               </Text>
             </View>
@@ -101,12 +101,12 @@ export function BudgetAnalyticsCard({ expenses, targetCurrency }: BudgetAnalytic
             {/* Actual Daily Pace */}
             <View style={{ flex: 1, backgroundColor: theme.colors.surfaceElevated, padding: theme.spacing.md, borderRadius: theme.radius.md, gap: 4 }}>
               <Text variant="caption" muted>
-                Actual Daily Pace
+                {t('budget_perf_actual_pace')}
               </Text>
               <Text variant="h3" style={{ color: isHighBurnRate ? theme.colors.danger : theme.colors.success }}>
                 {formatMoney(actualDailyPace, currency)}
                 <Text variant="caption" muted>
-                  /day
+                  {t('budget_perf_per_day')}
                 </Text>
               </Text>
             </View>
@@ -133,15 +133,15 @@ export function BudgetAnalyticsCard({ expenses, targetCurrency }: BudgetAnalytic
             <View style={{ flex: 1 }}>
               <Text variant="label" style={{ color: isHighBurnRate || isOverBudget ? theme.colors.danger : theme.colors.success }}>
                 {isOverBudget
-                  ? `Already exceeded budget limit`
+                  ? t('budget_perf_exceeded')
                   : isHighBurnRate
-                  ? `High spending pace detected`
-                  : `Spending pace is on track`}
+                  ? t('budget_perf_high_pace')
+                  : t('budget_perf_on_track')}
               </Text>
               <Text variant="caption" muted>
                 {isOverBudget
-                  ? `Exceeded by ${formatMoney(totalMonthlySpend - monthlyBudget, currency)}`
-                  : `Projected month-end spend: ${formatMoney(projectedEndMonthTotal, currency)} (${Math.round((projectedEndMonthTotal / monthlyBudget) * 100)}% of target)`}
+                  ? `${t('budget_perf_exceeded_by')} ${formatMoney(totalMonthlySpend - monthlyBudget, currency)}`
+                  : `${t('budget_perf_projected')}: ${formatMoney(projectedEndMonthTotal, currency)} (${Math.round((projectedEndMonthTotal / monthlyBudget) * 100)}%)`}
               </Text>
             </View>
           </View>

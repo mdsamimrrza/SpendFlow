@@ -1,6 +1,6 @@
 import NetInfo from '@react-native-community/netinfo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createExpense, getCachedExpenses, listExpenses, softDeleteExpense, updateExpense } from '@/services/expenses';
 import { checkAndNotifyBudgetThreshold, notifyExpenseAdded, notifyLargeExpense } from '@/services/notifications';
 import { EXPENSE_CACHE_KEY } from '@/constants/app';
@@ -28,12 +28,21 @@ export function useExpenses(userId?: string, filters?: ExpenseFilters, sort: Sor
 
   const loadPage = useCallback(
     async (pageToLoad = 0, replace = false) => {
-      if (!userId) return;
+      if (!userId) {
+        setLoading(false);
+        return;
+      }
       if (loadingPage.current) return;
       loadingPage.current = true;
       setError(null);
-      if (pageToLoad === 0) setLoading(true);
-      else setLoadingMore(true);
+      if (pageToLoad === 0) {
+        setItems((current) => {
+          if (!current.length) setLoading(true);
+          return current;
+        });
+      } else {
+        setLoadingMore(true);
+      }
       try {
         const result = await listExpenses(userId, pageToLoad, filters, sort);
         setItems((current) => (replace ? result.items : [...current, ...result.items]));
@@ -139,7 +148,7 @@ export function useExpenses(userId?: string, filters?: ExpenseFilters, sort: Sor
     }
   };
 
-  const remove = async (id: string) => {
+  const remove = useCallback(async (id: string) => {
     const state = await NetInfo.fetch();
     const online = Boolean(state.isConnected && state.isInternetReachable !== false);
     if (!online) {
@@ -154,7 +163,10 @@ export function useExpenses(userId?: string, filters?: ExpenseFilters, sort: Sor
     await softDeleteExpense(id);
     setItems((current) => current.filter((item) => item.id !== id));
     notifyExpensesChanged();
-  };
+  }, []);
 
-  return { items, loading, loadingMore, refreshing, error, hasMore, refresh, loadMore, save, remove };
+  return useMemo(
+    () => ({ items, loading, loadingMore, refreshing, error, hasMore, refresh, loadMore, save, remove }),
+    [error, hasMore, items, loadMore, loading, loadingMore, refresh, refreshing, remove, save],
+  );
 }

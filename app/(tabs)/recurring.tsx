@@ -10,6 +10,7 @@ import { Text } from '@/components/ui/Text';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
 import { PAYMENT_METHODS } from '@/constants/app';
 import { useAuth } from '@/hooks/useAuth';
+import { useLanguage } from '@/hooks/useLanguage';
 import { useTheme } from '@/hooks/useTheme';
 import { listCategories } from '@/services/categories';
 import { createRecurringRule, deleteRecurringRule, listRecurringRules } from '@/services/recurring';
@@ -18,17 +19,18 @@ import { notifyRecurringBillDue } from '@/services/notifications';
 import { Category, PaymentMethod, RecurringFrequency, RecurringRule } from '@/types';
 import { formatMoney, isoDate } from '@/utils/format';
 
-const frequencies: { label: string; value: RecurringFrequency }[] = [
-  { label: 'Daily', value: 'daily' },
-  { label: 'Weekly', value: 'weekly' },
-  { label: 'Monthly', value: 'monthly' },
-];
-
 export default function RecurringScreen() {
   const { profile } = useAuth();
+  const { t } = useLanguage();
   const theme = useTheme();
   const [rules, setRules] = useState<RecurringRule[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+
+  const frequencies: { label: string; value: RecurringFrequency }[] = [
+    { label: t('recurring_freq_daily'), value: 'daily' },
+    { label: t('recurring_freq_weekly'), value: 'weekly' },
+    { label: t('recurring_freq_monthly'), value: 'monthly' },
+  ];
 
   // Form State
   const [amount, setAmount] = useState('');
@@ -53,7 +55,7 @@ export default function RecurringScreen() {
   }
 
   useEffect(() => {
-    load().catch((error) => Alert.alert('Could not load recurring rules', error.message));
+    load().catch((error) => Alert.alert(t('common_error'), error.message));
   }, [profile?.id]);
 
   const categoryOptions = useMemo(
@@ -63,59 +65,58 @@ export default function RecurringScreen() {
 
   const preferredCurrency = profile?.preferred_currency ?? 'NPR';
 
-  // Calculate monthly total commitments
-  const totalMonthlyCommitment = useMemo(() => {
-    return rules.reduce((sum, rule) => {
-      const val = Number(rule.amount) || 0;
-      if (rule.frequency === 'daily') return sum + val * 30;
-      if (rule.frequency === 'weekly') return sum + val * 4;
-      return sum + val; // monthly
+  // Calculate total monthly commitment
+  const monthlyTotal = useMemo(() => {
+    return rules.reduce((acc, rule) => {
+      const amt = Number(rule.amount) || 0;
+      if (rule.frequency === 'daily') return acc + amt * 30;
+      if (rule.frequency === 'weekly') return acc + amt * 4.33;
+      return acc + amt;
     }, 0);
   }, [rules]);
 
   async function addRule() {
-    const numericAmount = Number(amount);
-    if (!profile?.id || !numericAmount || numericAmount <= 0 || !categoryId) {
-      Alert.alert('Check the form', 'Please enter a valid positive amount and select a category.');
+    if (!profile?.id || !amount || Number(amount) <= 0 || !categoryId) {
+      Alert.alert(t('common_error'), t('expense_amount_placeholder'));
       return;
     }
+
     setSaving(true);
     try {
       await createRecurringRule(profile.id, {
-        amount: numericAmount,
         category_id: categoryId,
+        amount: Number(amount),
         currency: preferredCurrency,
-        description: description.trim() || null,
-        payment_method: paymentMethod,
+        description: description.trim() || undefined,
         frequency,
         next_due_date: nextDueDate,
+        payment_method: paymentMethod,
       });
 
-      // Trigger automatic recurring bill notification
-      const cat = categories.find((c) => c.id === categoryId);
-      void notifyRecurringBillDue(
-        description.trim() || cat?.name || 'Recurring Bill',
-        numericAmount,
-        nextDueDate,
-        preferredCurrency,
-      );
-
+      // Reset Form & Close
       setAmount('');
       setDescription('');
       setShowAddForm(false);
       await load();
 
+      // Trigger Smart Bill Reminder
+      try {
+        const catName = categories.find((c) => c.id === categoryId)?.name || 'Recurring Bill';
+        void notifyRecurringBillDue(description || catName, Number(amount), preferredCurrency);
+      } catch {
+        // Notification check
+      }
     } catch (error) {
-      Alert.alert('Could not save rule', error instanceof Error ? error.message : 'Please try again.');
+      Alert.alert(t('common_error'), error instanceof Error ? error.message : t('common_error'));
     } finally {
       setSaving(false);
     }
   }
 
-  function applyPreset(name: string, defaultAmount: string, defaultFreq: RecurringFrequency) {
-    setDescription(name);
-    setAmount(defaultAmount);
-    setFrequency(defaultFreq);
+  function applyPreset(presetDesc: string, presetAmt: string, presetFreq: RecurringFrequency) {
+    setDescription(presetDesc);
+    setAmount(presetAmt);
+    setFrequency(presetFreq);
     setShowAddForm(true);
   }
 
@@ -127,88 +128,87 @@ export default function RecurringScreen() {
     >
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ padding: theme.spacing.lg, gap: theme.spacing.lg, paddingBottom: 120 }}
+        contentContainerStyle={{ padding: theme.spacing.lg, gap: theme.spacing.lg, paddingBottom: 130 }}
         keyboardShouldPersistTaps="handled"
-        automaticallyAdjustKeyboardInsets
       >
-        {/* 1. TOP HEADER & APP BAR */}
+        {/* 1. APP BAR HEADER */}
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
           <View style={{ gap: 2 }}>
-            <Text variant="h1">Recurring Bills</Text>
-            <Text variant="caption" muted>Automate your subscriptions & fixed bills</Text>
+            <Text variant="h1">{t('recurring_title')}</Text>
+            <Text variant="caption" muted>
+              {rules.length} {t('recurring_active_rules')}
+            </Text>
           </View>
           <ThemeToggle />
         </View>
 
-        {/* 2. SUMMARY HERO CARD */}
-        <Card style={{ padding: theme.spacing.lg, gap: theme.spacing.md, backgroundColor: theme.isDark ? '#14262A' : '#EAF7F5', borderColor: theme.colors.primary }}>
+        {/* 2. MONTHLY COMMITMENT HERO CARD */}
+        <Card style={{ padding: theme.spacing.lg, gap: theme.spacing.md }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <Repeat size={20} color={theme.colors.primary} />
-              <Text variant="caption" style={{ fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8, color: theme.colors.primary }}>
-                Monthly Commitment
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Repeat size={18} color={theme.colors.primary} />
+              <Text variant="caption" muted style={{ textTransform: 'uppercase', letterSpacing: 0.8, fontWeight: '700' }}>
+                {t('recurring_monthly_commitments')}
               </Text>
             </View>
-            <View style={{ backgroundColor: theme.colors.primary, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 }}>
-              <Text style={{ color: theme.isDark ? '#06201D' : '#FFFFFF', fontSize: 12, fontWeight: '700' }}>
-                {rules.length} {rules.length === 1 ? 'Active Rule' : 'Active Rules'}
+            <View style={{ backgroundColor: theme.colors.primary, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 12 }}>
+              <Text style={{ fontSize: 11, fontWeight: '700', color: theme.isDark ? '#06201D' : '#FFFFFF' }}>
+                {rules.length} {t('recurring_active_rules')}
               </Text>
             </View>
           </View>
 
-          <Text variant="h1" style={{ fontSize: 34, lineHeight: 42, color: theme.colors.primary, fontWeight: '800' }}>
-            {formatMoney(totalMonthlyCommitment, preferredCurrency)}
-          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6 }}>
+            <Text variant="h1" style={{ fontSize: 34, lineHeight: 40, fontWeight: '800' }}>
+              {formatMoney(monthlyTotal, preferredCurrency)}
+            </Text>
+            <Text variant="caption" muted style={{ fontWeight: '600' }}>{t('recurring_per_month')}</Text>
+          </View>
 
-          <Text variant="caption" muted style={{ marginTop: -4 }}>
-            Estimated total fixed expenses auto-renewing each month.
-          </Text>
+          {/* Quick Action Button: Toggle Add Form */}
+          <Button
+            title={showAddForm ? t('common_cancel') : `+ ${t('recurring_add_new')}`}
+            variant={showAddForm ? 'secondary' : 'primary'}
+            onPress={() => setShowAddForm(!showAddForm)}
+          />
         </Card>
 
-        {/* 3. ADD RECURRING RULE BUTTON / TOGGLE FORM */}
-        {!showAddForm ? (
-          <Button
-            title="Create Recurring Rule"
-            icon={Plus}
-            onPress={() => setShowAddForm(true)}
-          />
-        ) : (
-          <Card style={{ gap: theme.spacing.md, padding: theme.spacing.lg }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-              <Text variant="h3">New Recurring Rule</Text>
-              <Pressable onPress={() => setShowAddForm(false)} hitSlop={8}>
-                <Text variant="caption" style={{ color: theme.colors.danger, fontWeight: '600' }}>Cancel</Text>
-              </Pressable>
-            </View>
+        {/* 3. COLLAPSIBLE ADD RECURRING RULE FORM */}
+        {showAddForm && (
+          <Card style={{ padding: theme.spacing.lg, gap: theme.spacing.md, borderWidth: 1.5, borderColor: theme.colors.primary }}>
+            <Text variant="h2">{t('recurring_add_new')}</Text>
 
-            {/* Amount Hero Input */}
+            {/* Currency + Amount Input */}
             <View style={{ gap: theme.spacing.xs }}>
-              <Text variant="caption" muted style={{ fontWeight: '600' }}>Amount ({preferredCurrency})</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: theme.colors.surfaceElevated, borderWidth: 1, borderColor: theme.colors.border, borderRadius: theme.radius.md, paddingHorizontal: theme.spacing.md, height: 50 }}>
-                <Text variant="h3" style={{ color: theme.colors.primary }}>{preferredCurrency}</Text>
-                <TextInput
-                  keyboardType="decimal-pad"
-                  placeholder="0.00"
-                  placeholderTextColor={theme.colors.textMuted}
-                  value={amount}
-                  onChangeText={(val) => setAmount(val.replace(/[^0-9.]/g, ''))}
-                  style={{ flex: 1, fontSize: 20, fontWeight: '700', color: theme.colors.text }}
-                />
+              <Text variant="caption" muted style={{ fontWeight: '600' }}>{t('recurring_amount')}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.spacing.sm }}>
+                <View style={{ backgroundColor: theme.colors.surfaceElevated, height: 48, paddingHorizontal: 14, borderRadius: theme.radius.md, justifyContent: 'center', borderWidth: 1, borderColor: theme.colors.border }}>
+                  <Text variant="label" style={{ fontWeight: '700' }}>{preferredCurrency}</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Input
+                    placeholder="0.00"
+                    keyboardType="numeric"
+                    value={amount}
+                    onChangeText={setAmount}
+                    autoFocus
+                  />
+                </View>
               </View>
             </View>
 
             <Input
-              label="Description / Label"
+              label={t('recurring_description')}
               placeholder="e.g. House Rent, Netflix, Wi-Fi"
               value={description}
               onChangeText={setDescription}
             />
 
-            <Select label="Category" value={categoryId} options={categoryOptions} onChange={setCategoryId} />
+            <Select label={t('recurring_category')} value={categoryId} options={categoryOptions} onChange={setCategoryId} />
 
             {/* Frequency Pill Selector */}
             <View style={{ gap: theme.spacing.xs }}>
-              <Text variant="caption" muted style={{ fontWeight: '600' }}>Frequency</Text>
+              <Text variant="caption" muted style={{ fontWeight: '600' }}>{t('recurring_frequency')}</Text>
               <View style={{ flexDirection: 'row', gap: theme.spacing.xs }}>
                 {frequencies.map((item) => {
                   const active = frequency === item.value;
@@ -238,7 +238,7 @@ export default function RecurringScreen() {
 
             {/* Next Due Date Picker */}
             <View style={{ gap: theme.spacing.xs }}>
-              <Text variant="caption" muted style={{ fontWeight: '600' }}>First / Next Due Date</Text>
+              <Text variant="caption" muted style={{ fontWeight: '600' }}>{t('recurring_next_due')}</Text>
               <Pressable onPress={() => setCalendarOpen(true)}>
                 <Input
                   value={nextDueDate}
@@ -251,7 +251,7 @@ export default function RecurringScreen() {
 
             {/* Payment Method Pills */}
             <View style={{ gap: theme.spacing.xs }}>
-              <Text variant="caption" muted style={{ fontWeight: '600' }}>Payment Method</Text>
+              <Text variant="caption" muted style={{ fontWeight: '600' }}>{t('expense_payment_method')}</Text>
               <View style={{ flexDirection: 'row', gap: theme.spacing.xs }}>
                 {PAYMENT_METHODS.map((method) => {
                   const active = paymentMethod === method;
@@ -278,25 +278,25 @@ export default function RecurringScreen() {
               </View>
             </View>
 
-            <Button title="Save Recurring Rule" icon={CalendarClock} loading={saving} onPress={addRule} />
+            <Button title={t('recurring_save')} icon={CalendarClock} loading={saving} onPress={addRule} />
           </Card>
         )}
 
         {/* 4. ACTIVE RULES LIST */}
         <View style={{ gap: theme.spacing.md }}>
-          <Text variant="h2">Active Commitments ({rules.length})</Text>
+          <Text variant="h2">{t('recurring_active_rules')} ({rules.length})</Text>
 
           {rules.length === 0 ? (
             <Card style={{ gap: theme.spacing.md, padding: theme.spacing.xl, alignItems: 'center' }}>
               <Sparkles size={36} color={theme.colors.primary} />
-              <Text variant="h3" style={{ textAlign: 'center' }}>No Recurring Rules Yet</Text>
+              <Text variant="h3" style={{ textAlign: 'center' }}>{t('recurring_no_rules_title')}</Text>
               <Text muted style={{ textAlign: 'center', fontSize: 13, lineHeight: 18 }}>
-                Add your fixed monthly bills like Rent, Subscriptions, or Utilities to track commitments automatically.
+                {t('recurring_no_rules_message')}
               </Text>
 
               {/* Preset Suggestion Chips */}
               <View style={{ gap: theme.spacing.xs, width: '100%', marginTop: theme.spacing.xs }}>
-                <Text variant="caption" muted style={{ textAlign: 'center', fontWeight: '600' }}>Quick Preset Suggestions:</Text>
+                <Text variant="caption" muted style={{ textAlign: 'center', fontWeight: '600' }}>{t('recurring_quick_add')}:</Text>
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center' }}>
                   <Pressable onPress={() => applyPreset('🏠 House Rent', '25000', 'monthly')} style={{ backgroundColor: theme.colors.surfaceElevated, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, borderWidth: 1, borderColor: theme.colors.border }}>
                     <Text variant="caption" style={{ fontWeight: '600' }}>🏠 House Rent</Text>
@@ -343,18 +343,18 @@ export default function RecurringScreen() {
                 {/* Footer Sub-row */}
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: theme.colors.border, paddingTop: theme.spacing.xs, marginTop: theme.spacing.xs }}>
                   <Text variant="caption" muted>
-                    Next Due: <Text variant="caption" style={{ fontWeight: '700', color: theme.colors.text }}>{rule.next_due_date}</Text>
+                    {t('recurring_next_due')}: <Text variant="caption" style={{ fontWeight: '700', color: theme.colors.text }}>{rule.next_due_date}</Text>
                   </Text>
 
                   <Button
-                    title="Delete"
+                    title={t('common_delete')}
                     variant="ghost"
                     icon={Trash2}
                     style={{ height: 32, paddingHorizontal: 8 }}
                     onPress={() =>
-                      Alert.alert('Delete Rule?', 'Future recurring expenses will no longer be generated for this commitment.', [
-                        { text: 'Cancel', style: 'cancel' },
-                        { text: 'Delete', style: 'destructive', onPress: () => deleteRecurringRule(rule.id).then(load) },
+                      Alert.alert(t('common_delete'), t('settings_delete_confirm'), [
+                        { text: t('common_cancel'), style: 'cancel' },
+                        { text: t('common_delete'), style: 'destructive', onPress: () => deleteRecurringRule(rule.id).then(load) },
                       ])
                     }
                   />

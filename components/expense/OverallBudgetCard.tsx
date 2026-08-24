@@ -8,7 +8,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { useTheme } from '@/hooks/useTheme';
 import { Expense } from '@/types';
-import { formatMoney } from '@/utils/format';
+import { formatBudgetPercent, formatMoney } from '@/utils/format';
 
 interface OverallBudgetCardProps {
   expenses: Expense[];
@@ -86,7 +86,7 @@ export function OverallBudgetCard({ expenses, targetCurrency }: OverallBudgetCar
             No overall monthly budget set. Set your target limit in Settings to monitor what's remaining each month!
           </Text>
           <Pressable
-            onPress={() => router.push('/(tabs)/settings')}
+            onPress={() => router.push('/settings')}
             style={{
               marginTop: theme.spacing.xs,
               paddingHorizontal: 12,
@@ -172,7 +172,7 @@ export function OverallBudgetCard({ expenses, targetCurrency }: OverallBudgetCar
               </View>
 
               <Text variant="caption" muted>
-                {Math.round(ratio * 100)}% used
+                {formatBudgetPercent(totalMonthlySpend, monthlyBudget)} used
               </Text>
             </View>
           </View>

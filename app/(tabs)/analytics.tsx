@@ -8,20 +8,29 @@ import { SummaryCard } from '@/components/expense/SummaryCard';
 import { Select } from '@/components/ui/Select';
 import { Text } from '@/components/ui/Text';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
-import { PERIODS } from '@/constants/app';
 import { useAuth } from '@/hooks/useAuth';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { useExpenses } from '@/hooks/useExpenses';
+import { useLanguage } from '@/hooks/useLanguage';
 import { useTheme } from '@/hooks/useTheme';
 import { PeriodKey } from '@/types';
 import { filterExpensesByPeriod, formatMoney, groupByCategory, sumExpenses } from '@/utils/format';
 
 export default function AnalyticsScreen() {
   const { profile, session } = useAuth();
+  const { t } = useLanguage();
   const theme = useTheme();
   const { rates, convert } = useExchangeRates();
   const [period, setPeriod] = useState<PeriodKey>('month');
   const expenses = useExpenses(profile?.id ?? session?.user?.id);
+
+  const PERIOD_OPTIONS: { label: string; value: PeriodKey }[] = [
+    { label: t('analytics_period_today'), value: 'today' },
+    { label: t('analytics_period_week'), value: 'week' },
+    { label: t('analytics_period_month'), value: 'month' },
+    { label: t('analytics_period_year'), value: 'year' },
+    { label: t('analytics_period_all'), value: 'all' },
+  ];
 
   useFocusEffect(
     useCallback(() => {
@@ -51,15 +60,15 @@ export default function AnalyticsScreen() {
       refreshControl={<RefreshControl refreshing={expenses.refreshing} onRefresh={expenses.refresh} />}
     >
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-        <Text variant="h1">Analytics</Text>
+        <Text variant="h1">{t('analytics_title')}</Text>
         <ThemeToggle />
       </View>
 
-      <Select label="Period" value={period} options={PERIODS} onChange={setPeriod} />
+      <Select label={t('analytics_select_period')} value={period} options={PERIOD_OPTIONS} onChange={setPeriod} />
 
       <View style={{ flexDirection: 'row', gap: theme.spacing.md }}>
-        <SummaryCard title="Total" value={formatMoney(total, preferredCurrency)} icon={BarChart3} />
-        <SummaryCard title="Largest" value={formatMoney(largest, preferredCurrency)} detail={`${filteredItems.length} transactions`} icon={BarChart3} />
+        <SummaryCard title={t('analytics_total_spending')} value={formatMoney(total, preferredCurrency)} icon={BarChart3} />
+        <SummaryCard title={t('analytics_top_category')} value={formatMoney(largest, preferredCurrency)} detail={`${filteredItems.length} ${t('analytics_total_transactions')}`} icon={BarChart3} />
       </View>
 
       <BudgetAnalyticsCard expenses={filteredItems} />
@@ -67,9 +76,9 @@ export default function AnalyticsScreen() {
       <TrendBars expenses={filteredItems} targetCurrency={preferredCurrency} />
 
       <View style={{ gap: theme.spacing.md }}>
-        <Text variant="h3">Top Categories</Text>
+        <Text variant="h3">{t('analytics_category_breakdown')}</Text>
         {categories.length === 0 ? (
-          <Text muted>No expenses found for this period.</Text>
+          <Text muted>{t('analytics_no_data_message')}</Text>
         ) : (
           categories.map((item) => (
             <View key={item.label} style={{ flexDirection: 'row', alignItems: 'center', gap: theme.spacing.md }}>

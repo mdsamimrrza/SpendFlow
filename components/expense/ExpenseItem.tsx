@@ -4,7 +4,7 @@ import { Pressable, View } from 'react-native';
 import { Alert } from 'react-native';
 import { Trash2 } from 'lucide-react-native';
 import { Expense } from '@/types';
-import { formatMoney } from '@/utils/format';
+import { formatMoney, formatTime12 } from '@/utils/format';
 import { useTheme } from '@/hooks/useTheme';
 import { Text } from '@/components/ui/Text';
 
@@ -53,16 +53,23 @@ export function ExpenseItem({ expense, onDelete }: { expense: Expense; onDelete?
             {expense.description || expense.categories?.name || 'Expense'}
           </Text>
           <Text variant="caption" muted>
-            {expense.date} · {expense.payment_method}
+            {expense.date} {expense.time ? `· 🕒 ${formatTime12(expense.time)}` : ''} · {expense.payment_method}
           </Text>
         </View>
         <View style={{ alignItems: 'flex-end', gap: 2 }}>
-          <Text variant="label" style={{ fontVariant: ['tabular-nums'] }}>
-            {formatMoney(Number(expense.amount), expense.currency)}
+          <Text variant="label" style={{ fontVariant: ['tabular-nums'], fontSize: 16, fontWeight: '800', color: theme.colors.text }}>
+            {formatMoney(convertedAmount, preferredCurrency)}
           </Text>
           {isDifferentCurrency ? (
-            <Text variant="caption" muted style={{ fontVariant: ['tabular-nums'] }}>
-              ≈ {formatMoney(convertedAmount, preferredCurrency)}
+            <Text
+              style={{
+                fontSize: 11,
+                fontWeight: '600',
+                color: theme.colors.textMuted,
+                fontVariant: ['tabular-nums'],
+              }}
+            >
+              ({formatMoney(Number(expense.amount), expense.currency)})
             </Text>
           ) : null}
         </View>
