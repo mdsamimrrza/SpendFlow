@@ -11,8 +11,8 @@ export const spacing = {
 } as const;
 
 export const radius = {
-  sm: 4,
-  md: 8,
+  sm: 6,
+  md: 10,
   lg: 16,
   full: 9999,
 } as const;
@@ -28,39 +28,47 @@ export const typography = {
   label: { fontSize: 13, lineHeight: 16, fontWeight: '700' as const },
 } as const;
 
+// THEME 1: INDIGO SAPPHIRE (LINEAR & VERCEL STYLE)
 const semantic = {
-  primary: '#0F9F8E',
-  primaryStrong: '#087C71',
-  success: '#16A34A',
-  warning: '#D97706',
-  danger: '#DC2626',
-  info: '#2563EB',
+  primary: '#4F46E5',
+  primaryStrong: '#4338CA',
+  primaryLight: '#E0E7FF',
+  accent: '#8B5CF6',
+  success: '#10B981',
+  warning: '#F59E0B',
+  danger: '#EF4444',
+  info: '#0EA5E9',
 };
 
 export const lightColors = {
   ...semantic,
-  background: '#F6F8FA',
+  background: '#F8FAFC',
   surface: '#FFFFFF',
-  surfaceElevated: '#F0F5F4',
-  text: '#111827',
-  textMuted: '#607080',
-  border: '#D9E2E7',
+  surfaceElevated: '#F1F5F9',
+  text: '#0F172A',
+  textMuted: '#64748B',
+  border: '#E2E8F0',
   input: '#FFFFFF',
-  tab: '#F9FBFB',
+  tab: '#FFFFFF',
+  accentBg: 'rgba(99, 102, 241, 0.08)',
+  cardHighlight: '#EFF6FF',
 };
 
 export const darkColors = {
   ...semantic,
-  primary: '#2DD4BF',
-  primaryStrong: '#14B8A6',
-  background: '#111316',
-  surface: '#1B2024',
-  surfaceElevated: '#252C31',
-  text: '#F3F7F7',
-  textMuted: '#A8B5BA',
-  border: '#344047',
-  input: '#20262B',
-  tab: '#171B1F',
+  primary: '#818CF8',
+  primaryStrong: '#A5B4FC',
+  primaryLight: 'rgba(129, 140, 248, 0.18)',
+  background: '#0B0F19',
+  surface: '#151D2A',
+  surfaceElevated: '#1E293B',
+  text: '#F8FAFC',
+  textMuted: '#94A3B8',
+  border: '#273549',
+  input: '#151D2A',
+  tab: '#151D2A',
+  accentBg: 'rgba(129, 140, 248, 0.18)',
+  cardHighlight: '#1E293B',
 };
 
 export type ThemeColors = typeof lightColors;

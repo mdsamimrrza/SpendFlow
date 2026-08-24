@@ -28,11 +28,10 @@ export function Button({
     ? theme.colors.surfaceElevated
     : 'transparent';
 
-  // Crystal clear high-contrast text color:
-  // In Dark mode, primary background is bright mint (#2DD4BF), so use dark text (#06201D) instead of invisible white!
+  // Crystal clear high-contrast text color for Theme 1 (Indigo Sapphire):
   const color = isPrimary
     ? theme.isDark
-      ? '#06201D'
+      ? '#0B0F19'
       : '#FFFFFF'
     : isDestructive
     ? '#FFFFFF'
