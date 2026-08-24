@@ -1,8 +1,11 @@
 import NetInfo from '@react-native-community/netinfo';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Expense, ExpenseFilters, ExpenseInput, SortKey } from '@/types';
-import { enqueueOfflineOperation } from '@/utils/offlineQueue';
 import { createExpense, getCachedExpenses, listExpenses, softDeleteExpense, updateExpense } from '@/services/expenses';
+import { checkAndNotifyBudgetThreshold, notifyExpenseAdded, notifyLargeExpense } from '@/services/notifications';
+import { Expense, ExpenseFilters, ExpenseInput, SortKey } from '@/types';
+import { currentMonthRange, sumExpenses } from '@/utils/format';
+import { enqueueOfflineOperation } from '@/utils/offlineQueue';
 
 type ExpenseChangeListener = () => void;
 const listeners = new Set<ExpenseChangeListener>();
@@ -86,6 +89,21 @@ export function useExpenses(userId?: string, filters?: ExpenseFilters, sort: Sor
     if (id) await updateExpense(id, input);
     else await createExpense(userId, input);
     notifyExpensesChanged();
+    // Trigger Smart Notification Checks in Background
+    try {
+      void notifyExpenseAdded(Number(input.amount), input.category_id || 'Expense', input.description, input.currency);
+      void notifyLargeExpense(Number(input.amount), input.category_id || 'Expense', input.currency);
+      const month = currentMonthRange();
+      const monthItems = items.filter((item) => item.date >= month.from && item.date <= month.to);
+      const monthTotal = sumExpenses(monthItems, input.currency);
+      const monthlyBudgetRaw = await AsyncStorage.getItem(`@spendflow_monthly_budget_${userId}`);
+      const monthlyBudget = monthlyBudgetRaw ? Number(monthlyBudgetRaw) : 0;
+      if (monthlyBudget > 0) {
+        void checkAndNotifyBudgetThreshold(monthTotal + Number(input.amount), monthlyBudget, input.currency);
+      }
+    } catch {
+      // Ignore background notification check errors
+    }
   };
 
   const remove = async (id: string) => {

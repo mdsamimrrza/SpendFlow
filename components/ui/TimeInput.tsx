@@ -188,7 +188,7 @@ export function TimeInput({
             <Text
               style={[
                 styles.amPmText,
-                { color: period === 'AM' ? '#FFFFFF' : theme.colors.textMuted },
+                { color: period === 'AM' ? (theme.isDark ? '#06201D' : '#FFFFFF') : theme.colors.textMuted },
               ]}
             >
               AM
@@ -204,7 +204,7 @@ export function TimeInput({
             <Text
               style={[
                 styles.amPmText,
-                { color: period === 'PM' ? '#FFFFFF' : theme.colors.textMuted },
+                { color: period === 'PM' ? (theme.isDark ? '#06201D' : '#FFFFFF') : theme.colors.textMuted },
               ]}
             >
               PM

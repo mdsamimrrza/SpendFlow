@@ -1,5 +1,6 @@
 import { endOfMonth, format, startOfMonth, subMonths } from 'date-fns';
-import { Expense } from '@/types';
+import { Expense, PeriodKey } from '@/types';
+import { convertCurrency } from '@/services/currency';
 
 export function formatMoney(amount: number, currency = 'NPR') {
   return new Intl.NumberFormat('en-NP', {
@@ -49,7 +50,6 @@ export function currentFormattedTime() {
   return `${hour12}:${String(minute).padStart(2, '0')} ${period}`;
 }
 
-
 export function currentMonthRange() {
   const now = new Date();
   return {
@@ -60,7 +60,42 @@ export function currentMonthRange() {
   };
 }
 
-import { convertCurrency } from '@/services/currency';
+export function filterExpensesByPeriod(expenses: Expense[], period: PeriodKey): Expense[] {
+  if (!period || period === 'all') return expenses;
+
+  const now = new Date();
+  const todayStr = format(now, 'yyyy-MM-dd');
+
+  if (period === 'today') {
+    return expenses.filter((e) => e.date === todayStr);
+  }
+
+  if (period === 'week') {
+    const dayOfWeek = now.getDay();
+    const distanceToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+    const monday = new Date(now);
+    monday.setDate(now.getDate() - distanceToMonday);
+    const mondayStr = format(monday, 'yyyy-MM-dd');
+
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    const sundayStr = format(sunday, 'yyyy-MM-dd');
+
+    return expenses.filter((e) => e.date >= mondayStr && e.date <= sundayStr);
+  }
+
+  if (period === 'month') {
+    const monthPrefix = format(now, 'yyyy-MM');
+    return expenses.filter((e) => e.date.startsWith(monthPrefix));
+  }
+
+  if (period === 'year') {
+    const yearPrefix = format(now, 'yyyy');
+    return expenses.filter((e) => e.date.startsWith(yearPrefix));
+  }
+
+  return expenses;
+}
 
 export function sumExpenses(
   expenses: Expense[],
@@ -79,21 +114,20 @@ export function groupByCategory(
   targetCurrency = 'NPR',
   rates?: Record<string, number>,
 ) {
-  const totals = new Map<string, { label: string; color: string; icon: string; total: number }>();
-  for (const expense of expenses) {
-    const category = expense.categories;
-    const key = expense.category_id;
-    const current = totals.get(key) ?? {
-      label: category?.name ?? 'Other',
-      color: category?.color ?? '#64748B',
-      icon: category?.icon ?? '📌',
-      total: 0,
-    };
+  const map = new Map<string, { label: string; icon: string; color: string; total: number }>();
+  expenses.forEach((expense) => {
     const amount = Number(expense.amount) || 0;
     const converted = convertCurrency(amount, expense.currency || 'NPR', targetCurrency, rates);
+    const categoryName = expense.categories?.name ?? 'Other';
+    const current = map.get(categoryName) ?? {
+      label: categoryName,
+      icon: expense.categories?.icon ?? '💳',
+      color: expense.categories?.color ?? '#0F9F8E',
+      total: 0,
+    };
     current.total += converted;
-    totals.set(key, current);
-  }
-  return [...totals.values()].sort((a, b) => b.total - a.total);
-}
+    map.set(categoryName, current);
+  });
 
+  return Array.from(map.values()).sort((a, b) => b.total - a.total);
+}

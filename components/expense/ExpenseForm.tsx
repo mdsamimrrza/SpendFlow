@@ -1,12 +1,13 @@
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
-import { Calendar as CalendarIcon, Clock, ImagePlus } from 'lucide-react-native';
+import { ArrowLeft, ImagePlus, Trash2 } from 'lucide-react-native';
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Image, Pressable, ScrollView, View } from 'react-native';
+import { Alert, Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, TextInput, View } from 'react-native';
 import { z } from 'zod';
 import { Button } from '@/components/ui/Button';
 import { CalendarModal } from '@/components/ui/CalendarModal';
+import { Card } from '@/components/ui/Card';
 import { ImageViewerModal } from '@/components/ui/ImageViewerModal';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
@@ -55,7 +56,6 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
   const [timePickerOpen, setTimePickerOpen] = useState(false);
   const [imageViewerOpen, setImageViewerOpen] = useState(false);
 
-
   const [form, setForm] = useState<ExpenseInput>({
     amount: 0,
     category_id: '',
@@ -67,6 +67,14 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
     notes: '',
     receipt_image_url: null,
   });
+
+  function handleBack() {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/');
+    }
+  }
 
   useEffect(() => {
     if (!profile?.id) return;
@@ -110,7 +118,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
     try {
       await expenses.save({ ...parsed.data, time: parseTimeInput(parsed.data.time) }, expenseId);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      router.back();
+      handleBack();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save expense.');
     } finally {
@@ -179,25 +187,118 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
     ]);
   }
 
-
   return (
-    <ScrollView
+    <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: theme.colors.background }}
-      contentContainerStyle={{ padding: theme.spacing.lg, gap: theme.spacing.lg, paddingBottom: 80 }}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
     >
-      <Text variant="h1">{expenseId ? 'Edit Expense' : 'Add Expense'}</Text>
-      <Input
-        label="Amount"
-        keyboardType="decimal-pad"
-        value={form.amount ? String(form.amount) : ''}
-        onChangeText={(amount) => setForm((current) => ({ ...current, amount: Number(amount) }))}
-      />
-      <Select label="Category" value={form.category_id} options={categoryOptions} onChange={(category_id) => setForm((current) => ({ ...current, category_id }))} />
-      <Select label="Currency" value={form.currency} options={CURRENCIES.map((currency) => ({ label: currency, value: currency }))} onChange={(currency) => setForm((current) => ({ ...current, currency }))} />
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={{ padding: theme.spacing.lg, gap: theme.spacing.lg, paddingBottom: 120 }}
+        keyboardShouldPersistTaps="handled"
+        automaticallyAdjustKeyboardInsets
+      >
+        {/* 1. TOP HEADER & BACK BUTTON */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Pressable onPress={handleBack} hitSlop={8} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            <ArrowLeft size={20} color={theme.colors.text} />
+            <Text variant="label" style={{ fontWeight: '600' }}>Back</Text>
+          </Pressable>
+          <Text variant="h3">{expenseId ? 'Edit Expense' : 'New Expense'}</Text>
+          <View style={{ width: 44 }} />
+        </View>
 
-      <View style={{ flexDirection: 'row', gap: theme.spacing.md }}>
-        {/* Date Selector */}
-        <View style={{ flex: 1 }}>
+        {/* 2. HERO AMOUNT CARD (LEFT-ALIGNED CLEAN HERO DISPLAY) */}
+        <Card style={{ gap: theme.spacing.xs, padding: theme.spacing.lg, alignItems: 'flex-start' }}>
+          <Text variant="caption" muted style={{ textTransform: 'uppercase', letterSpacing: 0.8, fontWeight: '700' }}>
+            Amount ({form.currency})
+          </Text>
+
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginVertical: theme.spacing.xs, width: '100%' }}>
+            <Text variant="h1" style={{ fontSize: 32, lineHeight: 40, fontWeight: '700', color: theme.colors.primary }}>
+              {form.currency}
+            </Text>
+            <TextInput
+              keyboardType="decimal-pad"
+              placeholder="0.00"
+              placeholderTextColor={theme.colors.textMuted}
+              value={form.amount ? String(form.amount) : ''}
+              onChangeText={(amount) => setForm((current) => ({ ...current, amount: Number(amount) }))}
+              style={{
+                flex: 1,
+                fontSize: 36,
+                lineHeight: 44,
+                fontWeight: '700',
+                color: theme.colors.text,
+                padding: 0,
+                margin: 0,
+                textAlign: 'left',
+              }}
+            />
+          </View>
+        </Card>
+
+        {/* 3. TRANSACTION DETAILS CARD */}
+        <Card style={{ gap: theme.spacing.md, padding: theme.spacing.lg }}>
+          <Text variant="h3">Transaction Details</Text>
+
+          <Select
+            label="Category"
+            value={form.category_id}
+            options={categoryOptions}
+            onChange={(category_id) => setForm((current) => ({ ...current, category_id }))}
+          />
+
+          <Select
+            label="Currency"
+            value={form.currency}
+            options={CURRENCIES.map((currency) => ({ label: currency, value: currency }))}
+            onChange={(currency) => setForm((current) => ({ ...current, currency }))}
+          />
+
+          {/* Payment Method Pill Selector */}
+          <View style={{ gap: theme.spacing.xs }}>
+            <Text variant="caption" muted style={{ fontWeight: '600' }}>
+              Payment Method
+            </Text>
+            <View style={{ flexDirection: 'row', gap: theme.spacing.xs }}>
+              {PAYMENT_METHODS.map((method) => {
+                const active = form.payment_method === method;
+                return (
+                  <Pressable
+                    key={method}
+                    onPress={() => setForm((current) => ({ ...current, payment_method: method as PaymentMethod }))}
+                    style={{
+                      flex: 1,
+                      paddingVertical: 10,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      borderRadius: theme.radius.md,
+                      backgroundColor: active ? theme.colors.primary : theme.colors.surfaceElevated,
+                      borderWidth: 1,
+                      borderColor: active ? theme.colors.primary : theme.colors.border,
+                    }}
+                  >
+                    <Text
+                      variant="caption"
+                      style={{
+                        color: active ? (theme.isDark ? '#06201D' : '#FFFFFF') : theme.colors.text,
+                        fontWeight: active ? '700' : '500',
+                      }}
+                    >
+                      {method}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+        </Card>
+
+        {/* 4. DATE & TIME CARD */}
+        <Card style={{ gap: theme.spacing.md, padding: theme.spacing.lg }}>
+          <Text variant="h3">Date & Time</Text>
           <Pressable onPress={() => setCalendarOpen(true)}>
             <Input
               label="Date"
@@ -207,108 +308,132 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
               placeholder="YYYY-MM-DD"
             />
           </Pressable>
-        </View>
 
-        {/* Time Selector */}
-        <View style={{ flex: 1 }}>
           <TimeInput
             label="Time"
             value={form.time}
             onChangeTime={(time) => setForm((current) => ({ ...current, time }))}
             onOpenModal={() => setTimePickerOpen(true)}
           />
-        </View>
-      </View>
+        </Card>
 
-
-      <Select<PaymentMethod> label="Payment" value={form.payment_method} options={PAYMENT_METHODS.map((method) => ({ label: method, value: method }))} onChange={(payment_method) => setForm((current) => ({ ...current, payment_method }))} />
-      <Input label="Description" value={form.description ?? ''} onChangeText={(description) => setForm((current) => ({ ...current, description }))} />
-      <Input label="Notes" multiline value={form.notes ?? ''} onChangeText={(notes) => setForm((current) => ({ ...current, notes }))} />
-      <Button title={form.receipt_image_url ? 'Change Receipt' : 'Attach Receipt'} variant="secondary" icon={ImagePlus} onPress={chooseReceipt} />
-
-      {form.receipt_image_url ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="View full screen receipt"
-          onPress={() => setImageViewerOpen(true)}
-          style={{
-            position: 'relative',
-            borderRadius: theme.radius.md,
-            overflow: 'hidden',
-            borderWidth: 1,
-            borderColor: theme.colors.border,
-          }}
-        >
-          <Image
-            source={{ uri: form.receipt_image_url }}
-            style={{ width: '100%', height: 200, backgroundColor: theme.colors.surfaceElevated }}
-            resizeMode="cover"
+        {/* 5. DESCRIPTION & NOTES CARD */}
+        <Card style={{ gap: theme.spacing.md, padding: theme.spacing.lg }}>
+          <Text variant="h3">Description & Notes</Text>
+          <Input
+            label="Description (Optional)"
+            placeholder="e.g. Lunch with team, Groceries"
+            value={form.description ?? ''}
+            onChangeText={(description) => setForm((current) => ({ ...current, description }))}
           />
-          <View
-            style={{
-              position: 'absolute',
-              bottom: 8,
-              right: 8,
-              backgroundColor: 'rgba(0, 0, 0, 0.75)',
-              paddingHorizontal: 10,
-              paddingVertical: 5,
-              borderRadius: 12,
-            }}
-          >
-            <Text style={{ color: '#FFFFFF', fontSize: 12, fontWeight: '700' }}>
-              🔍 Tap for Full Screen
-            </Text>
-          </View>
-        </Pressable>
-      ) : null}
+          <Input
+            label="Notes (Optional)"
+            placeholder="Add extra details..."
+            multiline
+            numberOfLines={3}
+            value={form.notes ?? ''}
+            onChangeText={(notes) => setForm((current) => ({ ...current, notes }))}
+          />
+        </Card>
 
-      {error ? <Text style={{ color: theme.colors.danger }}>{error}</Text> : null}
-      <Button title={expenseId ? 'Save Changes' : 'Add Expense'} loading={saving} onPress={submit} />
-      {expenseId ? (
-        <Button
-          title="Delete Expense"
-          variant="destructive"
-          onPress={() =>
-            Alert.alert('Delete expense?', 'This expense will be soft deleted.', [
-              { text: 'Cancel', style: 'cancel' },
-              { text: 'Delete', style: 'destructive', onPress: () => softDeleteExpense(expenseId).then(() => router.back()) },
-            ])
-          }
+        {/* 6. RECEIPT ATTACHMENT CARD */}
+        <Card style={{ gap: theme.spacing.md, padding: theme.spacing.lg }}>
+          <Text variant="h3">Receipt Photo</Text>
+          <Button
+            title={form.receipt_image_url ? 'Change Receipt Photo' : 'Attach Receipt Photo'}
+            variant="secondary"
+            icon={ImagePlus}
+            onPress={chooseReceipt}
+          />
+
+          {form.receipt_image_url ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="View full screen receipt"
+              onPress={() => setImageViewerOpen(true)}
+              style={{
+                position: 'relative',
+                borderRadius: theme.radius.md,
+                overflow: 'hidden',
+                borderWidth: 1,
+                borderColor: theme.colors.border,
+              }}
+            >
+              <Image
+                source={{ uri: form.receipt_image_url }}
+                style={{ width: '100%', height: 200, backgroundColor: theme.colors.surfaceElevated }}
+                resizeMode="cover"
+              />
+              <View
+                style={{
+                  position: 'absolute',
+                  bottom: 8,
+                  right: 8,
+                  backgroundColor: 'rgba(0, 0, 0, 0.75)',
+                  paddingHorizontal: 10,
+                  paddingVertical: 5,
+                  borderRadius: 12,
+                }}
+              >
+                <Text style={{ color: '#FFFFFF', fontSize: 12, fontWeight: '700' }}>
+                  🔍 Tap for Full Screen
+                </Text>
+              </View>
+            </Pressable>
+          ) : null}
+        </Card>
+
+        {error ? <Text style={{ color: theme.colors.danger }}>{error}</Text> : null}
+
+        {/* 7. ACTION BUTTONS */}
+        <View style={{ gap: theme.spacing.md }}>
+          <Button title={expenseId ? 'Save Changes' : 'Add Expense'} loading={saving} onPress={submit} />
+
+          {expenseId ? (
+            <Button
+              title="Delete Expense"
+              variant="destructive"
+              icon={Trash2}
+              onPress={() =>
+                Alert.alert('Delete expense?', 'This expense will be soft deleted.', [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Delete', style: 'destructive', onPress: () => softDeleteExpense(expenseId).then(() => handleBack()) },
+                ])
+              }
+            />
+          ) : null}
+        </View>
+
+        {/* Date Picker Modal */}
+        <CalendarModal
+          visible={calendarOpen}
+          onClose={() => setCalendarOpen(false)}
+          onApply={(range) => {
+            if (range.startDate) {
+              setForm((current) => ({ ...current, date: range.startDate! }));
+            }
+          }}
+          initialRange={{ startDate: form.date, endDate: form.date }}
         />
-      ) : null}
 
-      {/* Date Picker Modal */}
-      <CalendarModal
-        visible={calendarOpen}
-        onClose={() => setCalendarOpen(false)}
-        onApply={(range) => {
-          if (range.startDate) {
-            setForm((current) => ({ ...current, date: range.startDate! }));
-          }
-        }}
-        initialRange={{ startDate: form.date, endDate: form.date }}
-      />
+        {/* Time Picker Modal */}
+        <TimePickerModal
+          visible={timePickerOpen}
+          onClose={() => setTimePickerOpen(false)}
+          onSelect={(selectedTime) => {
+            setForm((current) => ({ ...current, time: selectedTime }));
+          }}
+          initialTime={form.time}
+        />
 
-      {/* Time Picker Modal */}
-      <TimePickerModal
-        visible={timePickerOpen}
-        onClose={() => setTimePickerOpen(false)}
-        onSelect={(selectedTime) => {
-          setForm((current) => ({ ...current, time: selectedTime }));
-        }}
-        initialTime={form.time}
-      />
-
-      {/* Full Screen Image Viewer Modal */}
-      <ImageViewerModal
-        visible={imageViewerOpen}
-        imageUrl={form.receipt_image_url ?? null}
-        onClose={() => setImageViewerOpen(false)}
-        onRemove={() => setForm((c) => ({ ...c, receipt_image_url: null }))}
-      />
-    </ScrollView>
+        {/* Full Screen Image Viewer Modal */}
+        <ImageViewerModal
+          visible={imageViewerOpen}
+          imageUrl={form.receipt_image_url ?? null}
+          onClose={() => setImageViewerOpen(false)}
+          onRemove={() => setForm((c) => ({ ...c, receipt_image_url: null }))}
+        />
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
-
-
-

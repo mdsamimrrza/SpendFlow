@@ -310,7 +310,7 @@ export function CalendarModal({
 
             if (isStart || isEnd) {
               bgColor = theme.colors.primary;
-              textColor = '#FFFFFF';
+              textColor = theme.isDark ? '#06201D' : '#FFFFFF';
             } else if (inRange) {
               bgColor = theme.isDark ? 'rgba(45, 212, 191, 0.2)' : 'rgba(15, 159, 142, 0.15)';
               textColor = theme.colors.primary;

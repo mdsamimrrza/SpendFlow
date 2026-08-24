@@ -112,11 +112,13 @@ export default function AuthScreen() {
   const textColor = status?.type === 'error' ? theme.colors.danger : status?.type === 'success' ? '#10B981' : theme.colors.primary;
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, backgroundColor: theme.colors.background }}>
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={Platform.OS === 'ios' ? 64 : 0} style={{ flex: 1, backgroundColor: theme.colors.background }}>
       <ScrollView
         keyboardShouldPersistTaps="handled"
+        automaticallyAdjustKeyboardInsets
         contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', padding: theme.spacing.xl, gap: theme.spacing.xl }}
       >
+
         <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' }}>
           <View style={{ flex: 1, gap: theme.spacing.xs, paddingRight: theme.spacing.md }}>
             <Text variant="h1">SpendFlow</Text>

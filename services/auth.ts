@@ -174,17 +174,21 @@ export async function updateProfile(input: Partial<Pick<UserProfile, 'display_na
     }
   }
 
+  const { monthly_budget, ...dbPayload } = input;
+
   let dbProfile: UserProfile | null = null;
-  try {
-    const { data, error } = await supabase
-      .from('users')
-      .update({ ...input, updated_at: new Date().toISOString() })
-      .eq('id', user.id)
-      .select('*')
-      .single();
-    if (!error && data) dbProfile = data as UserProfile;
-  } catch {
-    // Graceful fallback if database column does not exist
+  if (Object.keys(dbPayload).length > 0) {
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .update({ ...dbPayload, updated_at: new Date().toISOString() })
+        .eq('id', user.id)
+        .select('*')
+        .single();
+      if (!error && data) dbProfile = data as UserProfile;
+    } catch {
+      // Graceful fallback if database update fails
+    }
   }
 
   const localBudgetRaw = await AsyncStorage.getItem(`@spendflow_monthly_budget_${user.id}`).catch(() => null);
@@ -196,6 +200,7 @@ export async function updateProfile(input: Partial<Pick<UserProfile, 'display_na
     email: user.email ?? '',
     monthly_budget: input.monthly_budget !== undefined ? input.monthly_budget : (dbProfile?.monthly_budget ?? localBudget),
   } as UserProfile;
+
 }
 
 

@@ -15,9 +15,28 @@ export function Button({
   ...props
 }: Omit<PressableProps, 'style'> & { title: string; variant?: Variant; loading?: boolean; icon?: LucideIcon; style?: StyleProp<ViewStyle> }) {
   const theme = useTheme();
-  const background =
-    variant === 'primary' ? theme.colors.primary : variant === 'destructive' ? theme.colors.danger : variant === 'secondary' ? theme.colors.surfaceElevated : 'transparent';
-  const color = variant === 'primary' || variant === 'destructive' ? '#FFFFFF' : theme.colors.text;
+
+  const isPrimary = variant === 'primary';
+  const isDestructive = variant === 'destructive';
+  const isSecondary = variant === 'secondary';
+
+  const background = isPrimary
+    ? theme.colors.primary
+    : isDestructive
+    ? theme.colors.danger
+    : isSecondary
+    ? theme.colors.surfaceElevated
+    : 'transparent';
+
+  // Crystal clear high-contrast text color:
+  // In Dark mode, primary background is bright mint (#2DD4BF), so use dark text (#06201D) instead of invisible white!
+  const color = isPrimary
+    ? theme.isDark
+      ? '#06201D'
+      : '#FFFFFF'
+    : isDestructive
+    ? '#FFFFFF'
+    : theme.colors.text;
 
   return (
     <Pressable
@@ -25,13 +44,13 @@ export function Button({
       disabled={disabled || loading}
       style={({ pressed }) => [
         styles.base,
-        { backgroundColor: background, borderRadius: theme.radius.md, opacity: pressed || disabled ? 0.72 : 1 },
+        { backgroundColor: background, borderRadius: theme.radius.md, opacity: pressed || disabled ? 0.75 : 1 },
         style,
       ]}
       {...props}
     >
       {loading ? <ActivityIndicator color={color} /> : Icon ? <Icon size={18} color={color} /> : null}
-      <Text variant="label" style={{ color }}>
+      <Text variant="label" style={{ color, fontWeight: '700' }}>
         {title}
       </Text>
     </Pressable>
@@ -40,7 +59,7 @@ export function Button({
 
 const styles = StyleSheet.create({
   base: {
-    minHeight: 44,
+    minHeight: 46,
     paddingHorizontal: 16,
     alignItems: 'center',
     justifyContent: 'center',
