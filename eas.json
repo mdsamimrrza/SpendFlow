@@ -21,9 +21,6 @@
       }
     }
   },
-  "update": {
-    "production": {}
-  },
   "submit": {
     "production": {}
   }
