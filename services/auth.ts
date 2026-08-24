@@ -1,3 +1,5 @@
+import { Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
 import { UserProfile } from '@/types';
@@ -5,19 +7,6 @@ import { supabase } from '@/utils/supabase';
 import { seedDefaultCategories } from './categories';
 
 WebBrowser.maybeCompleteAuthSession();
-
-async function withTimeout<T>(promise: Promise<T>, message: string, timeoutMs = 20000) {
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
-  });
-
-  try {
-    return await Promise.race([promise, timeoutPromise]);
-  } finally {
-    if (timeout) clearTimeout(timeout);
-  }
-}
 
 export async function signInWithEmail(email: string, password: string) {
   const { data, error } = await supabase.auth.signInWithPassword({
@@ -42,8 +31,6 @@ export async function resetPassword(email: string) {
   const { error } = await supabase.auth.resetPasswordForEmail(email);
   if (error) throw error;
 }
-
-import { Platform } from 'react-native';
 
 export async function signInWithGoogle() {
   if (Platform.OS === 'web') {
@@ -118,14 +105,10 @@ export async function signInWithGoogle() {
     : new Error('Google sign-in did not return authentication tokens.');
 }
 
-
-
 export async function signOut() {
   const { error } = await supabase.auth.signOut();
   if (error) throw error;
 }
-
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export async function ensureProfile() {
   const {
@@ -209,7 +192,6 @@ export async function updateProfile(input: Partial<Pick<UserProfile, 'display_na
     monthly_budget: dbProfile?.monthly_budget ?? input.monthly_budget ?? localBudget,
   } as UserProfile;
 }
-
 
 export async function deleteAccount() {
   const {
