@@ -10,6 +10,8 @@ import { ThemeProvider } from '@/store/ThemeContext';
 import { deactivateKeepAwake } from 'expo-keep-awake';
 import { useAuth } from '@/hooks/useAuth';
 import { useTheme } from '@/hooks/useTheme';
+import { Text } from '@/components/ui/Text';
+import { isSupabaseConfigured } from '@/utils/supabase';
 
 function RootNavigator() {
   const { session, loading } = useAuth();
@@ -29,14 +31,14 @@ function RootNavigator() {
   }, []);
 
   useEffect(() => {
-    if (isLoading) return;
+    if (isLoading || !isSupabaseConfigured) return;
 
     const inAuthGroup = segmentKey.includes('(auth)') || segmentKey.includes('auth');
     const inOnboarding = segmentKey === 'onboarding';
 
     if (session) {
       if (inAuthGroup || inOnboarding || segmentKey === '') {
-        router.replace('/(tabs)');
+        router.replace('/');
       }
     } else {
       if (!onboardingDone && !inOnboarding) {
@@ -47,6 +49,16 @@ function RootNavigator() {
     }
   }, [isLoading, onboardingDone, router, segmentKey, session]);
 
+  if (!isSupabaseConfigured) {
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, backgroundColor: theme.colors.background }}>
+        <Text variant="h2">SpendFlow configuration missing</Text>
+        <Text muted style={{ marginTop: 12, textAlign: 'center' }}>
+          Add EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_KEY to the EAS production environment, then rebuild.
+        </Text>
+      </View>
+    );
+  }
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background, paddingTop: topPadding }}>
