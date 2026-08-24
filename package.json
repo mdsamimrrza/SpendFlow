@@ -32,7 +32,6 @@
     "react-native-svg": "15.12.1",
     "react-native-url-polyfill": "^4.0.0",
     "react-native-web": "^0.21.2",
-    "victory-native": "^41.26.0",
     "write-excel-file": "^4.1.1",
     "zod": "^4.4.3"
   },
