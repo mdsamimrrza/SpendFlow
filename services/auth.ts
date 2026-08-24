@@ -135,11 +135,18 @@ export async function ensureProfile() {
   if (userError) throw userError;
   if (!user?.email) throw new Error('No authenticated user found.');
 
+  const { data: existing } = await supabase
+    .from('users')
+    .select('*')
+    .eq('id', user.id)
+    .maybeSingle();
+
   const profilePayload = {
     id: user.id,
     email: user.email,
-    display_name: (user.user_metadata.display_name as string | undefined) ?? (user.user_metadata.full_name as string | undefined) ?? null,
-    avatar_url: (user.user_metadata.avatar_url as string | undefined) ?? null,
+    display_name: existing?.display_name ?? (user.user_metadata.display_name as string | undefined) ?? (user.user_metadata.full_name as string | undefined) ?? null,
+    avatar_url: existing?.avatar_url ?? (user.user_metadata.avatar_url as string | undefined) ?? null,
+    monthly_budget: existing?.monthly_budget ?? null,
   };
 
   const { data, error } = await supabase
@@ -154,9 +161,14 @@ export async function ensureProfile() {
   const localBudgetRaw = await AsyncStorage.getItem(`@spendflow_monthly_budget_${user.id}`).catch(() => null);
   const localBudget = localBudgetRaw ? Number(localBudgetRaw) : null;
 
+  const finalBudget = data?.monthly_budget ?? localBudget;
+  if (finalBudget && !localBudget) {
+    await AsyncStorage.setItem(`@spendflow_monthly_budget_${user.id}`, String(finalBudget)).catch(() => {});
+  }
+
   return {
     ...data,
-    monthly_budget: data?.monthly_budget ?? localBudget,
+    monthly_budget: finalBudget,
   } as UserProfile;
 }
 
@@ -174,21 +186,17 @@ export async function updateProfile(input: Partial<Pick<UserProfile, 'display_na
     }
   }
 
-  const { monthly_budget, ...dbPayload } = input;
-
   let dbProfile: UserProfile | null = null;
-  if (Object.keys(dbPayload).length > 0) {
-    try {
-      const { data, error } = await supabase
-        .from('users')
-        .update({ ...dbPayload, updated_at: new Date().toISOString() })
-        .eq('id', user.id)
-        .select('*')
-        .single();
-      if (!error && data) dbProfile = data as UserProfile;
-    } catch {
-      // Graceful fallback if database update fails
-    }
+  try {
+    const { data, error } = await supabase
+      .from('users')
+      .update({ ...input, updated_at: new Date().toISOString() })
+      .eq('id', user.id)
+      .select('*')
+      .single();
+    if (!error && data) dbProfile = data as UserProfile;
+  } catch {
+    // Failsafe fallback if database table column is synced or offline
   }
 
   const localBudgetRaw = await AsyncStorage.getItem(`@spendflow_monthly_budget_${user.id}`).catch(() => null);
@@ -198,9 +206,8 @@ export async function updateProfile(input: Partial<Pick<UserProfile, 'display_na
     ...(dbProfile ?? {}),
     id: user.id,
     email: user.email ?? '',
-    monthly_budget: input.monthly_budget !== undefined ? input.monthly_budget : (dbProfile?.monthly_budget ?? localBudget),
+    monthly_budget: dbProfile?.monthly_budget ?? input.monthly_budget ?? localBudget,
   } as UserProfile;
-
 }
 
 
