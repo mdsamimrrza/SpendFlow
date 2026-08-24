@@ -6,7 +6,6 @@ import { formatMoney } from '@/utils/format';
 // Configure notification behavior for foreground & background notifications
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
-    shouldShowAlert: true,
     shouldShowBanner: true,
     shouldShowList: true,
     shouldPlaySound: true,
