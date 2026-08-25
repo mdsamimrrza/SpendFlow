@@ -1,6 +1,8 @@
+import React from 'react';
 import { LucideIcon } from 'lucide-react-native';
-import { ActivityIndicator, Pressable, PressableProps, StyleProp, StyleSheet, ViewStyle } from 'react-native';
+import { ActivityIndicator, PressableProps, StyleProp, StyleSheet, ViewStyle } from 'react-native';
 import { useTheme } from '@/hooks/useTheme';
+import { PressableScale } from './PressableScale';
 import { Text } from './Text';
 
 type Variant = 'primary' | 'secondary' | 'destructive' | 'ghost';
@@ -13,7 +15,13 @@ export function Button({
   style,
   disabled,
   ...props
-}: Omit<PressableProps, 'style'> & { title: string; variant?: Variant; loading?: boolean; icon?: LucideIcon; style?: StyleProp<ViewStyle> }) {
+}: Omit<PressableProps, 'style'> & {
+  title: string;
+  variant?: Variant;
+  loading?: boolean;
+  icon?: LucideIcon;
+  style?: StyleProp<ViewStyle>;
+}) {
   const theme = useTheme();
 
   const isPrimary = variant === 'primary';
@@ -28,7 +36,6 @@ export function Button({
     ? theme.colors.surfaceElevated
     : 'transparent';
 
-  // Crystal clear high-contrast text color for Theme 1 (Indigo Sapphire):
   const color = isPrimary
     ? theme.isDark
       ? '#0B0F19'
@@ -38,12 +45,17 @@ export function Button({
     : theme.colors.text;
 
   return (
-    <Pressable
+    <PressableScale
       accessibilityRole="button"
       disabled={disabled || loading}
-      style={({ pressed }) => [
+      activeScale={0.96}
+      style={[
         styles.base,
-        { backgroundColor: background, borderRadius: theme.radius.md, opacity: pressed || disabled ? 0.75 : 1 },
+        {
+          backgroundColor: background,
+          borderRadius: theme.radius.md,
+          opacity: disabled ? 0.6 : 1,
+        },
         style,
       ]}
       {...props}
@@ -52,7 +64,7 @@ export function Button({
       <Text variant="label" style={{ color, fontWeight: '700' }}>
         {title}
       </Text>
-    </Pressable>
+    </PressableScale>
   );
 }
 

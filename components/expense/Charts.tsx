@@ -39,68 +39,100 @@ function ExpenseDetailModal({
 
   return (
     <>
-      <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <Modal visible transparent animationType="slide" onRequestClose={onClose}>
         <View
           style={{
             flex: 1,
-            backgroundColor: 'rgba(0, 0, 0, 0.65)',
-            justifyContent: 'center',
-            alignItems: 'center',
-            padding: theme.spacing.lg,
+            backgroundColor: 'rgba(0, 0, 0, 0.7)',
+            justifyContent: 'flex-end',
           }}
         >
           <View
             style={{
-              width: '100%',
-              maxWidth: 420,
+              maxHeight: '90%',
               backgroundColor: theme.colors.surface,
-              borderRadius: theme.radius.lg,
+              borderTopLeftRadius: 24,
+              borderTopRightRadius: 24,
               borderWidth: 1,
               borderColor: theme.colors.border,
               overflow: 'hidden',
-              shadowColor: '#000000',
-              shadowOffset: { width: 0, height: 12 },
-              shadowOpacity: 0.35,
-              shadowRadius: 24,
-              elevation: 12,
             }}
           >
-            {/* Modal Header */}
+            {/* Modal Top Grab Header */}
             <View
               style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'space-between',
                 paddingHorizontal: theme.spacing.lg,
-                paddingVertical: theme.spacing.md,
+                paddingTop: theme.spacing.md,
+                paddingBottom: theme.spacing.sm,
                 borderBottomWidth: 1,
                 borderBottomColor: theme.colors.border,
                 backgroundColor: theme.colors.surfaceElevated,
               }}
             >
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <Text style={{ fontSize: 20 }}>{expense.categories?.icon || '💳'}</Text>
-                <Text variant="h3">{t('expense_detail_title')}</Text>
-              </View>
-              <Pressable
-                onPress={onClose}
-                hitSlop={8}
+              {/* Grab handle pill */}
+              <View
                 style={{
-                  width: 30,
-                  height: 30,
-                  borderRadius: 15,
-                  backgroundColor: theme.colors.surface,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  borderWidth: 1,
-                  borderColor: theme.colors.border,
+                  width: 38,
+                  height: 4,
+                  borderRadius: 2,
+                  backgroundColor: theme.isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.15)',
+                  alignSelf: 'center',
+                  marginBottom: 10,
                 }}
-              >
-                <X size={16} color={theme.colors.text} />
-              </Pressable>
+              />
+
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  <View
+                    style={{
+                      width: 36,
+                      height: 36,
+                      borderRadius: 10,
+                      backgroundColor: theme.isDark ? 'rgba(99, 102, 241, 0.2)' : 'rgba(79, 70, 229, 0.1)',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <Text style={{ fontSize: 20 }}>{expense.categories?.icon || '💳'}</Text>
+                  </View>
+                  <View>
+                    <Text variant="h3" style={{ fontWeight: '800', fontSize: 17 }}>
+                      {t('expense_detail_title') || 'Expense Details'}
+                    </Text>
+                    <Text variant="caption" muted style={{ fontSize: 11 }}>
+                      {expense.categories?.name || 'Uncategorized'} · {expense.date}
+                    </Text>
+                  </View>
+                </View>
+
+                <Pressable
+                  onPress={onClose}
+                  hitSlop={8}
+                  style={{
+                    width: 32,
+                    height: 32,
+                    borderRadius: 16,
+                    backgroundColor: theme.colors.surface,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    borderWidth: 1,
+                    borderColor: theme.colors.border,
+                  }}
+                >
+                  <X size={16} color={theme.colors.text} />
+                </Pressable>
+              </View>
             </View>
 
-            <ScrollView style={{ maxHeight: 420 }} contentContainerStyle={{ padding: theme.spacing.lg, gap: theme.spacing.md }}>
+            {/* Scrollable Content Body */}
+            <ScrollView
+              contentContainerStyle={{
+                padding: theme.spacing.lg,
+                gap: theme.spacing.md,
+                paddingBottom: theme.spacing.xl,
+              }}
+              showsVerticalScrollIndicator
+            >
               {/* Hero Amount Banner (Primary Currency in BIG bold font) */}
               <View
                 style={{
@@ -227,41 +259,42 @@ function ExpenseDetailModal({
                   </>
                 ) : null}
               </View>
-            </ScrollView>
 
-            {/* Bottom Action Footer with Close and Edit Buttons */}
-            <View
-              style={{
-                flexDirection: 'row',
-                gap: theme.spacing.sm,
-                padding: theme.spacing.md,
-                borderTopWidth: 1,
-                borderTopColor: theme.colors.border,
-                backgroundColor: theme.colors.surfaceElevated,
-              }}
-            >
-              <Button
-                title={t('common_cancel')}
-                variant="secondary"
-                onPress={onClose}
+              {/* Bottom Action Footer with Equal 50/50 Cancel and Edit Buttons */}
+              <View
                 style={{
-                  flex: 1,
-                  height: 48,
-                  borderRadius: theme.radius.md,
-                  borderWidth: 1,
-                  borderColor: theme.colors.border,
+                  flexDirection: 'row',
+                  gap: theme.spacing.sm,
+                  marginTop: 6,
                 }}
-              />
-              <Button
-                title={`✏️ ${t('expense_edit_btn')}`}
-                onPress={() => {
-                  const id = expense.id;
-                  onClose();
-                  router.push(`/expense/${id}`);
-                }}
-                style={{ flex: 1.5, height: 48, borderRadius: theme.radius.md }}
-              />
-            </View>
+              >
+                <Button
+                  title={t('common_cancel')}
+                  variant="secondary"
+                  onPress={onClose}
+                  style={{
+                    flex: 1,
+                    height: 48,
+                    borderRadius: theme.radius.md,
+                    borderWidth: 1,
+                    borderColor: theme.colors.border,
+                  }}
+                />
+                <Button
+                  title={`✏️ ${t('expense_edit_btn')}`}
+                  onPress={() => {
+                    const id = expense.id;
+                    onClose();
+                    router.push(`/expense/${id}`);
+                  }}
+                  style={{
+                    flex: 1,
+                    height: 48,
+                    borderRadius: theme.radius.md,
+                  }}
+                />
+              </View>
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -276,7 +309,17 @@ function ExpenseDetailModal({
   );
 }
 
-/* ── 📊 ORIGINAL CONCENTRIC SVG RINGS CATEGORY BREAKDOWN ── */
+const VIBRANT_PALETTE = [
+  '#4F46E5', // 1. Indigo
+  '#10B981', // 2. Emerald
+  '#F59E0B', // 3. Amber
+  '#EC4899', // 4. Pink
+  '#8B5CF6', // 5. Purple
+  '#06B6D4', // 6. Cyan
+  '#EF4444', // 7. Red
+];
+
+/* ── 📊 LUXURY INTERACTIVE SEGMENTED DONUT CATEGORY BREAKDOWN ── */
 export function CategoryBreakdown({ expenses, targetCurrency }: { expenses: Expense[]; targetCurrency?: string }) {
   const theme = useTheme();
   const { profile } = useAuth();
@@ -287,8 +330,15 @@ export function CategoryBreakdown({ expenses, targetCurrency }: { expenses: Expe
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [inspectingExpense, setInspectingExpense] = useState<Expense | null>(null);
 
-  const data = groupByCategory(expenses, currency, rates).slice(0, 5);
-  const total = data.reduce((sum, item) => sum + item.total, 0);
+  const data = useMemo(() => {
+    const raw = groupByCategory(expenses, currency, rates).slice(0, 6);
+    return raw.map((item, idx) => ({
+      ...item,
+      color: VIBRANT_PALETTE[idx % VIBRANT_PALETTE.length],
+    }));
+  }, [expenses, currency, rates]);
+
+  const total = useMemo(() => data.reduce((sum, item) => sum + item.total, 0), [data]);
 
   // Filtered transactions for selected category
   const filteredCategoryExpenses = useMemo(() => {
@@ -300,10 +350,36 @@ export function CategoryBreakdown({ expenses, targetCurrency }: { expenses: Expe
 
   const selectedCategoryItem = data.find((d) => d.label === selectedCategory);
 
+  // Donut geometry calculations: exact percentage balance
+  const donutRadius = 44;
+  const donutCircumference = 2 * Math.PI * donutRadius;
+
+  // Calculate contiguous segment offsets (100% full circle divided accurately)
+  let accumulatedOffset = 0;
+  const segments = data.map((item) => {
+    const ratio = total > 0 ? item.total / total : 0;
+    const rawLength = ratio * donutCircumference;
+    const segmentLength = Math.max(rawLength, item.total > 0 ? 6 : 0);
+    const offset = accumulatedOffset;
+    accumulatedOffset += rawLength;
+    return {
+      ...item,
+      ratio,
+      segmentLength,
+      offset,
+    };
+  });
+
   return (
-    <Card style={{ gap: theme.spacing.md }}>
+    <Card style={{ gap: theme.spacing.md, padding: theme.spacing.lg }}>
+      {/* ── CARD HEADER ── */}
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-        <Text variant="h3">{t('charts_category_breakdown')}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <Text variant="label" style={{ fontWeight: '800', fontSize: 15 }}>
+            {t('charts_category_breakdown') || 'Category Breakdown'}
+          </Text>
+        </View>
+
         {selectedCategory && (
           <Pressable
             onPress={() => setSelectedCategory(null)}
@@ -313,7 +389,7 @@ export function CategoryBreakdown({ expenses, targetCurrency }: { expenses: Expe
               alignItems: 'center',
               gap: 4,
               paddingHorizontal: 8,
-              paddingVertical: 2,
+              paddingVertical: 3,
               borderRadius: theme.radius.full,
               backgroundColor: theme.colors.surfaceElevated,
               borderWidth: 1,
@@ -329,107 +405,136 @@ export function CategoryBreakdown({ expenses, targetCurrency }: { expenses: Expe
 
       {total === 0 ? (
         <Text muted style={{ paddingVertical: theme.spacing.sm }}>
-          {t('charts_no_category')}
+          {t('charts_no_category') || 'No category expenses logged yet.'}
         </Text>
       ) : (
         <>
-          <View style={{ flexDirection: 'row', gap: 12, alignItems: 'center' }}>
-            <View style={{ position: 'relative', width: 112, height: 112, alignItems: 'center', justifyContent: 'center' }}>
-              <Svg width={112} height={112} viewBox="0 0 118 118">
-                {data.map((item, index) => {
-                  const radius = 48 - index * 7;
-                  const stroke = 6;
-                  const circumference = 2 * Math.PI * radius;
-                  const isSelected = selectedCategory === item.label;
+          {/* ── INTERACTIVE DONUT + LEGEND ROW ── */}
+          <View style={{ flexDirection: 'row', gap: 16, alignItems: 'center' }}>
+            {/* SVG Donut Dial */}
+            <View style={{ position: 'relative', width: 120, height: 120, alignItems: 'center', justifyContent: 'center' }}>
+              <Svg width={120} height={120} viewBox="0 0 120 120">
+                {/* Background track circle */}
+                <Circle
+                  cx={60}
+                  cy={60}
+                  r={donutRadius}
+                  stroke={theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'}
+                  strokeWidth={10}
+                  fill="transparent"
+                />
+
+                {/* Slices with exact percentage balance */}
+                {segments.map((seg) => {
+                  const isSelected = selectedCategory === seg.label;
+                  const isAnySelected = Boolean(selectedCategory);
+                  const strokeW = isSelected ? 13 : 10;
+                  const opacity = isAnySelected ? (isSelected ? 1 : 0.25) : 1;
 
                   return (
-                    <React.Fragment key={item.label}>
-                      {/* Invisible wider hit-target for easy tapping */}
-                      <Circle
-                        cx={59}
-                        cy={59}
-                        r={radius}
-                        stroke="transparent"
-                        strokeWidth={12}
-                        fill="transparent"
-                        onPress={() => setSelectedCategory((cur) => (cur === item.label ? null : item.label))}
-                      />
-                      {/* Visible Category Stroke Ring */}
-                      <Circle
-                        cx={59}
-                        cy={59}
-                        r={radius}
-                        stroke={item.color}
-                        strokeWidth={isSelected ? stroke + 2.5 : stroke}
-                        strokeDasharray={`${(item.total / total) * circumference} ${circumference}`}
-                        strokeLinecap="round"
-                        fill="transparent"
-                        rotation={-90}
-                        originX={59}
-                        originY={59}
-                        opacity={selectedCategory ? (isSelected ? 1 : 0.25) : 0.95}
-                        onPress={() => setSelectedCategory((cur) => (cur === item.label ? null : item.label))}
-                      />
-                    </React.Fragment>
+                    <Circle
+                      key={seg.label}
+                      cx={60}
+                      cy={60}
+                      r={donutRadius}
+                      stroke={seg.color}
+                      strokeWidth={strokeW}
+                      strokeDasharray={`${seg.segmentLength} ${donutCircumference}`}
+                      strokeDashoffset={-seg.offset}
+                      strokeLinecap="butt"
+                      fill="transparent"
+                      rotation={-90}
+                      originX={60}
+                      originY={60}
+                      opacity={opacity}
+                      onPress={() => setSelectedCategory((cur) => (cur === seg.label ? null : seg.label))}
+                    />
                   );
                 })}
               </Svg>
 
-              {/* Center icon badge when category is selected */}
-              {selectedCategoryItem && (
-                <Pressable
-                  onPress={() => setSelectedCategory(null)}
-                  style={{
-                    position: 'absolute',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    width: 32,
-                    height: 32,
-                    borderRadius: 16,
-                    backgroundColor: theme.colors.surfaceElevated,
-                    borderWidth: 1,
-                    borderColor: theme.colors.border,
-                  }}
-                >
-                  <Text style={{ fontSize: 16 }}>{selectedCategoryItem.icon}</Text>
-                </Pressable>
-              )}
+              {/* Dynamic Center Hub Display */}
+              <Pressable
+                onPress={() => setSelectedCategory(null)}
+                style={{
+                  position: 'absolute',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: 70,
+                  height: 70,
+                  borderRadius: 35,
+                }}
+              >
+                {selectedCategoryItem ? (
+                  <View style={{ alignItems: 'center', gap: 1 }}>
+                    <Text style={{ fontSize: 20 }}>{selectedCategoryItem.icon}</Text>
+                    <Text variant="caption" style={{ fontWeight: '800', color: selectedCategoryItem.color, fontSize: 11 }}>
+                      {Math.round((selectedCategoryItem.total / total) * 100)}%
+                    </Text>
+                  </View>
+                ) : (
+                  <View style={{ alignItems: 'center', gap: 1 }}>
+                    <Text variant="label" style={{ fontWeight: '800', fontSize: 13 }}>
+                      {data.length}
+                    </Text>
+                    <Text variant="caption" muted style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                      Categories
+                    </Text>
+                  </View>
+                )}
+              </Pressable>
             </View>
 
-            <View style={{ flex: 1, gap: 3 }}>
+            {/* ── CATEGORY LIST WITH MINI-PROGRESS BARS ── */}
+            <View style={{ flex: 1, gap: 5 }}>
               {data.map((item) => {
                 const isSelected = selectedCategory === item.label;
+                const pct = Math.round((item.total / total) * 100);
 
                 return (
                   <Pressable
                     key={item.label}
                     onPress={() => setSelectedCategory((cur) => (cur === item.label ? null : item.label))}
                     style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      gap: 6,
-                      paddingVertical: 2,
-                      paddingHorizontal: 5,
+                      gap: 3,
+                      paddingVertical: 3,
+                      paddingHorizontal: 6,
                       borderRadius: theme.radius.sm,
                       backgroundColor: isSelected
                         ? (theme.isDark ? 'rgba(129, 140, 248, 0.16)' : 'rgba(79, 70, 229, 0.08)')
                         : 'transparent',
                     }}
                   >
-                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: item.color }} />
-                    <Text style={{ flex: 1, fontSize: 13, fontWeight: isSelected ? '800' : '500' }} numberOfLines={1}>
-                      {item.icon} {item.label}
-                    </Text>
-                    <Text variant="caption" muted style={{ fontSize: 12, fontWeight: isSelected ? '800' : '600' }}>
-                      {Math.round((item.total / total) * 100)}%
-                    </Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+                        <View style={{ width: 7, height: 7, borderRadius: 3.5, backgroundColor: item.color }} />
+                        <Text style={{ fontSize: 12, fontWeight: isSelected ? '800' : '600', color: theme.colors.text }} numberOfLines={1}>
+                          {item.icon} {item.label}
+                        </Text>
+                      </View>
+                      <Text variant="caption" style={{ fontSize: 11, fontWeight: isSelected ? '800' : '600', color: isSelected ? theme.colors.primary : theme.colors.textMuted }}>
+                        {formatMoney(item.total, currency)} ({pct}%)
+                      </Text>
+                    </View>
+
+                    {/* Subtle miniature progress track */}
+                    <View style={{ height: 3, borderRadius: 1.5, overflow: 'hidden', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }}>
+                      <View
+                        style={{
+                          width: `${pct}%`,
+                          height: '100%',
+                          backgroundColor: item.color,
+                          borderRadius: 1.5,
+                        }}
+                      />
+                    </View>
                   </Pressable>
                 );
               })}
             </View>
           </View>
 
-          {/* ── ON-CLICK CATEGORY EXPENSES LIST ── */}
+          {/* ── ON-CLICK CATEGORY EXPENSES LIST DRAWER ── */}
           {selectedCategoryItem && (
             <View
               style={{
@@ -443,15 +548,15 @@ export function CategoryBreakdown({ expenses, targetCurrency }: { expenses: Expe
               {/* Category Header */}
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                 <View style={{ gap: 2 }}>
-                  <Text variant="label" style={{ fontWeight: '800', fontSize: 15 }}>
+                  <Text variant="label" style={{ fontWeight: '800', fontSize: 14 }}>
                     {selectedCategoryItem.icon} {selectedCategoryItem.label}
                   </Text>
-                  <Text variant="caption" muted>
+                  <Text variant="caption" muted style={{ fontSize: 11 }}>
                     {filteredCategoryExpenses.length} {filteredCategoryExpenses.length === 1 ? 'transaction' : 'transactions'} · {Math.round((selectedCategoryItem.total / total) * 100)}% of total
                   </Text>
                 </View>
 
-                <Text variant="h3" style={{ color: theme.colors.primary, fontWeight: '800' }}>
+                <Text variant="h3" style={{ color: theme.colors.primary, fontWeight: '800', fontSize: 16 }}>
                   {formatMoney(selectedCategoryItem.total, currency)}
                 </Text>
               </View>
@@ -472,7 +577,7 @@ export function CategoryBreakdown({ expenses, targetCurrency }: { expenses: Expe
                         flexDirection: 'row',
                         alignItems: 'center',
                         justifyContent: 'space-between',
-                        paddingVertical: 10,
+                        paddingVertical: 9,
                         paddingHorizontal: 12,
                         backgroundColor: theme.colors.surfaceElevated,
                         borderRadius: theme.radius.md,
@@ -481,7 +586,7 @@ export function CategoryBreakdown({ expenses, targetCurrency }: { expenses: Expe
                       }}
                     >
                       <View style={{ flex: 1, gap: 2 }}>
-                        <Text variant="label" style={{ fontWeight: '600' }} numberOfLines={1}>
+                        <Text variant="label" style={{ fontWeight: '600', fontSize: 13 }} numberOfLines={1}>
                           {expense.description || expense.categories?.name || 'Expense'}
                         </Text>
                         <Text variant="caption" muted style={{ fontSize: 11 }}>
@@ -490,13 +595,13 @@ export function CategoryBreakdown({ expenses, targetCurrency }: { expenses: Expe
                       </View>
 
                       <View style={{ alignItems: 'flex-end', gap: 2 }}>
-                        <Text variant="label" style={{ fontWeight: '800', color: theme.colors.text, fontSize: 15 }}>
+                        <Text variant="label" style={{ fontWeight: '800', color: theme.colors.text, fontSize: 14 }}>
                           {formatMoney(converted, currency)}
                         </Text>
                         {isDifferent ? (
                           <Text
                             style={{
-                              fontSize: 11,
+                              fontSize: 10,
                               fontWeight: '600',
                               color: theme.colors.textMuted,
                               fontVariant: ['tabular-nums'],

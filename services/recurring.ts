@@ -7,7 +7,11 @@ import { supabase } from '@/utils/supabase';
 const selection = '*, categories(name, icon, color)';
 
 export async function listRecurringRules(userId: string) {
-  const { data, error } = await supabase.from('recurring_rules').select(selection).eq('user_id', userId).order('next_due_date');
+  const { data, error } = await supabase
+    .from('recurring_rules')
+    .select(selection)
+    .eq('user_id', userId)
+    .order('next_due_date');
   if (error) throw error;
   return (data ?? []) as RecurringRule[];
 }
@@ -21,9 +25,39 @@ export async function createRecurringRule(userId: string, input: {
   frequency: RecurringFrequency;
   next_due_date: string;
 }) {
-  const { data, error } = await supabase.from('recurring_rules').insert({ user_id: userId, ...input, is_active: true }).select(selection).single();
+  const { data, error } = await supabase
+    .from('recurring_rules')
+    .insert({ user_id: userId, ...input, is_active: true })
+    .select(selection)
+    .single();
   if (error) throw error;
   await scheduleRecurringReminder(data as RecurringRule);
+  return data as RecurringRule;
+}
+
+export async function updateRecurringRule(
+  id: string,
+  input: Partial<{
+    amount: number;
+    category_id: string;
+    currency: string;
+    description: string | null;
+    payment_method: PaymentMethod;
+    frequency: RecurringFrequency;
+    next_due_date: string;
+    is_active: boolean;
+  }>,
+) {
+  const { data, error } = await supabase
+    .from('recurring_rules')
+    .update(input)
+    .eq('id', id)
+    .select(selection)
+    .single();
+  if (error) throw error;
+  if (data) {
+    await scheduleRecurringReminder(data as RecurringRule);
+  }
   return data as RecurringRule;
 }
 
@@ -84,7 +118,10 @@ export async function generateDueRecurringExpenses(userId: string) {
     }
 
     if (nextDueDate.getTime() !== dueDate.getTime()) {
-      const { error } = await supabase.from('recurring_rules').update({ next_due_date: format(nextDueDate, 'yyyy-MM-dd') }).eq('id', rule.id);
+      const { error } = await supabase
+        .from('recurring_rules')
+        .update({ next_due_date: format(nextDueDate, 'yyyy-MM-dd') })
+        .eq('id', rule.id);
       if (error) throw error;
     }
   }

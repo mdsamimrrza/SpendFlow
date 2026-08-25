@@ -1,17 +1,24 @@
 import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
+import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { formatMoney } from '@/utils/format';
 
-// Configure notification behavior for foreground & background notifications
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-  }),
-});
+// Detect if running inside Expo Go (where remote push is unsupported since SDK 53)
+const isExpoGo = Constants.executionEnvironment === 'storeClient';
+
+// Configure notification behavior — only register handler outside Expo Go
+// to avoid the SDK 53 "push removed from Expo Go" warning
+if (!isExpoGo) {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowBanner: true,
+      shouldShowList: true,
+      shouldPlaySound: true,
+      shouldSetBadge: true,
+    }),
+  });
+}
 
 // 1. Request Notification Permissions & Initialize Android Channel
 export async function requestNotificationPermissions(): Promise<boolean> {
