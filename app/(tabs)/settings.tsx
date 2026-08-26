@@ -715,71 +715,7 @@ export default function SettingsScreen() {
           </Pressable>
         </View>
 
-        {/* ── 4. DOWNLOAD ANDROID APP (APK) PROMO CARD ── */}
-        <Pressable
-          onPress={() => {
-            if (Platform.OS === 'web' && typeof window !== 'undefined') {
-              const link = document.createElement('a');
-              link.href = '/SpendFlow.apk';
-              link.download = 'SpendFlow.apk';
-              document.body.appendChild(link);
-              link.click();
-              document.body.removeChild(link);
-            } else {
-              Linking.openURL('https://github.com/mdsamimrrza/SpendFlow/raw/main/SpendFlow.apk');
-            }
-          }}
-          style={({ pressed }) => ({
-            width: '100%',
-            padding: 14,
-            borderRadius: 16,
-            backgroundColor: theme.isDark ? 'rgba(79, 70, 229, 0.15)' : '#EEF2FF',
-            borderWidth: 1.5,
-            borderColor: theme.isDark ? 'rgba(99, 102, 241, 0.4)' : '#C7D2FE',
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            marginTop: 4,
-            opacity: pressed ? 0.8 : 1,
-          })}
-        >
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }}>
-            <View
-              style={{
-                width: 40,
-                height: 40,
-                borderRadius: 11,
-                backgroundColor: '#4F46E5',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <Download size={20} color="#FFFFFF" />
-            </View>
-            <View style={{ flex: 1, gap: 2 }}>
-              <Text style={{ fontSize: 15, fontWeight: '800', color: theme.colors.text }}>
-                Download Android App
-              </Text>
-              <Text variant="caption" muted style={{ fontSize: 11.5 }}>
-                Get SpendFlow v2.0.0 APK for Android
-              </Text>
-            </View>
-          </View>
-          <View
-            style={{
-              paddingHorizontal: 10,
-              paddingVertical: 5,
-              borderRadius: theme.radius.full,
-              backgroundColor: '#4F46E5',
-            }}
-          >
-            <Text style={{ fontSize: 11, fontWeight: '800', color: '#FFFFFF' }}>
-              APK ⬇
-            </Text>
-          </View>
-        </Pressable>
-
-        {/* ── 5. SIGN OUT BUTTON (RUST ACCENT) ── */}
+        {/* ── 4. SIGN OUT BUTTON (RUST ACCENT) ── */}
         <Pressable
           onPress={handleSignOut}
           style={({ pressed }) => ({
