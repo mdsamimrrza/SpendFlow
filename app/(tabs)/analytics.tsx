@@ -30,12 +30,14 @@ import { FinancialInsights } from '@/components/expense/FinancialInsights';
 import { StockTrendChart } from '@/components/expense/StockTrendChart';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { PrivacyEyeButton } from '@/components/ui/PrivacyEyeButton';
 import { Text } from '@/components/ui/Text';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
 import { useAuth } from '@/hooks/useAuth';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { useExpenses } from '@/hooks/useExpenses';
 import { useLanguage } from '@/hooks/useLanguage';
+import { usePrivacy } from '@/hooks/usePrivacy';
 import { useTheme } from '@/hooks/useTheme';
 import { listCategories } from '@/services/categories';
 import { Category, PeriodKey } from '@/types';
@@ -46,6 +48,7 @@ type AnalyticsSectionTab = 'overview' | 'categories' | 'habits' | 'all';
 export default function AnalyticsScreen() {
   const { profile, session } = useAuth();
   const { t } = useLanguage();
+  const { isPrivacyMode } = usePrivacy();
   const theme = useTheme();
   const { rates, convert } = useExchangeRates();
   const [period, setPeriod] = useState<PeriodKey>('month');
@@ -172,7 +175,10 @@ export default function AnalyticsScreen() {
             {t('analytics_title') || 'Analytics'}
           </Text>
         </View>
-        <ThemeToggle />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <PrivacyEyeButton />
+          <ThemeToggle />
+        </View>
       </View>
 
       {/* ── 2. PERIOD SELECTOR HORIZONTAL PILLS ── */}
@@ -286,7 +292,7 @@ export default function AnalyticsScreen() {
                   flex: 1,
                   padding: 14,
                   gap: 4,
-                  backgroundColor: theme.isDark ? '#111827' : '#EEF2FF',
+                  backgroundColor: theme.isDark ? '#111827' : theme.colors.cardHighlight,
                   borderWidth: 1.5,
                   borderColor: theme.colors.primary,
                 }}

@@ -13,6 +13,7 @@ import { Edit3, Trash2 } from 'lucide-react-native';
 import { Text } from '@/components/ui/Text';
 import { useAuth } from '@/hooks/useAuth';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
+import { usePrivacy } from '@/hooks/usePrivacy';
 import { useTheme } from '@/hooks/useTheme';
 import { Expense } from '@/types';
 import { formatMoney, formatTime12 } from '@/utils/format';
@@ -26,6 +27,7 @@ export function ExpenseItem({ expense, onDelete }: ExpenseItemProps) {
   const theme = useTheme();
   const { profile } = useAuth();
   const { convert } = useExchangeRates();
+  const { isPrivacyMode } = usePrivacy();
   const router = useRouter();
 
   const translateX = useRef(new Animated.Value(0)).current;

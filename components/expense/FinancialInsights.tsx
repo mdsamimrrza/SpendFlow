@@ -5,6 +5,7 @@ import { Card } from '@/components/ui/Card';
 import { Text } from '@/components/ui/Text';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { useLanguage } from '@/hooks/useLanguage';
+import { usePrivacy } from '@/hooks/usePrivacy';
 import { useTheme } from '@/hooks/useTheme';
 import { Expense } from '@/types';
 import { formatMoney } from '@/utils/format';
@@ -18,6 +19,7 @@ export function FinancialInsights({ expenses, targetCurrency }: FinancialInsight
   const theme = useTheme();
   const { t, language } = useLanguage();
   const { convert } = useExchangeRates();
+  const { isPrivacyMode } = usePrivacy();
 
   const getAmount = (e: Expense) =>
     convert(Number(e.amount), e.currency || 'NPR', targetCurrency);

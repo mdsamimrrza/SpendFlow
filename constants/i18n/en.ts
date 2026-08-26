@@ -41,7 +41,7 @@ export const en = {
   home_export_data: 'Export',
 
   // ── History Screen ──
-  history_title: 'Transaction History',
+  history_title: 'History',
   history_search_placeholder: 'Search title, merchant, or notes...',
   history_total_spending: 'Total Spending',
   history_total_outflow: 'Total Outflow',
@@ -280,6 +280,17 @@ export const en = {
   common_yes: 'Yes',
   common_no: 'No',
   common_ok: 'OK',
+
+  // ── Bullion / Market ──
+  bullion_title: 'Gold/Silver Price',
+  bullion_market_nepal: 'Nepal (NPR)',
+  bullion_market_india: 'India (INR)',
+  bullion_hallmark_gold: 'HALLMARK GOLD',
+  bullion_silver: 'SILVER',
+  bullion_per_tola: '1 TOLA',
+  bullion_per_10g: '10 GRAM',
+  bullion_calc_title: 'Instant Metal Valuation Calculator',
+  bullion_guide_title: 'Bullion Standards & Buyer Guide',
 };
 
 export type TranslationKey = keyof typeof en;

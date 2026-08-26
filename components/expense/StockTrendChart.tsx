@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Dimensions, Pressable, View } from 'react-native';
 import Svg, { Circle, Defs, Line, LinearGradient, Path, Rect, Stop, Text as SvgText } from 'react-native-svg';
 import { ArrowDownRight, ArrowUpRight, TrendingUp } from 'lucide-react-native';
@@ -6,6 +6,7 @@ import { Card } from '@/components/ui/Card';
 import { Text } from '@/components/ui/Text';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { useLanguage } from '@/hooks/useLanguage';
+import { usePrivacy } from '@/hooks/usePrivacy';
 import { useTheme } from '@/hooks/useTheme';
 import { Expense } from '@/types';
 import { formatMoney } from '@/utils/format';
@@ -19,12 +20,9 @@ interface DataPoint {
   dateKey: string;
 }
 
-// Compact formatter for on-graph tooltip values
+// Formatter for on-graph tooltip values (shows full amount e.g. ₹ 2,742)
 function shortMoney(val: number, currency: string): string {
-  if (val >= 10000000) return `${currency} ${(val / 10000000).toFixed(1)}Cr`;
-  if (val >= 100000) return `${currency} ${(val / 100000).toFixed(1)}L`;
-  if (val >= 1000) return `${currency} ${(val / 1000).toFixed(1)}K`;
-  return `${currency} ${Math.round(val)}`;
+  return `${currency} ${Math.round(val).toLocaleString()}`;
 }
 
 export function StockTrendChart({
@@ -37,8 +35,29 @@ export function StockTrendChart({
   const theme = useTheme();
   const { t, language } = useLanguage();
   const { convert } = useExchangeRates();
+  const { isPrivacyMode } = usePrivacy();
   const [filter, setFilter] = useState<TimeFilter>('daily');
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleSelectPoint = (index: number) => {
+    if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
+    setSelectedIndex((prev) => {
+      const next = prev === index ? null : index;
+      if (next !== null) {
+        dismissTimerRef.current = setTimeout(() => {
+          setSelectedIndex(null);
+        }, 5000);
+      }
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    return () => {
+      if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
+    };
+  }, []);
 
   const screenWidth = Dimensions.get('window').width;
   const chartWidth = Math.max(screenWidth - 64, 280);
@@ -213,10 +232,7 @@ export function StockTrendChart({
       const val = minAmount + (range * i) / steps;
       const normalizedY = (val - minAmount) / Math.max(range, 1);
       const y = chartHeight - paddingBottom - normalizedY * usableHeight;
-      let label: string;
-      if (val >= 1000000) label = `${(val / 1000000).toFixed(1)}M`;
-      else if (val >= 1000) label = `${(val / 1000).toFixed(0)}K`;
-      else label = `${Math.round(val)}`;
+      const label = Math.round(val).toLocaleString();
       lines.push({ y, label });
     }
     return lines;
@@ -491,7 +507,7 @@ export function StockTrendChart({
           {coords.map((c) => (
             <Pressable
               key={c.index}
-              onPress={() => setSelectedIndex((prev) => prev === c.index ? null : c.index)}
+              onPress={() => handleSelectPoint(c.index)}
               style={{ flex: 1, height: '100%' }}
             />
           ))}
@@ -503,7 +519,7 @@ export function StockTrendChart({
         {points.map((p, i) => {
           const isSelected = activePoint?.index === i;
           return (
-            <Pressable key={i} onPress={() => setSelectedIndex((prev) => prev === i ? null : i)} hitSlop={6}>
+            <Pressable key={i} onPress={() => handleSelectPoint(i)} hitSlop={6}>
               <Text
                 variant="caption"
                 style={{

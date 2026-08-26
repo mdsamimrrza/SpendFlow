@@ -16,23 +16,27 @@ import {
   Edit2,
   Pause,
   Play,
+  Plus,
   Repeat,
   Sparkles,
   Trash2,
   X,
 } from 'lucide-react-native';
 import { addDays, differenceInCalendarDays, format, parseISO } from 'date-fns';
+import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { CalendarModal } from '@/components/ui/CalendarModal';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { PressableScale } from '@/components/ui/PressableScale';
 import { Select } from '@/components/ui/Select';
+import { PrivacyEyeButton } from '@/components/ui/PrivacyEyeButton';
 import { Text } from '@/components/ui/Text';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
 import { PAYMENT_METHODS } from '@/constants/app';
 import { useAuth } from '@/hooks/useAuth';
 import { useLanguage } from '@/hooks/useLanguage';
+import { usePrivacy } from '@/hooks/usePrivacy';
 import { useTheme } from '@/hooks/useTheme';
 import { listCategories } from '@/services/categories';
 import {
@@ -48,6 +52,7 @@ import { formatMoney, isoDate } from '@/utils/format';
 export default function RecurringScreen() {
   const { profile } = useAuth();
   const { t } = useLanguage();
+  const { isPrivacyMode } = usePrivacy();
   const theme = useTheme();
   const [rules, setRules] = useState<RecurringRule[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -60,6 +65,7 @@ export default function RecurringScreen() {
   ];
 
   // Modal Form State
+  const [selectedRule, setSelectedRule] = useState<RecurringRule | null>(null);
   const [showFormModal, setShowFormModal] = useState(false);
   const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
   const [amount, setAmount] = useState('');
@@ -115,6 +121,7 @@ export default function RecurringScreen() {
   }, [rules]);
 
   function openCreateModal() {
+    setSelectedRule(null);
     setEditingRuleId(null);
     setAmount('');
     setDescription('');
@@ -126,6 +133,7 @@ export default function RecurringScreen() {
   }
 
   function openEditModal(rule: RecurringRule) {
+    setSelectedRule(null);
     setEditingRuleId(rule.id);
     setAmount(String(rule.amount));
     setDescription(rule.description || '');
@@ -141,6 +149,30 @@ export default function RecurringScreen() {
     setEditingRuleId(null);
     setAmount('');
     setDescription('');
+  }
+
+  async function handleDeleteRule(ruleId: string) {
+    Alert.alert(
+      t('common_delete') || 'Delete Subscription',
+      'Are you sure you want to delete this recurring subscription? This cannot be undone.',
+      [
+        { text: t('common_cancel') || 'Cancel', style: 'cancel' },
+        {
+          text: t('common_delete') || 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteRecurringRule(ruleId);
+              setSelectedRule(null);
+              closeFormModal();
+              await load();
+            } catch (err: any) {
+              Alert.alert('Error', err?.message || 'Failed to delete subscription');
+            }
+          },
+        },
+      ]
+    );
   }
 
   async function handleSaveRule() {
@@ -228,26 +260,22 @@ export default function RecurringScreen() {
     }
   }
 
-  function getDueStatusBadge(dueDateStr: string, isActive: boolean) {
-    if (!isActive) {
-      return { label: 'Paused', color: theme.colors.textMuted, bg: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' };
-    }
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const target = parseISO(dueDateStr);
-    target.setHours(0, 0, 0, 0);
-    const diffDays = differenceInCalendarDays(target, today);
+  const activeRules = rules.filter((r) => r.is_active);
+  const activeCount = activeRules.length;
+  const displayName = profile?.display_name || profile?.email?.split('@')[0] || 'User';
 
-    if (diffDays < 0) {
-      return { label: `Overdue by ${Math.abs(diffDays)}d`, color: theme.colors.danger, bg: theme.isDark ? 'rgba(239,68,68,0.18)' : 'rgba(239,68,68,0.1)' };
+  function formatRecurringSubtitle(rule: RecurringRule) {
+    const freqLabel = rule.frequency === 'daily' ? 'Daily' : rule.frequency === 'weekly' ? 'Weekly' : rule.frequency === 'custom' ? 'Custom' : 'Monthly';
+    if (!rule.is_active) {
+      return `${freqLabel} · paused`;
     }
-    if (diffDays === 0) {
-      return { label: 'Due Today 🔔', color: theme.colors.warning, bg: theme.isDark ? 'rgba(245,158,11,0.18)' : 'rgba(245,158,11,0.1)' };
+    try {
+      const due = parseISO(rule.next_due_date);
+      const dateFormatted = format(due, 'MMM d');
+      return `${freqLabel} · next ${dateFormatted}`;
+    } catch {
+      return `${freqLabel} · next ${rule.next_due_date}`;
     }
-    if (diffDays === 1) {
-      return { label: 'Due Tomorrow', color: theme.colors.primary, bg: theme.isDark ? 'rgba(99,102,241,0.18)' : 'rgba(79,70,229,0.1)' };
-    }
-    return { label: `In ${diffDays} days`, color: theme.colors.textMuted, bg: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' };
   }
 
   return (
@@ -265,259 +293,493 @@ export default function RecurringScreen() {
         }
       >
         {/* ── 1. APP BAR HEADER ── */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 }}>
           <View style={{ gap: 2 }}>
-            <Text variant="caption" muted style={{ fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.6, fontSize: 11 }}>
-              Subscriptions & Bills
+            <Text
+              variant="caption"
+              muted
+              style={{
+                fontWeight: '700',
+                textTransform: 'uppercase',
+                letterSpacing: 1.1,
+                fontSize: 11,
+              }}
+            >
+              {activeCount} {activeCount === 1 ? 'ACTIVE SUBSCRIPTION' : 'ACTIVE SUBSCRIPTIONS'}
             </Text>
-            <Text variant="h1" style={{ fontWeight: '800', letterSpacing: -0.3 }}>
-              {t('recurring_title') || 'Recurring Bills'}
+            <Text
+              variant="h1"
+              style={{
+                fontWeight: '800',
+                fontSize: 32,
+                letterSpacing: -0.5,
+                color: theme.colors.text,
+              }}
+            >
+              Recurring
             </Text>
           </View>
-          <ThemeToggle />
+
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <ThemeToggle />
+            <Avatar uri={profile?.avatar_url} name={displayName} size={38} />
+          </View>
         </View>
 
-        {/* ── 2. MONTHLY COMMITMENT HERO CARD ── */}
-        <Card style={{ padding: theme.spacing.lg, gap: theme.spacing.md }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Repeat size={18} color={theme.colors.primary} />
-              <Text variant="caption" muted style={{ textTransform: 'uppercase', letterSpacing: 0.8, fontWeight: '700' }}>
-                {t('recurring_monthly_commitments') || 'Monthly Commitments'}
-              </Text>
-            </View>
-            <View style={{ backgroundColor: theme.isDark ? 'rgba(99,102,241,0.2)' : 'rgba(79,70,229,0.1)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: theme.radius.full }}>
-              <Text style={{ fontSize: 11, fontWeight: '800', color: theme.colors.primary }}>
-                {rules.filter((r) => r.is_active).length} Active
-              </Text>
-            </View>
+        {/* ── 2. MONTHLY RECURRING HERO CARD ── */}
+        <View
+          style={{
+            paddingHorizontal: 20,
+            paddingVertical: 18,
+            borderRadius: 22,
+            backgroundColor: theme.colors.surface,
+            borderWidth: 1,
+            borderColor: theme.colors.border,
+            position: 'relative',
+            justifyContent: 'center',
+            shadowColor: '#000000',
+            shadowOffset: { width: 0, height: 2 },
+            shadowOpacity: theme.isDark ? 0.2 : 0.04,
+            shadowRadius: 8,
+            elevation: 2,
+          }}
+        >
+          {/* Privacy Eye Button in Top Right */}
+          <View style={{ position: 'absolute', top: 16, right: 16, zIndex: 10 }}>
+            <PrivacyEyeButton />
           </View>
 
-          <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6 }}>
-            <Text variant="h1" style={{ fontSize: 34, lineHeight: 40, fontWeight: '900', color: theme.colors.primary }}>
+          {/* Texts tightly stacked */}
+          <View style={{ gap: 4, paddingRight: 48 }}>
+            <Text
+              variant="caption"
+              style={{
+                color: theme.colors.primary,
+                textTransform: 'uppercase',
+                letterSpacing: 0.9,
+                fontWeight: '800',
+                fontSize: 11,
+              }}
+            >
+              MONTHLY RECURRING
+            </Text>
+
+            <Text
+              variant="h1"
+              style={{
+                fontSize: 30,
+                lineHeight: 36,
+                fontWeight: '800',
+                color: theme.colors.text,
+                fontVariant: ['tabular-nums'],
+                letterSpacing: -0.5,
+              }}
+            >
               {formatMoney(monthlyTotal, preferredCurrency)}
             </Text>
-            <Text variant="caption" muted style={{ fontWeight: '700', fontSize: 13 }}>
-              {t('recurring_per_month') || '/ month'}
+
+            <Text variant="caption" muted style={{ fontSize: 12.5, fontWeight: '500' }}>
+              Across {activeCount} active {activeCount === 1 ? 'subscription' : 'subscriptions'}
             </Text>
           </View>
+        </View>
 
-          {/* Quick Action Button: Opens Modal Popup */}
-          <Button
-            title={`+ ${t('recurring_add_new') || 'Add Recurring Bill'}`}
-            variant="primary"
-            onPress={openCreateModal}
-          />
-        </Card>
-
-        {/* ── 3. CONFIGURED RECURRING BILLS LIST ── */}
-        <View style={{ gap: theme.spacing.md }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-            <Text variant="h2" style={{ fontWeight: '800', fontSize: 17 }}>
-              {t('recurring_active_rules') || 'Configured Recurring Bills'} ({rules.length})
+        {/* ── 3. UNIFIED GROUPED SUBSCRIPTIONS CARD ── */}
+        {rules.length === 0 ? (
+          <Card style={{ gap: theme.spacing.md, padding: theme.spacing.xl, alignItems: 'center', borderRadius: 22 }}>
+            <Sparkles size={36} color={theme.colors.primary} />
+            <Text variant="h3" style={{ textAlign: 'center' }}>
+              {t('recurring_no_rules_title') || 'No recurring bills setup'}
             </Text>
-          </View>
+            <Text muted style={{ textAlign: 'center', fontSize: 13, lineHeight: 18 }}>
+              {t('recurring_no_rules_message') || 'Automate repeat payments like rent, subscriptions, and utilities so you never miss a due date.'}
+            </Text>
 
-          {rules.length === 0 ? (
-            <Card style={{ gap: theme.spacing.md, padding: theme.spacing.xl, alignItems: 'center' }}>
-              <Sparkles size={36} color={theme.colors.primary} />
-              <Text variant="h3" style={{ textAlign: 'center' }}>
-                {t('recurring_no_rules_title') || 'No recurring bills setup'}
+            {/* Preset Suggestion Chips */}
+            <View style={{ gap: theme.spacing.xs, width: '100%', marginTop: theme.spacing.xs }}>
+              <Text variant="caption" muted style={{ textAlign: 'center', fontWeight: '700' }}>
+                {t('recurring_quick_add') || 'Quick Add Templates'}:
               </Text>
-              <Text muted style={{ textAlign: 'center', fontSize: 13, lineHeight: 18 }}>
-                {t('recurring_no_rules_message') || 'Automate repeat payments like rent, subscriptions, and utilities so you never miss a due date.'}
-              </Text>
-
-              {/* Preset Suggestion Chips */}
-              <View style={{ gap: theme.spacing.xs, width: '100%', marginTop: theme.spacing.xs }}>
-                <Text variant="caption" muted style={{ textAlign: 'center', fontWeight: '700' }}>
-                  {t('recurring_quick_add') || 'Quick Add Templates'}:
-                </Text>
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center' }}>
-                  <PressableScale
-                    onPress={() => applyPreset('🏠 House Rent', '25000', 'monthly')}
-                    style={{ backgroundColor: theme.colors.surfaceElevated, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, borderWidth: 1, borderColor: theme.colors.border }}
-                  >
-                    <Text variant="caption" style={{ fontWeight: '700' }}>🏠 House Rent</Text>
-                  </PressableScale>
-                  <PressableScale
-                    onPress={() => applyPreset('📶 Wi-Fi Bill', '1200', 'monthly')}
-                    style={{ backgroundColor: theme.colors.surfaceElevated, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, borderWidth: 1, borderColor: theme.colors.border }}
-                  >
-                    <Text variant="caption" style={{ fontWeight: '700' }}>📶 Wi-Fi Bill</Text>
-                  </PressableScale>
-                  <PressableScale
-                    onPress={() => applyPreset('🍿 Netflix Subscription', '800', 'monthly')}
-                    style={{ backgroundColor: theme.colors.surfaceElevated, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, borderWidth: 1, borderColor: theme.colors.border }}
-                  >
-                    <Text variant="caption" style={{ fontWeight: '700' }}>🍿 Netflix</Text>
-                  </PressableScale>
-                </View>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center' }}>
+                <PressableScale
+                  onPress={() => applyPreset('🏠 House Rent', '25000', 'monthly')}
+                  style={{ backgroundColor: theme.colors.surfaceElevated, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, borderWidth: 1, borderColor: theme.colors.border }}
+                >
+                  <Text variant="caption" style={{ fontWeight: '700' }}>🏠 House Rent</Text>
+                </PressableScale>
+                <PressableScale
+                  onPress={() => applyPreset('📶 Wi-Fi Bill', '1200', 'monthly')}
+                  style={{ backgroundColor: theme.colors.surfaceElevated, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, borderWidth: 1, borderColor: theme.colors.border }}
+                >
+                  <Text variant="caption" style={{ fontWeight: '700' }}>📶 Wi-Fi Bill</Text>
+                </PressableScale>
+                <PressableScale
+                  onPress={() => applyPreset('🍿 Netflix Subscription', '800', 'monthly')}
+                  style={{ backgroundColor: theme.colors.surfaceElevated, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, borderWidth: 1, borderColor: theme.colors.border }}
+                >
+                  <Text variant="caption" style={{ fontWeight: '700' }}>🍿 Netflix</Text>
+                </PressableScale>
               </View>
-            </Card>
-          ) : (
-            rules.map((rule) => {
-              const status = getDueStatusBadge(rule.next_due_date, rule.is_active);
-              const isBeingEdited = editingRuleId === rule.id;
+            </View>
+          </Card>
+        ) : (
+          <View
+            style={{
+              borderRadius: 22,
+              backgroundColor: theme.colors.surface,
+              borderWidth: 1,
+              borderColor: theme.colors.border,
+              overflow: 'hidden',
+              shadowColor: '#000000',
+              shadowOffset: { width: 0, height: 2 },
+              shadowOpacity: theme.isDark ? 0.2 : 0.04,
+              shadowRadius: 8,
+              elevation: 2,
+            }}
+          >
+            {rules.map((rule, idx) => {
+              const isLast = idx === rules.length - 1;
+              const subtitle = formatRecurringSubtitle(rule);
 
               return (
-                <PressableScale
-                  key={rule.id}
-                  activeScale={0.98}
-                  onPress={() => openEditModal(rule)}
-                  style={{
-                    padding: theme.spacing.lg,
-                    gap: theme.spacing.sm,
-                    backgroundColor: isBeingEdited
-                      ? (theme.isDark ? 'rgba(99, 102, 241, 0.2)' : 'rgba(79, 70, 229, 0.1)')
-                      : theme.colors.surface,
-                    borderRadius: theme.radius.lg,
-                    borderWidth: 1.5,
-                    borderColor: isBeingEdited ? theme.colors.primary : theme.colors.border,
-                    opacity: rule.is_active ? 1 : 0.65,
-                  }}
-                >
-                  {/* Top Row: Icon + Description & Amount */}
-                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.spacing.sm, flex: 1 }}>
+                <React.Fragment key={rule.id}>
+                  <PressableScale
+                    activeScale={0.98}
+                    onPress={() => setSelectedRule(rule)}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      paddingHorizontal: 16,
+                      paddingVertical: 14,
+                      backgroundColor: 'transparent',
+                      opacity: rule.is_active ? 1 : 0.65,
+                    }}
+                  >
+                    {/* Left: Category Icon & Title/Subtitle */}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, flex: 1 }}>
                       <View
                         style={{
                           width: 42,
                           height: 42,
                           borderRadius: 21,
-                          backgroundColor: theme.colors.surfaceElevated,
+                          backgroundColor: theme.isDark ? 'rgba(15, 92, 77, 0.2)' : '#DCE9E3',
                           alignItems: 'center',
                           justifyContent: 'center',
-                          borderWidth: 1,
-                          borderColor: theme.colors.border,
                         }}
                       >
                         <Text style={{ fontSize: 20 }}>{rule.categories?.icon || '💳'}</Text>
                       </View>
-                      <View style={{ flex: 1, gap: 2 }}>
-                        <Text variant="h3" numberOfLines={1} style={{ fontWeight: '800' }}>
-                          {rule.description || rule.categories?.name || 'Recurring Expense'}
+
+                      <View style={{ gap: 2, flex: 1 }}>
+                        <Text
+                          numberOfLines={1}
+                          style={{
+                            fontSize: 15,
+                            fontWeight: '700',
+                            color: theme.colors.text,
+                            letterSpacing: -0.2,
+                          }}
+                        >
+                          {rule.description || rule.categories?.name || 'Subscription'}
                         </Text>
-                        <Text variant="caption" muted numberOfLines={1} style={{ fontSize: 11 }}>
-                          {rule.categories?.name} · {rule.payment_method}
+                        <Text
+                          numberOfLines={1}
+                          variant="caption"
+                          muted
+                          style={{
+                            fontSize: 12,
+                            color: theme.colors.textMuted,
+                          }}
+                        >
+                          {subtitle}
                         </Text>
                       </View>
                     </View>
 
-                    <View style={{ alignItems: 'flex-end', gap: 3 }}>
-                      <Text variant="h3" style={{ color: theme.colors.primary, fontWeight: '800', fontSize: 16 }}>
+                    {/* Right: Amount & Dashed Status Pill */}
+                    <View style={{ alignItems: 'flex-end', gap: 4 }}>
+                      <Text
+                        style={{
+                          fontSize: 15,
+                          fontWeight: '800',
+                          color: theme.colors.text,
+                          fontVariant: ['tabular-nums'],
+                        }}
+                      >
                         {formatMoney(Number(rule.amount), rule.currency || preferredCurrency)}
                       </Text>
-                      <View style={{ backgroundColor: status.bg, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6 }}>
-                        <Text style={{ fontSize: 10, fontWeight: '800', color: status.color, textTransform: 'capitalize' }}>
-                          {rule.frequency} · {status.label}
+
+                      {/* Dashed Status Badge */}
+                      <View
+                        style={{
+                          paddingHorizontal: 8,
+                          paddingVertical: 2,
+                          borderRadius: theme.radius.full,
+                          borderWidth: 1.5,
+                          borderColor: rule.is_active ? theme.colors.primary : theme.colors.textMuted,
+                          borderStyle: 'dashed',
+                          backgroundColor: 'transparent',
+                        }}
+                      >
+                        <Text
+                          style={{
+                            fontSize: 10,
+                            fontWeight: '800',
+                            color: rule.is_active ? theme.colors.primary : theme.colors.textMuted,
+                            letterSpacing: 0.5,
+                          }}
+                        >
+                          {rule.is_active ? 'ACTIVE' : 'PAUSED'}
                         </Text>
                       </View>
                     </View>
+                  </PressableScale>
+
+                  {!isLast && (
+                    <View
+                      style={{
+                        height: 1,
+                        marginHorizontal: 16,
+                        borderBottomWidth: 1,
+                        borderBottomColor: theme.colors.border,
+                        borderStyle: 'dashed',
+                      }}
+                    />
+                  )}
+                </React.Fragment>
+              );
+            })}
+          </View>
+        )}
+      </ScrollView>
+
+      {/* ── 4. SUBSCRIPTION DETAILS CARD MODAL ── */}
+      <Modal
+        visible={!!selectedRule}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSelectedRule(null)}
+      >
+        <Pressable
+          onPress={() => setSelectedRule(null)}
+          style={{
+            flex: 1,
+            backgroundColor: 'rgba(0,0,0,0.65)',
+            justifyContent: 'center',
+            alignItems: 'center',
+            padding: 20,
+          }}
+        >
+          <Pressable
+            onPress={(e) => e.stopPropagation()}
+            style={{
+              width: '100%',
+              maxWidth: 380,
+              backgroundColor: theme.colors.surface,
+              borderRadius: 24,
+              padding: 20,
+              gap: 16,
+              borderWidth: 1,
+              borderColor: theme.colors.border,
+              shadowColor: '#000000',
+              shadowOffset: { width: 0, height: 10 },
+              shadowOpacity: theme.isDark ? 0.4 : 0.15,
+              shadowRadius: 20,
+              elevation: 10,
+            }}
+          >
+            {/* Header: Icon + Title + Close Button */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }}>
+                <View
+                  style={{
+                    width: 46,
+                    height: 46,
+                    borderRadius: 23,
+                    backgroundColor: theme.isDark ? 'rgba(15, 92, 77, 0.25)' : '#DCE9E3',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Text style={{ fontSize: 22 }}>{selectedRule?.categories?.icon || '💳'}</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text variant="h3" numberOfLines={1} style={{ fontWeight: '800', fontSize: 18 }}>
+                    {selectedRule?.description || selectedRule?.categories?.name || 'Subscription'}
+                  </Text>
+                  <Text variant="caption" muted style={{ fontSize: 12 }}>
+                    {selectedRule?.categories?.name || 'Recurring'}
+                  </Text>
+                </View>
+              </View>
+
+              <Pressable
+                onPress={() => setSelectedRule(null)}
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: 16,
+                  backgroundColor: theme.colors.surfaceElevated,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <X size={16} color={theme.colors.text} />
+              </Pressable>
+            </View>
+
+            {/* Amount Banner */}
+            <View
+              style={{
+                paddingVertical: 14,
+                paddingHorizontal: 16,
+                borderRadius: 16,
+                backgroundColor: theme.isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)',
+                alignItems: 'center',
+                borderWidth: 1,
+                borderColor: theme.colors.border,
+                gap: 4,
+              }}
+            >
+              <Text variant="caption" muted style={{ fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8, fontSize: 11 }}>
+                Recurring Amount
+              </Text>
+              <Text style={{ fontSize: 28, fontWeight: '900', color: theme.colors.text, fontVariant: ['tabular-nums'] }}>
+                {selectedRule ? formatMoney(Number(selectedRule.amount), selectedRule.currency || preferredCurrency) : ''}
+              </Text>
+            </View>
+
+            {/* Details Tiles */}
+            <View style={{ gap: 10 }}>
+              {/* Status Row */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4 }}>
+                <Text variant="caption" muted style={{ fontSize: 13, fontWeight: '600' }}>
+                  Status
+                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <View
+                    style={{
+                      paddingHorizontal: 8,
+                      paddingVertical: 2,
+                      borderRadius: theme.radius.full,
+                      borderWidth: 1.5,
+                      borderColor: selectedRule?.is_active ? theme.colors.primary : theme.colors.textMuted,
+                      borderStyle: 'dashed',
+                    }}
+                  >
+                    <Text style={{ fontSize: 10, fontWeight: '800', color: selectedRule?.is_active ? theme.colors.primary : theme.colors.textMuted }}>
+                      {selectedRule?.is_active ? 'ACTIVE' : 'PAUSED'}
+                    </Text>
                   </View>
 
-                  {/* Bottom Action Footer Row */}
-                  <View
+                  <Pressable
+                    onPress={() => {
+                      if (selectedRule) {
+                        void toggleRuleActive(selectedRule);
+                        setSelectedRule((prev) => (prev ? { ...prev, is_active: !prev.is_active } : null));
+                      }
+                    }}
                     style={{
                       flexDirection: 'row',
                       alignItems: 'center',
-                      justifyContent: 'space-between',
-                      borderTopWidth: 1,
-                      borderTopColor: theme.colors.border,
-                      paddingTop: theme.spacing.xs,
-                      marginTop: 2,
+                      gap: 4,
+                      paddingHorizontal: 8,
+                      paddingVertical: 4,
+                      borderRadius: 8,
+                      backgroundColor: theme.colors.surfaceElevated,
+                      borderWidth: 1,
+                      borderColor: theme.colors.border,
                     }}
                   >
-                    <Text variant="caption" muted style={{ fontSize: 11 }}>
-                      Due: <Text style={{ fontWeight: '800', color: theme.colors.text }}>{rule.next_due_date}</Text>
+                    {selectedRule?.is_active ? <Pause size={11} color={theme.colors.textMuted} /> : <Play size={11} color={theme.colors.primary} />}
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: selectedRule?.is_active ? theme.colors.textMuted : theme.colors.primary }}>
+                      {selectedRule?.is_active ? 'Pause' : 'Resume'}
                     </Text>
+                  </Pressable>
+                </View>
+              </View>
 
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      {/* Pause / Resume Button */}
-                      <PressableScale
-                        activeScale={0.88}
-                        onPress={(e) => {
-                          e.stopPropagation?.();
-                          void toggleRuleActive(rule);
-                        }}
-                        hitSlop={8}
-                        style={{
-                          flexDirection: 'row',
-                          alignItems: 'center',
-                          gap: 4,
-                          paddingHorizontal: 8,
-                          paddingVertical: 5,
-                          borderRadius: theme.radius.sm,
-                          backgroundColor: theme.colors.surfaceElevated,
-                          borderWidth: 1,
-                          borderColor: theme.colors.border,
-                        }}
-                      >
-                        {rule.is_active ? <Pause size={12} color={theme.colors.textMuted} /> : <Play size={12} color={theme.colors.success} />}
-                        <Text variant="caption" style={{ fontSize: 11, fontWeight: '700', color: rule.is_active ? theme.colors.textMuted : theme.colors.success }}>
-                          {rule.is_active ? 'Pause' : 'Resume'}
-                        </Text>
-                      </PressableScale>
+              <View style={{ height: 1, backgroundColor: theme.colors.border, opacity: 0.6 }} />
 
-                      {/* Edit Button */}
-                      <PressableScale
-                        activeScale={0.88}
-                        onPress={(e) => {
-                          e.stopPropagation?.();
-                          openEditModal(rule);
-                        }}
-                        hitSlop={8}
-                        style={{
-                          flexDirection: 'row',
-                          alignItems: 'center',
-                          gap: 4,
-                          paddingHorizontal: 8,
-                          paddingVertical: 5,
-                          borderRadius: theme.radius.sm,
-                          backgroundColor: theme.isDark ? 'rgba(99, 102, 241, 0.15)' : 'rgba(79, 70, 229, 0.08)',
-                          borderWidth: 1,
-                          borderColor: theme.colors.primary,
-                        }}
-                      >
-                        <Edit2 size={12} color={theme.colors.primary} />
-                        <Text variant="caption" style={{ fontSize: 11, fontWeight: '800', color: theme.colors.primary }}>
-                          Edit
-                        </Text>
-                      </PressableScale>
+              {/* Billing Frequency */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4 }}>
+                <Text variant="caption" muted style={{ fontSize: 13, fontWeight: '600' }}>
+                  Billing Frequency
+                </Text>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: theme.colors.text, textTransform: 'capitalize' }}>
+                  {selectedRule?.frequency || 'Monthly'}
+                </Text>
+              </View>
 
-                      {/* Delete Button */}
-                      <PressableScale
-                        activeScale={0.88}
-                        onPress={(e) => {
-                          e.stopPropagation?.();
-                          Alert.alert(t('common_delete') || 'Delete', 'Are you sure you want to remove this recurring bill?', [
-                            { text: t('common_cancel') || 'Cancel', style: 'cancel' },
-                            {
-                              text: t('common_delete') || 'Delete',
-                              style: 'destructive',
-                              onPress: () => deleteRecurringRule(rule.id).then(load),
-                            },
-                          ]);
-                        }}
-                        hitSlop={8}
-                        style={{
-                          padding: 6,
-                          borderRadius: theme.radius.sm,
-                          backgroundColor: theme.isDark ? 'rgba(239, 68, 68, 0.15)' : 'rgba(239, 68, 68, 0.08)',
-                        }}
-                      >
-                        <Trash2 size={13} color={theme.colors.danger} />
-                      </PressableScale>
-                    </View>
-                  </View>
-                </PressableScale>
-              );
-            })
-          )}
-        </View>
-      </ScrollView>
+              <View style={{ height: 1, backgroundColor: theme.colors.border, opacity: 0.6 }} />
 
-      {/* ── 4. RECURRING BILL MODAL SHEET POPUP (CONSISTENT DESIGN) ── */}
+              {/* Next Due Date */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4 }}>
+                <Text variant="caption" muted style={{ fontSize: 13, fontWeight: '600' }}>
+                  Next Due Date
+                </Text>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: theme.colors.text }}>
+                  {selectedRule?.next_due_date || '-'}
+                </Text>
+              </View>
+
+              <View style={{ height: 1, backgroundColor: theme.colors.border, opacity: 0.6 }} />
+
+              {/* Payment Method */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4 }}>
+                <Text variant="caption" muted style={{ fontSize: 13, fontWeight: '600' }}>
+                  Payment Channel
+                </Text>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: theme.colors.text }}>
+                  {selectedRule?.payment_method || 'Cash'}
+                </Text>
+              </View>
+            </View>
+
+            {/* Bottom Actions: Close & Edit */}
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 6 }}>
+              <Pressable
+                onPress={() => setSelectedRule(null)}
+                style={{
+                  flex: 1,
+                  paddingVertical: 12,
+                  borderRadius: theme.radius.md,
+                  backgroundColor: theme.colors.surfaceElevated,
+                  borderWidth: 1,
+                  borderColor: theme.colors.border,
+                  alignItems: 'center',
+                }}
+              >
+                <Text style={{ fontWeight: '700', color: theme.colors.text }}>Close</Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => {
+                  const ruleToEdit = selectedRule;
+                  setSelectedRule(null);
+                  if (ruleToEdit) openEditModal(ruleToEdit);
+                }}
+                style={{
+                  flex: 1.3,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 6,
+                  paddingVertical: 12,
+                  borderRadius: theme.radius.md,
+                  backgroundColor: theme.colors.primary,
+                }}
+              >
+                <Edit2 size={15} color="#FFFFFF" />
+                <Text style={{ fontWeight: '800', color: '#FFFFFF' }}>Edit</Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* ── 5. RECURRING BILL FORM MODAL (CREATE / EDIT) ── */}
       <Modal
         visible={showFormModal}
         transparent
@@ -590,22 +852,41 @@ export default function RecurringScreen() {
                   </View>
                 </View>
 
-                <Pressable
-                  onPress={closeFormModal}
-                  hitSlop={8}
-                  style={{
-                    width: 32,
-                    height: 32,
-                    borderRadius: 16,
-                    backgroundColor: theme.colors.surface,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    borderWidth: 1,
-                    borderColor: theme.colors.border,
-                  }}
-                >
-                  <X size={16} color={theme.colors.text} />
-                </Pressable>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  {editingRuleId ? (
+                    <Pressable
+                      onPress={() => handleDeleteRule(editingRuleId)}
+                      hitSlop={8}
+                      style={{
+                        width: 32,
+                        height: 32,
+                        borderRadius: 16,
+                        backgroundColor: theme.isDark ? 'rgba(239, 68, 68, 0.15)' : '#FEE2E2',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      <Trash2 size={16} color={theme.colors.danger} />
+                    </Pressable>
+                  ) : null}
+
+                  <Pressable
+                    onPress={closeFormModal}
+                    hitSlop={8}
+                    style={{
+                      width: 32,
+                      height: 32,
+                      borderRadius: 16,
+                      backgroundColor: theme.colors.surface,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      borderWidth: 1,
+                      borderColor: theme.colors.border,
+                    }}
+                  >
+                    <X size={16} color={theme.colors.text} />
+                  </Pressable>
+                </View>
               </View>
             </View>
 
@@ -854,13 +1135,57 @@ export default function RecurringScreen() {
                 </View>
               </View>
 
-              {/* CTA Save Button */}
-              <Button
-                title={editingRuleId ? 'Update Recurring Bill' : (t('recurring_save') || 'Save Recurring Bill')}
-                loading={saving}
-                onPress={handleSaveRule}
-                style={{ height: 50, marginTop: 6 }}
-              />
+              {/* Action Buttons: Side-by-Side for Existing Data, Full-Width for New */}
+              {editingRuleId ? (
+                <View style={{ flexDirection: 'row', gap: 10, marginTop: 6, alignItems: 'center' }}>
+                  {/* Delete Button */}
+                  <PressableScale
+                    activeScale={0.94}
+                    onPress={() => handleDeleteRule(editingRuleId)}
+                    containerStyle={{ flex: 1 }}
+                    style={{
+                      width: '100%',
+                      height: 50,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 6,
+                      borderRadius: theme.radius.md,
+                      backgroundColor: theme.isDark ? 'rgba(239, 68, 68, 0.16)' : '#FEE2E2',
+                      borderWidth: 1.5,
+                      borderColor: theme.isDark ? '#EF4444' : '#FCA5A5',
+                    }}
+                  >
+                    <Trash2 size={16} color={theme.isDark ? '#F87171' : '#DC2626'} />
+                    <Text
+                      style={{
+                        fontWeight: '800',
+                        color: theme.isDark ? '#F87171' : '#DC2626',
+                        fontSize: 14,
+                      }}
+                    >
+                      Delete
+                    </Text>
+                  </PressableScale>
+
+                  {/* Save / Update Button */}
+                  <View style={{ flex: 1.8 }}>
+                    <Button
+                      title="Save Changes"
+                      loading={saving}
+                      onPress={handleSaveRule}
+                      style={{ height: 50 }}
+                    />
+                  </View>
+                </View>
+              ) : (
+                <Button
+                  title={t('recurring_save') || 'Save Recurring Bill'}
+                  loading={saving}
+                  onPress={handleSaveRule}
+                  style={{ height: 50, marginTop: 6 }}
+                />
+              )}
             </ScrollView>
           </View>
         </KeyboardAvoidingView>
@@ -877,6 +1202,29 @@ export default function RecurringScreen() {
         }}
         initialRange={{ startDate: nextDueDate, endDate: nextDueDate }}
       />
+
+      {/* ── Floating Action Button (+) ── */}
+      <View style={{ position: 'absolute', bottom: 86, right: 20 }}>
+        <PressableScale
+          activeScale={0.88}
+          onPress={openCreateModal}
+          style={{
+            width: 58,
+            height: 58,
+            borderRadius: 29,
+            backgroundColor: theme.colors.primary,
+            alignItems: 'center',
+            justifyContent: 'center',
+            shadowColor: '#000000',
+            shadowOffset: { width: 0, height: 6 },
+            shadowOpacity: theme.isDark ? 0.45 : 0.25,
+            shadowRadius: 10,
+            elevation: 8,
+          }}
+        >
+          <Plus size={28} color="#FFFFFF" strokeWidth={2.8} />
+        </PressableScale>
+      </View>
     </View>
   );
 }

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Image, Modal, Pressable, ScrollView, View } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 import { Calendar, ChevronLeft, ChevronRight, CreditCard, FileText, Image as ImageIcon, Tag, X } from 'lucide-react-native';
@@ -10,6 +10,7 @@ import { Text } from '@/components/ui/Text';
 import { useAuth } from '@/hooks/useAuth';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { useLanguage } from '@/hooks/useLanguage';
+import { usePrivacy } from '@/hooks/usePrivacy';
 import { useTheme } from '@/hooks/useTheme';
 import { Expense } from '@/types';
 import { formatMoney, formatTime12, groupByCategory } from '@/utils/format';
@@ -138,11 +139,11 @@ function ExpenseDetailModal({
                 style={{
                   alignItems: 'center',
                   paddingVertical: theme.spacing.md,
-                  backgroundColor: theme.isDark ? '#141E33' : '#EEF2FF',
+                  backgroundColor: theme.isDark ? '#141E33' : theme.colors.cardHighlight,
                   borderRadius: theme.radius.md,
                   gap: 3,
                   borderWidth: 1,
-                  borderColor: theme.isDark ? 'rgba(129, 140, 248, 0.2)' : 'rgba(79, 70, 229, 0.15)',
+                  borderColor: theme.isDark ? 'rgba(129, 140, 248, 0.2)' : theme.colors.border,
                 }}
               >
                 <Text variant="caption" muted style={{ fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.8, fontSize: 10 }}>
@@ -325,6 +326,7 @@ export function CategoryBreakdown({ expenses, targetCurrency }: { expenses: Expe
   const { profile } = useAuth();
   const { rates, convert } = useExchangeRates();
   const { t } = useLanguage();
+  const { isPrivacyMode } = usePrivacy();
   const currency = targetCurrency ?? profile?.preferred_currency ?? 'NPR';
 
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
@@ -371,11 +373,11 @@ export function CategoryBreakdown({ expenses, targetCurrency }: { expenses: Expe
   });
 
   return (
-    <Card style={{ gap: theme.spacing.md, padding: theme.spacing.lg }}>
+    <Card style={{ gap: 10, padding: 14 }}>
       {/* ── CARD HEADER ── */}
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <Text variant="label" style={{ fontWeight: '800', fontSize: 15 }}>
+          <Text variant="label" style={{ fontWeight: '800', fontSize: 14 }}>
             {t('charts_category_breakdown') || 'Category Breakdown'}
           </Text>
         </View>
@@ -388,15 +390,15 @@ export function CategoryBreakdown({ expenses, targetCurrency }: { expenses: Expe
               flexDirection: 'row',
               alignItems: 'center',
               gap: 4,
-              paddingHorizontal: 8,
-              paddingVertical: 3,
+              paddingHorizontal: 7,
+              paddingVertical: 2,
               borderRadius: theme.radius.full,
               backgroundColor: theme.colors.surfaceElevated,
               borderWidth: 1,
               borderColor: theme.colors.border,
             }}
           >
-            <Text variant="caption" style={{ fontWeight: '700', color: theme.colors.primary, fontSize: 11 }}>
+            <Text variant="caption" style={{ fontWeight: '700', color: theme.colors.primary, fontSize: 10.5 }}>
               {selectedCategory} ✕
             </Text>
           </Pressable>
@@ -404,134 +406,79 @@ export function CategoryBreakdown({ expenses, targetCurrency }: { expenses: Expe
       </View>
 
       {total === 0 ? (
-        <Text muted style={{ paddingVertical: theme.spacing.sm }}>
+        <Text muted style={{ paddingVertical: 4, fontSize: 12 }}>
           {t('charts_no_category') || 'No category expenses logged yet.'}
         </Text>
       ) : (
         <>
-          {/* ── INTERACTIVE DONUT + LEGEND ROW ── */}
-          <View style={{ flexDirection: 'row', gap: 16, alignItems: 'center' }}>
-            {/* SVG Donut Dial */}
-            <View style={{ position: 'relative', width: 120, height: 120, alignItems: 'center', justifyContent: 'center' }}>
-              <Svg width={120} height={120} viewBox="0 0 120 120">
-                {/* Background track circle */}
-                <Circle
-                  cx={60}
-                  cy={60}
-                  r={donutRadius}
-                  stroke={theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'}
-                  strokeWidth={10}
-                  fill="transparent"
-                />
+          {/* ── FULL-WIDTH COMPACT CATEGORY PROGRESS BARS LIST ── */}
+          <View style={{ gap: 8 }}>
+            {data.map((item) => {
+              const isSelected = selectedCategory === item.label;
+              const pct = Math.round((item.total / total) * 100);
 
-                {/* Slices with exact percentage balance */}
-                {segments.map((seg) => {
-                  const isSelected = selectedCategory === seg.label;
-                  const isAnySelected = Boolean(selectedCategory);
-                  const strokeW = isSelected ? 13 : 10;
-                  const opacity = isAnySelected ? (isSelected ? 1 : 0.25) : 1;
-
-                  return (
-                    <Circle
-                      key={seg.label}
-                      cx={60}
-                      cy={60}
-                      r={donutRadius}
-                      stroke={seg.color}
-                      strokeWidth={strokeW}
-                      strokeDasharray={`${seg.segmentLength} ${donutCircumference}`}
-                      strokeDashoffset={-seg.offset}
-                      strokeLinecap="butt"
-                      fill="transparent"
-                      rotation={-90}
-                      originX={60}
-                      originY={60}
-                      opacity={opacity}
-                      onPress={() => setSelectedCategory((cur) => (cur === seg.label ? null : seg.label))}
-                    />
-                  );
-                })}
-              </Svg>
-
-              {/* Dynamic Center Hub Display */}
-              <Pressable
-                onPress={() => setSelectedCategory(null)}
-                style={{
-                  position: 'absolute',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  width: 70,
-                  height: 70,
-                  borderRadius: 35,
-                }}
-              >
-                {selectedCategoryItem ? (
-                  <View style={{ alignItems: 'center', gap: 1 }}>
-                    <Text style={{ fontSize: 20 }}>{selectedCategoryItem.icon}</Text>
-                    <Text variant="caption" style={{ fontWeight: '800', color: selectedCategoryItem.color, fontSize: 11 }}>
-                      {Math.round((selectedCategoryItem.total / total) * 100)}%
-                    </Text>
-                  </View>
-                ) : (
-                  <View style={{ alignItems: 'center', gap: 1 }}>
-                    <Text variant="label" style={{ fontWeight: '800', fontSize: 13 }}>
-                      {data.length}
-                    </Text>
-                    <Text variant="caption" muted style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                      Categories
-                    </Text>
-                  </View>
-                )}
-              </Pressable>
-            </View>
-
-            {/* ── CATEGORY LIST WITH MINI-PROGRESS BARS ── */}
-            <View style={{ flex: 1, gap: 5 }}>
-              {data.map((item) => {
-                const isSelected = selectedCategory === item.label;
-                const pct = Math.round((item.total / total) * 100);
-
-                return (
-                  <Pressable
-                    key={item.label}
-                    onPress={() => setSelectedCategory((cur) => (cur === item.label ? null : item.label))}
-                    style={{
-                      gap: 3,
-                      paddingVertical: 3,
-                      paddingHorizontal: 6,
-                      borderRadius: theme.radius.sm,
-                      backgroundColor: isSelected
-                        ? (theme.isDark ? 'rgba(129, 140, 248, 0.16)' : 'rgba(79, 70, 229, 0.08)')
-                        : 'transparent',
-                    }}
-                  >
-                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
-                        <View style={{ width: 7, height: 7, borderRadius: 3.5, backgroundColor: item.color }} />
-                        <Text style={{ fontSize: 12, fontWeight: isSelected ? '800' : '600', color: theme.colors.text }} numberOfLines={1}>
-                          {item.icon} {item.label}
-                        </Text>
-                      </View>
-                      <Text variant="caption" style={{ fontSize: 11, fontWeight: isSelected ? '800' : '600', color: isSelected ? theme.colors.primary : theme.colors.textMuted }}>
-                        {formatMoney(item.total, currency)} ({pct}%)
+              return (
+                <Pressable
+                  key={item.label}
+                  onPress={() => setSelectedCategory((cur) => (cur === item.label ? null : item.label))}
+                  style={{
+                    gap: 4,
+                    paddingVertical: 3,
+                    paddingHorizontal: 6,
+                    borderRadius: theme.radius.sm,
+                    backgroundColor: isSelected
+                      ? (theme.isDark ? 'rgba(129, 140, 248, 0.16)' : 'rgba(79, 70, 229, 0.08)')
+                      : 'transparent',
+                  }}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+                      <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: item.color }} />
+                      <Text style={{ fontSize: 12.5, fontWeight: isSelected ? '800' : '600', color: theme.colors.text }} numberOfLines={1}>
+                        {item.icon} {item.label}
                       </Text>
                     </View>
-
-                    {/* Subtle miniature progress track */}
-                    <View style={{ height: 3, borderRadius: 1.5, overflow: 'hidden', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }}>
+                    
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Text style={{ fontSize: 12.5, fontWeight: '700', color: theme.colors.text }}>
+                        {formatMoney(item.total, currency)}
+                      </Text>
                       <View
                         style={{
-                          width: `${pct}%`,
-                          height: '100%',
-                          backgroundColor: item.color,
-                          borderRadius: 1.5,
+                          paddingHorizontal: 5,
+                          paddingVertical: 1,
+                          borderRadius: 4,
+                          backgroundColor: isSelected ? theme.colors.primary : (theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'),
                         }}
-                      />
+                      >
+                        <Text style={{ fontSize: 10, fontWeight: '800', color: isSelected ? '#FFFFFF' : theme.colors.textMuted }}>
+                          {pct}%
+                        </Text>
+                      </View>
                     </View>
-                  </Pressable>
-                );
-              })}
-            </View>
+                  </View>
+
+                  {/* Sleek compact progress bar */}
+                  <View
+                    style={{
+                      height: 4,
+                      borderRadius: 2,
+                      overflow: 'hidden',
+                      backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
+                    }}
+                  >
+                    <View
+                      style={{
+                        width: `${pct}%`,
+                        height: '100%',
+                        backgroundColor: item.color,
+                        borderRadius: 2,
+                      }}
+                    />
+                  </View>
+                </Pressable>
+              );
+            })}
           </View>
 
           {/* ── ON-CLICK CATEGORY EXPENSES LIST DRAWER ── */}
@@ -642,6 +589,26 @@ export function TrendBars({ expenses, targetCurrency }: { expenses: Expense[]; t
   const [weekOffset, setWeekOffset] = useState(0);
   const [selectedDateStr, setSelectedDateStr] = useState<string | null>(null);
   const [inspectingExpense, setInspectingExpense] = useState<Expense | null>(null);
+  const dismissDayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleSelectDay = (dateStr: string) => {
+    if (dismissDayTimerRef.current) clearTimeout(dismissDayTimerRef.current);
+    setSelectedDateStr((current) => {
+      const next = current === dateStr ? null : dateStr;
+      if (next !== null) {
+        dismissDayTimerRef.current = setTimeout(() => {
+          setSelectedDateStr(null);
+        }, 5000);
+      }
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    return () => {
+      if (dismissDayTimerRef.current) clearTimeout(dismissDayTimerRef.current);
+    };
+  }, []);
 
   // 1. Map date -> total spent in target currency
   const spentByDate = expenses.reduce<Record<string, number>>((acc, expense) => {
@@ -755,7 +722,7 @@ export function TrendBars({ expenses, targetCurrency }: { expenses: Expense[]; t
               key={item.dateStr}
               accessibilityRole="button"
               accessibilityLabel={`View expenses for ${item.dayLabel} ${item.dayNum}`}
-              onPress={() => setSelectedDateStr((current) => (current === item.dateStr ? null : item.dateStr))}
+              onPress={() => handleSelectDay(item.dateStr)}
               style={{
                 flex: 1,
                 paddingVertical: 10,
@@ -837,9 +804,10 @@ export function TrendBars({ expenses, targetCurrency }: { expenses: Expense[]; t
                   fontSize: 9,
                   fontWeight: '700',
                   color: item.amount > 0 ? (isSelected ? theme.colors.primary : theme.colors.text) : theme.colors.textMuted,
+                  fontVariant: ['tabular-nums'],
                 }}
               >
-                {item.amount > 0 ? (item.amount >= 1000 ? `${Math.round(item.amount / 1000)}k` : `${Math.round(item.amount)}`) : '—'}
+                {item.amount > 0 ? `${Math.round(item.amount).toLocaleString()}` : '—'}
               </Text>
             </Pressable>
           );

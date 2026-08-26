@@ -24,6 +24,7 @@ import { Text } from '@/components/ui/Text';
 import { useAuth } from '@/hooks/useAuth';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { useLanguage } from '@/hooks/useLanguage';
+import { usePrivacy } from '@/hooks/usePrivacy';
 import { useTheme } from '@/hooks/useTheme';
 import { Category, Expense } from '@/types';
 import { formatMoney, formatTime12 } from '@/utils/format';
@@ -48,6 +49,7 @@ export function BudgetProgress({
   const { profile } = useAuth();
   const { convert } = useExchangeRates();
   const { t } = useLanguage();
+  const { isPrivacyMode } = usePrivacy();
   const [modalOpen, setModalOpen] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
   const [selectedDrawerCatId, setSelectedDrawerCatId] = useState<string | null>(null);

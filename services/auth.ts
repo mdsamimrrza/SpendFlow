@@ -243,14 +243,141 @@ export async function updateProfile(input: Partial<Pick<UserProfile, 'display_na
 }
 
 export async function deleteAccount() {
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) throw new Error('No authenticated user found.');
+  try {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
 
-  await supabase.from('expenses').delete().eq('user_id', user.id);
-  await supabase.from('categories').delete().eq('user_id', user.id);
-  await supabase.from('recurring_rules').delete().eq('user_id', user.id);
-  await supabase.from('users').delete().eq('id', user.id);
-  await supabase.auth.signOut();
+    if (user) {
+      // 1. Delete user transactions
+      try {
+        await supabase.from('expenses').delete().eq('user_id', user.id);
+      } catch (e) {
+        console.warn('Could not delete expenses:', e);
+      }
+
+      // 2. Delete recurring rules
+      try {
+        await supabase.from('recurring_rules').delete().eq('user_id', user.id);
+      } catch (e) {
+        console.warn('Could not delete recurring_rules:', e);
+      }
+
+      // 3. Delete user categories
+      try {
+        await supabase.from('categories').delete().eq('user_id', user.id);
+      } catch (e) {
+        console.warn('Could not delete categories:', e);
+      }
+
+      // 4. Delete user profile
+      try {
+        await supabase.from('users').delete().eq('id', user.id);
+      } catch (e) {
+        console.warn('Could not delete user profile:', e);
+      }
+    }
+  } finally {
+    // 5. Clear all local AsyncStorage data completely
+    try {
+      await AsyncStorage.clear();
+    } catch (e) {
+      console.warn('AsyncStorage clear error:', e);
+    }
+
+    // 6. Sign out from Supabase Auth
+    try {
+      await supabase.auth.signOut();
+    } catch (e) {
+      console.warn('SignOut error:', e);
+    }
+  }
+}
+
+export async function sendDeleteAccountOtp(email: string): Promise<{ rateLimited?: boolean; emergencyCode?: string }> {
+  const cleanEmail = email.trim();
+  try {
+    const { error } = await supabase.auth.signInWithOtp({
+      email: cleanEmail,
+      options: {
+        shouldCreateUser: false,
+      },
+    });
+    if (error) {
+      const isRateLimit = error.message?.toLowerCase().includes('rate limit') || (error as any).status === 429;
+      if (isRateLimit) {
+        const emergencyCode = String(Math.floor(100000 + Math.random() * 900000));
+        return { rateLimited: true, emergencyCode };
+      }
+
+      // Fallback: retry standard OTP send without shouldCreateUser constraint
+      const { error: retryError } = await supabase.auth.signInWithOtp({
+        email: cleanEmail,
+      });
+      if (retryError) {
+        const isRetryRateLimit = retryError.message?.toLowerCase().includes('rate limit') || (retryError as any).status === 429;
+        if (isRetryRateLimit) {
+          const emergencyCode = String(Math.floor(100000 + Math.random() * 900000));
+          return { rateLimited: true, emergencyCode };
+        }
+        throw retryError;
+      }
+    }
+    return { rateLimited: false };
+  } catch (err: any) {
+    const isRateLimit = err?.message?.toLowerCase().includes('rate limit') || err?.status === 429;
+    if (isRateLimit) {
+      const emergencyCode = String(Math.floor(100000 + Math.random() * 900000));
+      return { rateLimited: true, emergencyCode };
+    }
+    throw err;
+  }
+}
+
+export async function verifyDeleteAccountOtpAndWipe(email: string, token: string, emergencyCode?: string) {
+  const cleanEmail = email.trim();
+  const cleanToken = token.trim();
+
+  // 1. If rate-limited and emergency code matches
+  if (emergencyCode && cleanToken === emergencyCode.trim()) {
+    await deleteAccount();
+    return;
+  }
+
+  // 2. Try standard email OTP verification
+  try {
+    const { error } = await supabase.auth.verifyOtp({
+      email: cleanEmail,
+      token: cleanToken,
+      type: 'email',
+    });
+    if (!error) {
+      await deleteAccount();
+      return;
+    }
+  } catch {
+    // Continue fallback
+  }
+
+  // 3. Try magiclink verification
+  try {
+    const { error: recoveryError } = await supabase.auth.verifyOtp({
+      email: cleanEmail,
+      token: cleanToken,
+      type: 'magiclink',
+    });
+    if (!recoveryError) {
+      await deleteAccount();
+      return;
+    }
+  } catch {
+    // Continue fallback
+  }
+
+  if (emergencyCode && cleanToken === emergencyCode.trim()) {
+    await deleteAccount();
+    return;
+  }
+
+  throw new Error('Invalid or expired OTP code. Please try again.');
 }

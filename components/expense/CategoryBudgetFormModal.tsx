@@ -221,7 +221,7 @@ export function CategoryBudgetFormModal({
               style={{
                 padding: 14,
                 gap: 8,
-                backgroundColor: theme.isDark ? '#111827' : '#EEF2FF',
+                backgroundColor: theme.isDark ? '#111827' : theme.colors.cardHighlight,
                 borderWidth: 1.5,
                 borderColor: isOverAllocated ? theme.colors.danger : theme.colors.primary,
               }}
@@ -291,42 +291,62 @@ export function CategoryBudgetFormModal({
               </View>
             </Card>
 
-            {/* ── 2. STEP 1: SELECT CATEGORY (GRID TILES) ── */}
-            <View style={{ gap: 8 }}>
+            {/* ── 2. STEP 1: SELECT CATEGORY (EXPANDED CARDS) ── */}
+            <View style={{ gap: 10 }}>
               <Text variant="label" style={{ fontWeight: '800', fontSize: 13 }}>
                 1. {t('category_budget_choose_cat') || 'Choose Expense Category'}
               </Text>
 
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingVertical: 2 }}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ gap: 8, paddingVertical: 2, paddingHorizontal: 2 }}
+              >
                 {categories.map((cat) => {
                   const isSelected = cat.id === selectedCatId;
                   const hasLimit = Number(cat.budget_monthly) > 0;
 
                   return (
-                    <Pressable
+                    <PressableScale
                       key={cat.id}
+                      activeScale={0.94}
                       onPress={() => handleSelectCategory(cat)}
                       style={{
-                        paddingVertical: 10,
-                        paddingHorizontal: 14,
-                        borderRadius: theme.radius.lg,
-                        borderWidth: 2,
+                        paddingVertical: 7,
+                        paddingHorizontal: 10,
+                        borderRadius: theme.radius.md,
+                        borderWidth: 1.5,
                         borderColor: isSelected ? theme.colors.primary : theme.colors.border,
                         backgroundColor: isSelected
-                          ? (theme.isDark ? 'rgba(99, 102, 241, 0.25)' : 'rgba(79, 70, 229, 0.12)')
+                          ? (theme.isDark ? 'rgba(99, 102, 241, 0.22)' : 'rgba(79, 70, 229, 0.1)')
                           : theme.colors.surfaceElevated,
                         alignItems: 'center',
                         justifyContent: 'center',
-                        gap: 4,
-                        minWidth: 84,
+                        gap: 3,
+                        minWidth: 102,
                       }}
                     >
-                      <Text style={{ fontSize: 22 }}>{cat.icon}</Text>
+                      <View
+                        style={{
+                          width: 30,
+                          height: 30,
+                          borderRadius: 15,
+                          backgroundColor: isSelected
+                            ? (theme.isDark ? 'rgba(99, 102, 241, 0.35)' : 'rgba(79, 70, 229, 0.18)')
+                            : (theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'),
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                      >
+                        <Text style={{ fontSize: 17 }}>{cat.icon}</Text>
+                      </View>
+
                       <Text
                         style={{
                           fontSize: 12,
-                          fontWeight: isSelected ? '800' : '600',
+                          fontWeight: isSelected ? '800' : '700',
                           color: isSelected ? theme.colors.primary : theme.colors.text,
+                          textAlign: 'center',
                         }}
                         numberOfLines={1}
                       >
@@ -336,23 +356,41 @@ export function CategoryBudgetFormModal({
                       {hasLimit ? (
                         <View
                           style={{
-                            paddingHorizontal: 6,
-                            paddingVertical: 1,
+                            paddingHorizontal: 7,
+                            paddingVertical: 1.5,
                             borderRadius: theme.radius.full,
-                            backgroundColor: theme.colors.success,
-                            marginTop: 2,
+                            backgroundColor: theme.isDark ? 'rgba(16, 185, 129, 0.2)' : '#D1FAE5',
+                            borderWidth: 1,
+                            borderColor: theme.isDark ? 'rgba(16, 185, 129, 0.4)' : '#A7F3D0',
+                            marginTop: 1,
                           }}
                         >
-                          <Text style={{ color: '#FFFFFF', fontSize: 9, fontWeight: '800' }}>
+                          <Text
+                            style={{
+                              color: theme.isDark ? '#34D399' : '#065F46',
+                              fontSize: 10.5,
+                              fontWeight: '900',
+                            }}
+                          >
                             {formatMoney(Number(cat.budget_monthly), currency)}
                           </Text>
                         </View>
                       ) : (
-                        <Text variant="caption" muted style={{ fontSize: 9, marginTop: 2 }}>
-                          No limit
-                        </Text>
+                        <View
+                          style={{
+                            paddingHorizontal: 6,
+                            paddingVertical: 1.5,
+                            borderRadius: theme.radius.full,
+                            backgroundColor: theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)',
+                            marginTop: 1,
+                          }}
+                        >
+                          <Text variant="caption" muted style={{ fontSize: 9.5, fontWeight: '600' }}>
+                            No limit
+                          </Text>
+                        </View>
                       )}
-                    </Pressable>
+                    </PressableScale>
                   );
                 })}
               </ScrollView>

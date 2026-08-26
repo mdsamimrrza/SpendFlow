@@ -32,6 +32,7 @@ import { Button } from '@/components/ui/Button';
 import { Text } from '@/components/ui/Text';
 import { useAuth } from '@/hooks/useAuth';
 import { useLanguage } from '@/hooks/useLanguage';
+import { usePrivacy } from '@/hooks/usePrivacy';
 import { useSecurity } from '@/hooks/useSecurity';
 import { useTheme } from '@/hooks/useTheme';
 import { formatMoney } from '@/utils/format';
@@ -45,6 +46,7 @@ export function ProfileQuickCard({ visible, onClose }: ProfileQuickCardProps) {
   const { profile, signOut } = useAuth();
   const { isBiometricEnabled, biometricTypeName } = useSecurity();
   const { language, setLanguage, t } = useLanguage();
+  const { isPrivacyMode } = usePrivacy();
   const theme = useTheme();
   const router = useRouter();
 
@@ -192,7 +194,7 @@ export function ProfileQuickCard({ visible, onClose }: ProfileQuickCardProps) {
             style={[
               styles.profileHeroBanner,
               {
-                backgroundColor: theme.isDark ? '#111827' : '#EEF2FF',
+                backgroundColor: theme.isDark ? '#111827' : theme.colors.cardHighlight,
                 borderColor: theme.colors.primary,
               },
             ]}

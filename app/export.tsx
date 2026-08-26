@@ -207,7 +207,7 @@ export default function ExportScreen() {
         style={{
           padding: theme.spacing.lg,
           gap: 12,
-          backgroundColor: theme.isDark ? '#111827' : '#EEF2FF',
+          backgroundColor: theme.isDark ? '#111827' : theme.colors.cardHighlight,
           borderColor: theme.colors.primary,
           borderWidth: 1.5,
         }}

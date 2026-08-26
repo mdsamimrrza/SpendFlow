@@ -282,4 +282,15 @@ export const hi: typeof en = {
   common_yes: 'हाँ',
   common_no: 'नहीं',
   common_ok: 'ठीक है',
+
+  // ── बुलियन / बाज़ार ──
+  bullion_title: 'सोना / चाँदी भाव',
+  bullion_market_nepal: 'नेपाल (NPR)',
+  bullion_market_india: 'भारत (INR)',
+  bullion_hallmark_gold: 'हॉलमार्क सोना',
+  bullion_silver: 'चाँदी',
+  bullion_per_tola: '१ तोला',
+  bullion_per_10g: '१० ग्राम',
+  bullion_calc_title: 'तत्काल धातु मूल्य कैलकुलेटर',
+  bullion_guide_title: 'बुलियन मानक और खरीद गाइड',
 };

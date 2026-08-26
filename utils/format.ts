@@ -2,7 +2,34 @@ import { endOfMonth, format, startOfMonth, subMonths } from 'date-fns';
 import { Expense, PeriodKey } from '@/types';
 import { convertCurrency } from '@/services/currency';
 
-export function formatMoney(amount: number, currency = 'NPR') {
+let globalPrivacyMode = false;
+
+export function setGlobalPrivacyMode(enabled: boolean) {
+  globalPrivacyMode = enabled;
+}
+
+export function isGlobalPrivacyMode() {
+  return globalPrivacyMode;
+}
+
+export function formatMoney(amount: number, currency = 'NPR', isPrivate?: boolean) {
+  const shouldMask = isPrivate !== undefined ? isPrivate : globalPrivacyMode;
+  if (shouldMask) {
+    const symbol =
+      currency === 'NPR'
+        ? 'Rs.'
+        : currency === 'INR'
+        ? '₹'
+        : currency === 'USD'
+        ? '$'
+        : currency === 'EUR'
+        ? '€'
+        : currency === 'GBP'
+        ? '£'
+        : currency;
+    return `${symbol} ••••••`;
+  }
+
   return new Intl.NumberFormat('en-NP', {
     style: 'currency',
     currency,

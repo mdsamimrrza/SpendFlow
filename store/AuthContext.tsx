@@ -1,6 +1,6 @@
 import { Session } from '@supabase/supabase-js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { createContext, PropsWithChildren, useCallback, useEffect, useMemo, useState } from 'react';
+import { createContext, PropsWithChildren, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as Linking from 'expo-linking';
 import { ensureProfile, signOut as signOutService } from '@/services/auth';
 import { generateDueRecurringExpenses } from '@/services/recurring';
@@ -49,6 +49,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const userId = session?.user?.id ?? null;
+  const lastLoadedUserIdRef = useRef<string | null>(null);
 
   const refreshSession = useCallback(async () => {
     try {
@@ -87,11 +88,13 @@ export function AuthProvider({ children }: PropsWithChildren) {
     try {
       await signOutService();
     } finally {
+      lastLoadedUserIdRef.current = null;
       setSession(null);
       setProfile(null);
     }
   }, []);
 
+  // 1. Initial mount: listener for deep links and Supabase auth state change
   useEffect(() => {
     let mounted = true;
 
@@ -107,28 +110,21 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
     // Load cached profile instantly on startup for fast UI render
     void AsyncStorage.getItem('@spendflow_cached_profile').then((cached) => {
-      if (mounted && cached && !profile) {
+      if (mounted && cached) {
         try {
-          setProfile(JSON.parse(cached) as UserProfile);
+          setProfile((current) => current || (JSON.parse(cached) as UserProfile));
         } catch {
           // ignore
         }
       }
     });
 
-    async function hydrateSession() {
-      try {
-        const nextSession = await refreshSession();
-        if (!mounted) return;
-        setSession(nextSession);
-      } catch {
-        // Keep existing state
-      } finally {
-        if (mounted) setLoading(false);
-      }
-    }
-
-    void hydrateSession();
+    // Initial session hydration
+    void supabase.auth.getSession().then(({ data }) => {
+      if (!mounted) return;
+      setSession(data.session);
+      setLoading(false);
+    });
 
     const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       if (!mounted) return;
@@ -141,14 +137,23 @@ export function AuthProvider({ children }: PropsWithChildren) {
       linkSub.remove();
       listener.subscription.unsubscribe();
     };
-  }, [profile, refreshSession]);
+  }, []);
 
+  // 2. When authenticated user ID changes, load profile & process due recurring rules once
   useEffect(() => {
     if (!userId) {
+      lastLoadedUserIdRef.current = null;
+      setProfile(null);
       return;
     }
 
+    if (lastLoadedUserIdRef.current === userId) {
+      return; // Already loaded for this user
+    }
+
+    lastLoadedUserIdRef.current = userId;
     let mounted = true;
+
     void refreshProfile()
       .then(() => generateDueRecurringExpenses(userId))
       .catch(() => {
@@ -170,7 +175,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
     return () => {
       mounted = false;
     };
-  }, [refreshProfile, session, userId]);
+  }, [refreshProfile, session?.user, userId]);
 
   const value = useMemo<AuthContextValue>(
     () => ({

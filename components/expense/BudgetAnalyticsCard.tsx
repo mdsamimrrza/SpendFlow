@@ -7,6 +7,7 @@ import { Text } from '@/components/ui/Text';
 import { useAuth } from '@/hooks/useAuth';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { useLanguage } from '@/hooks/useLanguage';
+import { usePrivacy } from '@/hooks/usePrivacy';
 import { useTheme } from '@/hooks/useTheme';
 import { Expense } from '@/types';
 import { formatMoney } from '@/utils/format';
@@ -22,6 +23,7 @@ export function BudgetAnalyticsCard({ expenses, targetCurrency }: BudgetAnalytic
   const { profile } = useAuth();
   const { convert } = useExchangeRates();
   const { t } = useLanguage();
+  const { isPrivacyMode } = usePrivacy();
 
   const currency = targetCurrency ?? profile?.preferred_currency ?? 'NPR';
   const now = new Date();

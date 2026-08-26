@@ -2,78 +2,145 @@ import React, { useEffect, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
+  Linking,
   Modal,
-  NativeSyntheticEvent,
   Platform,
   Pressable,
   RefreshControl,
   ScrollView,
   Switch,
   TextInput,
-  TextInputEndEditingEventData,
   View,
 } from 'react-native';
-import { Link, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import {
+  Bell,
   Check,
-  ChevronDown,
   ChevronRight,
-  Database,
+  DollarSign,
   Download,
+  Edit2,
   Fingerprint,
-  FlaskConical,
   Globe,
-  Languages,
+  HelpCircle,
+  Info,
+  KeyRound,
+  Layers,
+  LayoutGrid,
   Lock,
   LogOut,
+  Mail,
   Moon,
+  Palette,
+  ShieldAlert,
   ShieldCheck,
   Sparkles,
   Sun,
-  Target,
   Trash2,
+  Upload,
+  User,
   Wallet,
   X,
 } from 'lucide-react-native';
-import { CategoryBudgetFormModal } from '@/components/expense/CategoryBudgetFormModal';
 import { Avatar } from '@/components/ui/Avatar';
-import { Button } from '@/components/ui/Button';
-import { Card } from '@/components/ui/Card';
-import { Input } from '@/components/ui/Input';
-import { PressableScale } from '@/components/ui/PressableScale';
+import { CategoryBudgetFormModal } from '@/components/expense/CategoryBudgetFormModal';
+import { PrivacyEyeButton } from '@/components/ui/PrivacyEyeButton';
 import { Text } from '@/components/ui/Text';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
-import { CURRENCIES } from '@/constants/app';
 import { useAuth } from '@/hooks/useAuth';
 import { useLanguage } from '@/hooks/useLanguage';
+import { usePrivacy } from '@/hooks/usePrivacy';
 import { useSecurity } from '@/hooks/useSecurity';
 import { useTheme } from '@/hooks/useTheme';
-import { deleteAccount, signOut, updateProfile } from '@/services/auth';
-import { listCategories, updateCategoryBudget } from '@/services/categories';
-import { seedDemoExpenses } from '@/services/expenses';
+import {
+  deleteAccount,
+  sendDeleteAccountOtp,
+  signOut,
+  updateProfile,
+  verifyDeleteAccountOtpAndWipe,
+} from '@/services/auth';
+import { listCategories } from '@/services/categories';
 import { resetBudgetAlertHistory } from '@/services/notifications';
-import { Category } from '@/types';
+import { Category, ThemePreference } from '@/types';
 import { formatMoney } from '@/utils/format';
 
 export default function SettingsScreen() {
   const { profile, refreshProfile } = useAuth();
   const { language, setLanguage, t } = useLanguage();
+  const { isPrivacyMode } = usePrivacy();
   const { isBiometricEnabled, isBiometricSupported, biometricTypeName, toggleBiometric } = useSecurity();
   const theme = useTheme();
   const router = useRouter();
-  const [seeding, setSeeding] = useState(false);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [categoryInputs, setCategoryInputs] = useState<Record<string, string>>({});
-  const [savingCategoryBudgets, setSavingCategoryBudgets] = useState(false);
-  const [categorySuccessMsg, setCategorySuccessMsg] = useState('');
-  const [showCategoryBudgets, setShowCategoryBudgets] = useState(false);
 
-  // Controlled budget input with strict numeric filtering
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Modals state
+  const [currencyModalOpen, setCurrencyModalOpen] = useState(false);
+  const [budgetModalOpen, setBudgetModalOpen] = useState(false);
+  const [editProfileModalOpen, setEditProfileModalOpen] = useState(false);
+  const [appearanceModalOpen, setAppearanceModalOpen] = useState(false);
+  const [languageModalOpen, setLanguageModalOpen] = useState(false);
+  const [securityModalOpen, setSecurityModalOpen] = useState(false);
+  const [showCategoryBudgets, setShowCategoryBudgets] = useState(false);
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [deleteOtpStep, setDeleteOtpStep] = useState<'confirm' | 'otp_input'>('confirm');
+  const [deleteOtpCode, setDeleteOtpCode] = useState('');
+  const [sendingDeleteOtp, setSendingDeleteOtp] = useState(false);
+  const [verifyingDeleteOtp, setVerifyingDeleteOtp] = useState(false);
+  const [deleteFallbackCode, setDeleteFallbackCode] = useState<string | null>(null);
+  const [deleteOtpError, setDeleteOtpError] = useState('');
+  const [signOutModalOpen, setSignOutModalOpen] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+
+  // Form inputs
+  const [nameInput, setNameInput] = useState('');
+  const [savingName, setSavingName] = useState(false);
   const [budgetInput, setBudgetInput] = useState('');
   const [savingBudget, setSavingBudget] = useState(false);
-  const [budgetSuccessMsg, setBudgetSuccessMsg] = useState('');
-  const [currencyModalOpen, setCurrencyModalOpen] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
+
+  const preferredCurrency = profile?.preferred_currency ?? 'NPR';
+  const monthlyBudget = profile?.monthly_budget ? Number(profile.monthly_budget) : 0;
+  const displayName = profile?.display_name || profile?.email?.split('@')[0] || 'Samim Reza';
+  const userEmail = profile?.email || 'samim.reza@example.com';
+
+  // Compute initials (e.g. "SR")
+  const initials = displayName
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((n) => n[0].toUpperCase())
+    .join('') || 'SR';
+
+  const CURRENCY_OPTIONS = [
+    { code: 'INR', label: 'Indian Rupee', symbol: '₹', flag: '🇮🇳' },
+    { code: 'NPR', label: 'Nepalese Rupee', symbol: 'Rs.', flag: '🇳🇵' },
+    { code: 'USD', label: 'US Dollar', symbol: '$', flag: '🇺🇸' },
+    { code: 'EUR', label: 'Euro', symbol: '€', flag: '🇪🇺' },
+    { code: 'GBP', label: 'British Pound', symbol: '£', flag: '🇬🇧' },
+  ];
+
+  const currentCurrencyObj = CURRENCY_OPTIONS.find((c) => c.code === preferredCurrency) || CURRENCY_OPTIONS[0];
+
+  useEffect(() => {
+    if (profile?.id) {
+      listCategories(profile.id)
+        .then(setCategories)
+        .catch(() => setCategories([]));
+    }
+  }, [profile?.id]);
+
+  useEffect(() => {
+    if (profile?.display_name) {
+      setNameInput(profile.display_name);
+    }
+  }, [profile?.display_name]);
+
+  useEffect(() => {
+    if (profile?.monthly_budget !== undefined) {
+      setBudgetInput(profile.monthly_budget ? String(profile.monthly_budget) : '');
+    }
+  }, [profile?.monthly_budget]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -88,70 +155,28 @@ export default function SettingsScreen() {
     }
   };
 
-  const CURRENCY_OPTIONS = [
-    { code: 'NPR', label: 'Nepalese Rupee', symbol: 'Rs.', flag: '🇳🇵' },
-    { code: 'INR', label: 'Indian Rupee', symbol: '₹', flag: '🇮🇳' },
-    { code: 'USD', label: 'US Dollar', symbol: '$', flag: '🇺🇸' },
-    { code: 'EUR', label: 'Euro', symbol: '€', flag: '🇪🇺' },
-    { code: 'GBP', label: 'British Pound', symbol: '£', flag: '🇬🇧' },
-  ];
-
-  useEffect(() => {
-    if (profile?.id) {
-      listCategories(profile.id)
-        .then((cats) => {
-          setCategories(cats);
-          const initialMap: Record<string, string> = {};
-          cats.forEach((c) => {
-            if (c.budget_monthly) initialMap[c.id] = String(c.budget_monthly);
-          });
-          setCategoryInputs(initialMap);
-        })
-        .catch(() => setCategories([]));
-    }
-  }, [profile?.id]);
-
-  async function saveAllCategoryBudgets() {
-    setSavingCategoryBudgets(true);
+  async function handleSaveName() {
+    if (!nameInput.trim()) return;
+    setSavingName(true);
     try {
-      const updates = categories.map((cat) => {
-        const raw = categoryInputs[cat.id]?.trim().replace(/[^0-9.]/g, '');
-        const val = raw && Number(raw) > 0 ? Number(raw) : null;
-        return updateCategoryBudget(cat.id, val);
-      });
-      const updatedCats = await Promise.all(updates);
-      setCategories(updatedCats);
-      setCategorySuccessMsg('Category limits saved successfully!');
-      setTimeout(() => setCategorySuccessMsg(''), 3500);
+      await updateProfile({ display_name: nameInput.trim() });
+      await refreshProfile();
+      setEditProfileModalOpen(false);
     } catch (err) {
       Alert.alert(t('common_error'), err instanceof Error ? err.message : t('common_error'));
     } finally {
-      setSavingCategoryBudgets(false);
+      setSavingName(false);
     }
   }
 
-  useEffect(() => {
-    if (profile?.monthly_budget !== undefined) {
-      setBudgetInput(profile.monthly_budget ? String(profile.monthly_budget) : '');
-    }
-  }, [profile?.monthly_budget]);
-
-  function handleBudgetInputChange(rawText: string) {
-    const cleaned = rawText.replace(/[^0-9.]/g, '');
-    const parts = cleaned.split('.');
-    const sanitized = parts.length > 2 ? `${parts[0]}.${parts.slice(1).join('')}` : cleaned;
-    setBudgetInput(sanitized);
-  }
-
-  async function saveOverallBudget() {
+  async function handleSaveBudget() {
     setSavingBudget(true);
     try {
-      const numeric = budgetInput ? Number(budgetInput) : null;
+      const numeric = budgetInput.trim() ? Number(budgetInput.replace(/[^0-9.]/g, '')) : null;
       await updateProfile({ monthly_budget: numeric });
       await resetBudgetAlertHistory();
       await refreshProfile();
-      setBudgetSuccessMsg(numeric ? `${t('common_save')}! ${formatMoney(numeric, profile?.preferred_currency)}` : t('settings_no_limit'));
-      setTimeout(() => setBudgetSuccessMsg(''), 3500);
+      setBudgetModalOpen(false);
     } catch (err) {
       Alert.alert(t('common_error'), err instanceof Error ? err.message : t('common_error'));
     } finally {
@@ -159,25 +184,9 @@ export default function SettingsScreen() {
     }
   }
 
-
-
-  async function loadDemoData() {
-    if (!profile?.id) return;
-    setSeeding(true);
-    try {
-      const count = await seedDemoExpenses(profile.id);
-      Alert.alert(count ? 'Demo Data Loaded' : 'Already Loaded', count ? `${count} expenses were added.` : 'Demo expenses are already in your account.');
-      if (count) router.replace('/');
-    } catch (error) {
-      Alert.alert(t('common_error'), error instanceof Error ? error.message : t('common_error'));
-    } finally {
-      setSeeding(false);
-    }
+  function handleSignOut() {
+    setSignOutModalOpen(true);
   }
-
-  const displayName = profile?.display_name || profile?.email?.split('@')[0] || 'SpendFlow User';
-  const configuredCategoryCount = categories.filter((c) => c.budget_monthly).length;
-  const preferredCurrency = profile?.preferred_currency ?? 'NPR';
 
   return (
     <KeyboardAvoidingView
@@ -199,537 +208,903 @@ export default function SettingsScreen() {
           />
         }
       >
-        {/* ── 1. APP BAR HEADER ── */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+        {/* ── 1. HEADER (MANAGE YOUR ACCOUNT / SETTINGS) ── */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 }}>
           <View style={{ gap: 2 }}>
-            <Text variant="caption" muted style={{ fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.6, fontSize: 11 }}>
+            <Text
+              variant="caption"
+              style={{
+                fontWeight: '700',
+                textTransform: 'uppercase',
+                letterSpacing: 1.1,
+                fontSize: 11,
+                color: theme.colors.textMuted,
+              }}
+            >
               Preferences & Limits
             </Text>
-            <Text variant="h1" style={{ fontWeight: '800', letterSpacing: -0.3 }}>
+            <Text
+              variant="h1"
+              style={{
+                fontWeight: '800',
+                fontSize: 30,
+                letterSpacing: -0.5,
+                color: theme.colors.text,
+              }}
+            >
               {t('settings_title') || 'Settings'}
             </Text>
           </View>
-          <ThemeToggle />
+
+          {/* Top Right Controls */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <PrivacyEyeButton />
+            <ThemeToggle />
+          </View>
         </View>
 
-        {/* ── 2. LUXURY USER PROFILE HERO CARD ── */}
-        <Card
+        {/* ── 2. PREVIOUS LUXURY USER PROFILE HERO CARD ── */}
+        <View
           style={{
-            padding: theme.spacing.lg,
-            gap: theme.spacing.md,
-            backgroundColor: theme.isDark ? '#111827' : '#EEF2FF',
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: 16,
+            borderRadius: 20,
+            backgroundColor: theme.colors.surface,
             borderWidth: 1.5,
             borderColor: theme.colors.primary,
+            shadowColor: theme.colors.primary,
+            shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: theme.isDark ? 0.2 : 0.08,
+            shadowRadius: 10,
+            elevation: 3,
           }}
         >
-          <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, flex: 1 }}>
-              <View style={{ position: 'relative' }}>
-                <Avatar uri={profile?.avatar_url} name={displayName} size={58} />
-                <View
-                  style={{
-                    position: 'absolute',
-                    bottom: 0,
-                    right: 0,
-                    width: 16,
-                    height: 16,
-                    borderRadius: 8,
-                    backgroundColor: theme.colors.success,
-                    borderWidth: 2,
-                    borderColor: theme.colors.surface,
-                  }}
-                />
-              </View>
-
-              <View style={{ flex: 1, gap: 2 }}>
-                <Text variant="h2" style={{ fontWeight: '800', fontSize: 19 }} numberOfLines={1}>
-                  {displayName}
-                </Text>
-                <Text variant="caption" muted numberOfLines={1} style={{ fontSize: 12 }}>
-                  {profile?.email}
-                </Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}>
-                  <ShieldCheck size={14} color={theme.colors.success} />
-                  <Text variant="caption" style={{ color: theme.colors.success, fontWeight: '700', fontSize: 11 }}>
-                    Cloud Synced & Verified
-                  </Text>
-                </View>
-              </View>
-            </View>
-
-            {/* Top Right Currency Dropdown Trigger */}
-            <Pressable
-              onPress={() => setCurrencyModalOpen(true)}
-              style={({ pressed }) => ({
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 5,
-                paddingHorizontal: 10,
-                paddingVertical: 6,
-                borderRadius: theme.radius.full,
-                backgroundColor: theme.isDark ? 'rgba(99, 102, 241, 0.25)' : 'rgba(79, 70, 229, 0.12)',
-                borderWidth: 1.5,
-                borderColor: theme.colors.primary,
-                opacity: pressed ? 0.8 : 1,
-                marginLeft: 8,
-              })}
-            >
-              <Globe size={13} color={theme.colors.primary} />
-              <Text style={{ fontWeight: '800', color: theme.colors.primary, fontSize: 12 }}>
-                {preferredCurrency}
-              </Text>
-              <ChevronDown size={14} color={theme.colors.primary} />
-            </Pressable>
-          </View>
-        </Card>
-
-        {/* ── 3. FINANCIAL LIMITS & BUDGETING CARD ── */}
-        <Card style={{ gap: theme.spacing.md, padding: theme.spacing.lg }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Target size={18} color={theme.colors.primary} />
-              <Text variant="label" style={{ fontWeight: '800', fontSize: 15 }}>
-                {t('settings_financial_targets') || 'Monthly Spending Ceiling'}
-              </Text>
-            </View>
-
-            {profile?.monthly_budget ? (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, flex: 1 }}>
+            {/* Real User Avatar with Online Status Indicator */}
+            <View style={{ position: 'relative' }}>
+              <Avatar uri={profile?.avatar_url} name={displayName} size={58} />
               <View
                 style={{
-                  paddingHorizontal: 8,
-                  paddingVertical: 2,
-                  borderRadius: theme.radius.full,
-                  backgroundColor: theme.isDark ? 'rgba(16, 185, 129, 0.15)' : 'rgba(16, 185, 129, 0.1)',
+                  position: 'absolute',
+                  bottom: 0,
+                  right: 0,
+                  width: 15,
+                  height: 15,
+                  borderRadius: 7.5,
+                  backgroundColor: theme.colors.success,
+                  borderWidth: 2,
+                  borderColor: theme.colors.surface,
                 }}
-              >
-                <Text variant="caption" style={{ fontWeight: '800', color: theme.colors.success, fontSize: 11 }}>
-                  Active Cap
-                </Text>
-              </View>
-            ) : null}
-          </View>
-
-          {/* Master Monthly Ceiling Hero Input */}
-          <View style={{ gap: 10 }}>
-            {/* Input Row with Currency Prefix, Inline Clear Icon & Right-Side Save Button */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <View
-                style={{
-                  flex: 1,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  backgroundColor: theme.colors.surfaceElevated,
-                  borderRadius: theme.radius.md,
-                  borderWidth: 1.5,
-                  borderColor: theme.colors.primary,
-                  paddingHorizontal: 14,
-                  height: 48,
-                }}
-              >
-                <Text style={{ fontWeight: '900', color: theme.colors.primary, marginRight: 8, fontSize: 16 }}>
-                  {preferredCurrency}
-                </Text>
-                <TextInput
-                  placeholder="e.g. 50000"
-                  placeholderTextColor={theme.colors.textMuted}
-                  keyboardType="numeric"
-                  value={budgetInput}
-                  onChangeText={handleBudgetInputChange}
-                  style={{
-                    flex: 1,
-                    color: theme.colors.text,
-                    fontSize: 17,
-                    fontWeight: '800',
-                    paddingVertical: 0,
-                  }}
-                />
-                {budgetInput ? (
-                  <Pressable
-                    onPress={() => setBudgetInput('')}
-                    hitSlop={8}
-                    style={{
-                      width: 22,
-                      height: 22,
-                      borderRadius: 11,
-                      backgroundColor: theme.isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                  >
-                    <X size={13} color={theme.colors.textMuted} />
-                  </Pressable>
-                ) : null}
-              </View>
-
-              {/* Right-Side Save Button */}
-              <Button
-                title={t('settings_save_budget') || 'Save'}
-                loading={savingBudget}
-                onPress={saveOverallBudget}
-                style={{ height: 48, paddingHorizontal: 18, borderRadius: theme.radius.md }}
               />
             </View>
 
-            {/* Quick Increment Preset Chips */}
-            <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
-              {[5000, 10000, 25000, 50000].map((inc) => (
-                <PressableScale
-                  key={inc}
-                  activeScale={0.92}
-                  onPress={() => {
-                    const current = budgetInput ? Number(budgetInput) : 0;
-                    setBudgetInput(String(current + inc));
-                  }}
-                  style={{
-                    paddingHorizontal: 11,
-                    paddingVertical: 6,
-                    borderRadius: theme.radius.full,
-                    backgroundColor: theme.colors.surfaceElevated,
-                    borderWidth: 1,
-                    borderColor: theme.colors.border,
-                  }}
-                >
-                  <Text variant="caption" style={{ fontWeight: '700', color: theme.colors.text }}>
-                    +{formatMoney(inc, preferredCurrency)}
-                  </Text>
-                </PressableScale>
-              ))}
+            {/* Name & Email */}
+            <View style={{ gap: 2, flex: 1 }}>
+              <Text
+                numberOfLines={1}
+                style={{
+                  fontSize: 18,
+                  fontWeight: '800',
+                  color: theme.colors.text,
+                  letterSpacing: -0.3,
+                }}
+              >
+                {displayName}
+              </Text>
+              <Text
+                numberOfLines={1}
+                variant="caption"
+                muted
+                style={{
+                  fontSize: 12,
+                }}
+              >
+                {profile?.email || 'SpendFlow Account'}
+              </Text>
+            </View>
+          </View>
+
+          {/* Edit Button Pill */}
+          <Pressable
+            onPress={() => setEditProfileModalOpen(true)}
+            style={({ pressed }) => ({
+              paddingHorizontal: 14,
+              paddingVertical: 7,
+              borderRadius: theme.radius.full,
+              borderWidth: 1,
+              borderColor: theme.colors.border,
+              backgroundColor: theme.colors.surfaceElevated,
+              opacity: pressed ? 0.75 : 1,
+            })}
+          >
+            <Text style={{ fontSize: 12, fontWeight: '700', color: theme.colors.text }}>
+              Edit
+            </Text>
+          </Pressable>
+        </View>
+
+        {/* ── 3. UNIFIED GROUPED SETTINGS MENU (AS IN THE DESIGN) ── */}
+        <View
+          style={{
+            borderRadius: 20,
+            backgroundColor: theme.colors.surface,
+            borderWidth: 1,
+            borderColor: theme.colors.border,
+            overflow: 'hidden',
+            shadowColor: '#000000',
+            shadowOffset: { width: 0, height: 2 },
+            shadowOpacity: theme.isDark ? 0.2 : 0.04,
+            shadowRadius: 8,
+            elevation: 2,
+          }}
+        >
+          {/* Item 1: Currency */}
+          <Pressable
+            onPress={() => setCurrencyModalOpen(true)}
+            style={({ pressed }) => ({
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              paddingHorizontal: 16,
+              paddingVertical: 14,
+              backgroundColor: pressed
+                ? (theme.isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)')
+                : 'transparent',
+            })}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+              <View
+                style={{
+                  width: 38,
+                  height: 38,
+                  borderRadius: 10,
+                  backgroundColor: theme.isDark ? 'rgba(129, 140, 248, 0.15)' : '#DCE9E3',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <DollarSign size={19} color={theme.colors.primary} />
+              </View>
+              <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
+                Currency
+              </Text>
             </View>
 
-            {/* Live Safe Daily Burn Rate Calculation */}
-            {budgetInput && Number(budgetInput) > 0 ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text style={{ fontSize: 14, color: theme.colors.textMuted, fontWeight: '500' }}>
+                {currentCurrencyObj.code} ({currentCurrencyObj.symbol})
+              </Text>
+              <ChevronRight size={16} color={theme.colors.textMuted} />
+            </View>
+          </Pressable>
+
+          {/* Dotted Divider */}
+          <View style={{ height: 1, backgroundColor: theme.colors.border, marginHorizontal: 16, opacity: 0.6 }} />
+
+          {/* Item 2: Monthly Budget */}
+          <Pressable
+            onPress={() => setBudgetModalOpen(true)}
+            style={({ pressed }) => ({
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              paddingHorizontal: 16,
+              paddingVertical: 14,
+              backgroundColor: pressed
+                ? (theme.isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)')
+                : 'transparent',
+            })}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+              <View
+                style={{
+                  width: 38,
+                  height: 38,
+                  borderRadius: 10,
+                  backgroundColor: theme.isDark ? 'rgba(129, 140, 248, 0.15)' : '#DCE9E3',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Layers size={19} color={theme.colors.primary} />
+              </View>
+              <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
+                Monthly budget
+              </Text>
+            </View>
+
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text style={{ fontSize: 14, color: theme.colors.textMuted, fontWeight: '500' }}>
+                {monthlyBudget > 0 ? formatMoney(monthlyBudget, preferredCurrency) : 'Set limit'}
+              </Text>
+              <ChevronRight size={16} color={theme.colors.textMuted} />
+            </View>
+          </Pressable>
+
+          {/* Dotted Divider */}
+          <View style={{ height: 1, backgroundColor: theme.colors.border, marginHorizontal: 16, opacity: 0.6 }} />
+
+          {/* Item 3: Gold & Silver Bullion Rates (Dedicated Screen) */}
+          <Pressable
+            onPress={() => router.push('/bullion' as any)}
+            style={({ pressed }) => ({
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              paddingHorizontal: 16,
+              paddingVertical: 14,
+              backgroundColor: pressed
+                ? (theme.isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)')
+                : 'transparent',
+            })}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+              <View
+                style={{
+                  width: 38,
+                  height: 38,
+                  borderRadius: 10,
+                  backgroundColor: theme.isDark ? 'rgba(245, 158, 11, 0.2)' : '#FEF3C7',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderWidth: 1,
+                  borderColor: theme.isDark ? 'rgba(245, 158, 11, 0.35)' : '#FDE68A',
+                }}
+              >
+                <Text style={{ fontSize: 19 }}>🪙</Text>
+              </View>
+              <View>
+                <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
+                  Gold & Silver Rates
+                </Text>
+                <Text variant="caption" muted style={{ fontSize: 11 }}>
+                  Live 24K, 22K & Silver spot prices
+                </Text>
+              </View>
+            </View>
+
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               <View
                 style={{
                   flexDirection: 'row',
                   alignItems: 'center',
-                  gap: 6,
-                  padding: 8,
-                  borderRadius: theme.radius.sm,
-                  backgroundColor: theme.isDark ? 'rgba(56, 189, 248, 0.12)' : 'rgba(56, 189, 248, 0.08)',
-                  borderWidth: 1,
-                  borderColor: theme.isDark ? 'rgba(56, 189, 248, 0.25)' : 'rgba(56, 189, 248, 0.15)',
+                  gap: 4,
+                  paddingHorizontal: 7,
+                  paddingVertical: 2,
+                  borderRadius: theme.radius.full,
+                  backgroundColor: theme.isDark ? 'rgba(16, 185, 129, 0.2)' : '#D1FAE5',
                 }}
               >
-                <Sparkles size={14} color="#38BDF8" />
-                <Text variant="caption" style={{ fontSize: 11, color: theme.colors.text }}>
-                  Safe Daily Pace:{' '}
-                  <Text style={{ fontWeight: '800', color: '#38BDF8' }}>
-                    {formatMoney(Math.round(Number(budgetInput) / 30), preferredCurrency)} / day
-                  </Text>
+                <View style={{ width: 5, height: 5, borderRadius: 2.5, backgroundColor: '#10B981' }} />
+                <Text style={{ fontSize: 10, fontWeight: '800', color: '#059669' }}>
+                  Live
                 </Text>
               </View>
-            ) : null}
+              <ChevronRight size={16} color={theme.colors.textMuted} />
+            </View>
+          </Pressable>
 
-            {budgetSuccessMsg ? (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                <Check size={14} color={theme.colors.success} />
-                <Text variant="caption" style={{ color: theme.colors.success, fontWeight: '700' }}>
-                  {budgetSuccessMsg}
-                </Text>
+          {/* Dotted Divider */}
+          <View style={{ height: 1, backgroundColor: theme.colors.border, marginHorizontal: 16, opacity: 0.6 }} />
+
+          {/* Item 4: Notifications & Security */}
+          <Pressable
+            onPress={() => setSecurityModalOpen(true)}
+            style={({ pressed }) => ({
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              paddingHorizontal: 16,
+              paddingVertical: 14,
+              backgroundColor: pressed
+                ? (theme.isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)')
+                : 'transparent',
+            })}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+              <View
+                style={{
+                  width: 38,
+                  height: 38,
+                  borderRadius: 10,
+                  backgroundColor: theme.isDark ? 'rgba(129, 140, 248, 0.15)' : '#DCE9E3',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Bell size={19} color={theme.colors.primary} />
               </View>
-            ) : null}
-          </View>
+              <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
+                Notifications
+              </Text>
+            </View>
 
-          {/* Category Budget Studio Gateway Card */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text style={{ fontSize: 14, color: theme.colors.textMuted, fontWeight: '500' }}>
+                {isBiometricEnabled ? 'On' : 'Active'}
+              </Text>
+              <ChevronRight size={16} color={theme.colors.textMuted} />
+            </View>
+          </Pressable>
+
+          {/* Dotted Divider */}
+          <View style={{ height: 1, backgroundColor: theme.colors.border, marginHorizontal: 16, opacity: 0.6 }} />
+
+          {/* Item 4: Appearance & Dark Mode */}
+          <Pressable
+            onPress={() => setAppearanceModalOpen(true)}
+            style={({ pressed }) => ({
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              paddingHorizontal: 16,
+              paddingVertical: 14,
+              backgroundColor: pressed
+                ? (theme.isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)')
+                : 'transparent',
+            })}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+              <View
+                style={{
+                  width: 38,
+                  height: 38,
+                  borderRadius: 10,
+                  backgroundColor: theme.isDark ? 'rgba(129, 140, 248, 0.15)' : '#DCE9E3',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                {theme.isDark ? <Moon size={19} color={theme.colors.primary} /> : <Sun size={19} color={theme.colors.primary} />}
+              </View>
+              <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
+                Theme
+              </Text>
+            </View>
+
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text
+                style={{
+                  fontSize: 14,
+                  color: theme.colors.textMuted,
+                  fontWeight: '500',
+                  textTransform: 'capitalize',
+                }}
+              >
+                {theme.themePreference === 'system' ? 'System' : theme.themePreference === 'dark' ? 'Dark' : 'Light'}
+              </Text>
+              <ChevronRight size={16} color={theme.colors.textMuted} />
+            </View>
+          </Pressable>
+
+          {/* Dotted Divider */}
+          <View style={{ height: 1, backgroundColor: theme.colors.border, marginHorizontal: 16, opacity: 0.6 }} />
+
+          {/* Item 5: Language Selector */}
+          <Pressable
+            onPress={() => setLanguageModalOpen(true)}
+            style={({ pressed }) => ({
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              paddingHorizontal: 16,
+              paddingVertical: 14,
+              backgroundColor: pressed
+                ? (theme.isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)')
+                : 'transparent',
+            })}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+              <View
+                style={{
+                  width: 38,
+                  height: 38,
+                  borderRadius: 10,
+                  backgroundColor: theme.isDark ? 'rgba(129, 140, 248, 0.15)' : '#DCE9E3',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Globe size={19} color={theme.colors.primary} />
+              </View>
+              <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
+                Language
+              </Text>
+            </View>
+
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text
+                style={{
+                  fontSize: 14,
+                  color: theme.colors.textMuted,
+                  fontWeight: '500',
+                }}
+              >
+                {language === 'en' ? '🇺🇸 English' : language === 'hi' ? '🇮🇳 हिन्दी' : '🇳🇵 नेपाली'}
+              </Text>
+              <ChevronRight size={16} color={theme.colors.textMuted} />
+            </View>
+          </Pressable>
+
+          {/* Dotted Divider */}
+          <View style={{ height: 1, backgroundColor: theme.colors.border, marginHorizontal: 16, opacity: 0.6 }} />
+
+          {/* Item 5: Export Data */}
+          <Pressable
+            onPress={() => router.push('/export' as any)}
+            style={({ pressed }) => ({
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              paddingHorizontal: 16,
+              paddingVertical: 14,
+              backgroundColor: pressed
+                ? (theme.isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)')
+                : 'transparent',
+            })}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+              <View
+                style={{
+                  width: 38,
+                  height: 38,
+                  borderRadius: 10,
+                  backgroundColor: theme.isDark ? 'rgba(129, 140, 248, 0.15)' : '#DCE9E3',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Upload size={19} color={theme.colors.primary} />
+              </View>
+              <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
+                Export data
+              </Text>
+            </View>
+
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text style={{ fontSize: 14, color: theme.colors.textMuted, fontWeight: '500' }}>
+                CSV / PDF
+              </Text>
+              <ChevronRight size={16} color={theme.colors.textMuted} />
+            </View>
+          </Pressable>
+
+          {/* Dotted Divider */}
+          <View style={{ height: 1, backgroundColor: theme.colors.border, marginHorizontal: 16, opacity: 0.6 }} />
+
+          {/* Item 6: Manage Categories */}
           <Pressable
             onPress={() => setShowCategoryBudgets(true)}
             style={({ pressed }) => ({
               flexDirection: 'row',
               alignItems: 'center',
               justifyContent: 'space-between',
+              paddingHorizontal: 16,
               paddingVertical: 14,
-              paddingHorizontal: 14,
-              borderRadius: theme.radius.md,
-              backgroundColor: theme.colors.surfaceElevated,
-              borderWidth: 1,
-              borderColor: theme.colors.border,
-              marginTop: 4,
-              opacity: pressed ? 0.8 : 1,
+              backgroundColor: pressed
+                ? (theme.isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)')
+                : 'transparent',
             })}
           >
-            <View style={{ gap: 3, flex: 1 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <Text variant="label" style={{ fontWeight: '800', fontSize: 14 }}>
-                  {t('settings_category_budgets') || 'Category Budget Studio'}
-                </Text>
-                {configuredCategoryCount > 0 ? (
-                  <View
-                    style={{
-                      paddingHorizontal: 7,
-                      paddingVertical: 1.5,
-                      borderRadius: theme.radius.full,
-                      backgroundColor: theme.colors.primary,
-                    }}
-                  >
-                    <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '800' }}>
-                      {configuredCategoryCount} caps active
-                    </Text>
-                  </View>
-                ) : null}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+              <View
+                style={{
+                  width: 38,
+                  height: 38,
+                  borderRadius: 10,
+                  backgroundColor: theme.isDark ? 'rgba(129, 140, 248, 0.15)' : '#DCE9E3',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <LayoutGrid size={19} color={theme.colors.primary} />
               </View>
-              <Text variant="caption" muted style={{ fontSize: 11 }}>
-                {configuredCategoryCount > 0
-                  ? `Allocated: ${formatMoney(categories.reduce((s, c) => s + (c.budget_monthly ? Number(c.budget_monthly) : 0), 0), preferredCurrency)} across ${configuredCategoryCount} categories`
-                  : 'Establish individual spending caps for Food, Fuel, Shopping...'}
+              <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
+                Manage categories
               </Text>
             </View>
 
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-              <Text variant="caption" style={{ color: theme.colors.primary, fontWeight: '800', fontSize: 12 }}>
-                Open Studio
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text style={{ fontSize: 14, color: theme.colors.textMuted, fontWeight: '500' }}>
+                {categories.length}
               </Text>
-              <ChevronRight size={16} color={theme.colors.primary} />
+              <ChevronRight size={16} color={theme.colors.textMuted} />
             </View>
           </Pressable>
-        </Card>
+        </View>
 
-        {/* ── 4. LANGUAGE SELECTOR CARD ── */}
-        <Card style={{ gap: theme.spacing.md, padding: theme.spacing.lg }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <Languages size={18} color={theme.colors.primary} />
-            <Text variant="label" style={{ fontWeight: '800', fontSize: 15 }}>
-              {t('settings_language') || 'Language'}
-            </Text>
-          </View>
-
-          <View style={{ flexDirection: 'row', gap: 8 }}>
-            {[
-              { code: 'en', flag: '🇺🇸', name: 'English', sub: 'EN' },
-              { code: 'hi', flag: '🇮🇳', name: 'हिंदी', sub: 'HI' },
-              { code: 'ne', flag: '🇳🇵', name: 'नेपाली', sub: 'NE' },
-            ].map((l) => {
-              const isActive = language === l.code;
-              return (
-                <Pressable
-                  key={l.code}
-                  onPress={() => setLanguage(l.code as any)}
-                  style={{
-                    flex: 1,
-                    paddingVertical: 12,
-                    paddingHorizontal: 6,
-                    borderRadius: theme.radius.md,
-                    borderWidth: 1.5,
-                    borderColor: isActive ? theme.colors.primary : theme.colors.border,
-                    backgroundColor: isActive
-                      ? (theme.isDark ? 'rgba(129, 140, 248, 0.16)' : 'rgba(79, 70, 229, 0.08)')
-                      : theme.colors.surfaceElevated,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: 3,
-                  }}
-                >
-                  <Text style={{ fontSize: 22 }}>{l.flag}</Text>
-                  <Text style={{ fontWeight: isActive ? '800' : '600', fontSize: 13, color: isActive ? theme.colors.primary : theme.colors.text }}>
-                    {l.name}
-                  </Text>
-                  <Text variant="caption" muted style={{ fontSize: 10 }}>
-                    ({l.sub})
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        </Card>
-
-        {/* ── 5. DATA & STATEMENTS HUB ── */}
-        <Card style={{ gap: theme.spacing.md, padding: theme.spacing.lg }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <Database size={18} color={theme.colors.primary} />
-            <Text variant="label" style={{ fontWeight: '800', fontSize: 15 }}>
-              Data & Financial Statements
-            </Text>
-          </View>
-
-          <Link href="/export" asChild>
-            <Pressable
-              style={({ pressed }) => ({
-                flexDirection: 'row',
+        {/* ── 4. DOWNLOAD ANDROID APP (APK) PROMO CARD ── */}
+        <Pressable
+          onPress={() => {
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+              const link = document.createElement('a');
+              link.href = '/SpendFlow.apk';
+              link.download = 'SpendFlow.apk';
+              document.body.appendChild(link);
+              link.click();
+              document.body.removeChild(link);
+            } else {
+              Linking.openURL('https://github.com/mdsamimrrza/SpendFlow/raw/main/SpendFlow.apk');
+            }
+          }}
+          style={({ pressed }) => ({
+            width: '100%',
+            padding: 14,
+            borderRadius: 16,
+            backgroundColor: theme.isDark ? 'rgba(79, 70, 229, 0.15)' : '#EEF2FF',
+            borderWidth: 1.5,
+            borderColor: theme.isDark ? 'rgba(99, 102, 241, 0.4)' : '#C7D2FE',
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            marginTop: 4,
+            opacity: pressed ? 0.8 : 1,
+          })}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }}>
+            <View
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: 11,
+                backgroundColor: '#4F46E5',
                 alignItems: 'center',
-                justifyContent: 'space-between',
-                padding: 14,
-                borderRadius: theme.radius.md,
-                backgroundColor: theme.colors.surfaceElevated,
-                borderWidth: 1,
-                borderColor: theme.colors.border,
-                opacity: pressed ? 0.8 : 1,
-              })}
+                justifyContent: 'center',
+              }}
             >
+              <Download size={20} color="#FFFFFF" />
+            </View>
+            <View style={{ flex: 1, gap: 2 }}>
+              <Text style={{ fontSize: 15, fontWeight: '800', color: theme.colors.text }}>
+                Download Android App
+              </Text>
+              <Text variant="caption" muted style={{ fontSize: 11.5 }}>
+                Get SpendFlow v2.0.0 APK for Android
+              </Text>
+            </View>
+          </View>
+          <View
+            style={{
+              paddingHorizontal: 10,
+              paddingVertical: 5,
+              borderRadius: theme.radius.full,
+              backgroundColor: '#4F46E5',
+            }}
+          >
+            <Text style={{ fontSize: 11, fontWeight: '800', color: '#FFFFFF' }}>
+              APK ⬇
+            </Text>
+          </View>
+        </Pressable>
+
+        {/* ── 5. SIGN OUT BUTTON (RUST ACCENT) ── */}
+        <Pressable
+          onPress={handleSignOut}
+          style={({ pressed }) => ({
+            width: '100%',
+            paddingVertical: 14,
+            borderRadius: theme.radius.full,
+            borderWidth: 1.5,
+            borderColor: theme.isDark ? 'rgba(239,68,68,0.35)' : '#F1DCD3',
+            backgroundColor: theme.isDark ? 'rgba(239,68,68,0.1)' : '#F7F5EC',
+            alignItems: 'center',
+            justifyContent: 'center',
+            marginTop: 4,
+            opacity: pressed ? 0.75 : 1,
+          })}
+        >
+          <Text
+            style={{
+              fontSize: 15,
+              fontWeight: '700',
+              color: theme.colors.danger || '#A5442B',
+            }}
+          >
+            Sign out
+          </Text>
+        </Pressable>
+
+        {/* Delete Account Link */}
+        <Pressable
+          onPress={() => setDeleteModalOpen(true)}
+          style={({ pressed }) => ({
+            alignSelf: 'center',
+            padding: 8,
+            opacity: pressed ? 0.7 : 1,
+          })}
+        >
+          <Text variant="caption" muted style={{ textDecorationLine: 'underline', fontSize: 11 }}>
+            Delete account & data
+          </Text>
+        </Pressable>
+      </ScrollView>
+
+      {/* ══════════════════════════════════════════════
+          MODALS & BOTTOM SHEETS
+         ══════════════════════════════════════════════ */}
+
+      {/* ── 1. MONTHLY BUDGET MODAL ── */}
+      <Modal
+        visible={budgetModalOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setBudgetModalOpen(false)}
+      >
+        <Pressable
+          onPress={() => setBudgetModalOpen(false)}
+          style={{
+            flex: 1,
+            backgroundColor: 'rgba(0,0,0,0.6)',
+            justifyContent: 'center',
+            alignItems: 'center',
+            padding: 24,
+          }}
+        >
+          <Pressable
+            onPress={(e) => e.stopPropagation()}
+            style={{
+              width: '100%',
+              maxWidth: 360,
+              backgroundColor: theme.colors.surface,
+              borderRadius: 20,
+              padding: 20,
+              gap: 16,
+              borderWidth: 1,
+              borderColor: theme.colors.border,
+            }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                 <View
                   style={{
                     width: 36,
                     height: 36,
-                    borderRadius: 18,
-                    backgroundColor: theme.isDark ? 'rgba(99, 102, 241, 0.15)' : 'rgba(79, 70, 229, 0.1)',
+                    borderRadius: 10,
+                    backgroundColor: theme.isDark ? 'rgba(129, 140, 248, 0.15)' : '#DCE9E3',
                     alignItems: 'center',
                     justifyContent: 'center',
                   }}
                 >
-                  <Download size={18} color={theme.colors.primary} />
+                  <Layers size={18} color={theme.colors.primary} />
                 </View>
-                <View style={{ gap: 1 }}>
-                  <Text style={{ fontWeight: '700', fontSize: 14, color: theme.colors.text }}>
-                    Export Center (PDF / Excel / CSV)
+                <View>
+                  <Text variant="h3" style={{ fontWeight: '800', fontSize: 16 }}>
+                    Monthly Budget
                   </Text>
                   <Text variant="caption" muted style={{ fontSize: 11 }}>
-                    Generate luxury branded statements & data backups
+                    Set your maximum monthly ceiling
                   </Text>
                 </View>
               </View>
 
-              <ChevronRight size={16} color={theme.colors.textMuted} />
-            </Pressable>
-          </Link>
-
-          <Button
-            title={t('settings_load_demo') || 'Load Demo Data'}
-            variant="secondary"
-            icon={FlaskConical}
-            loading={seeding}
-            onPress={loadDemoData}
-          />
-        </Card>
-
-        {/* ── 7. APP SECURITY & BIOMETRIC LOCK ── */}
-        <Card style={{ gap: theme.spacing.md, padding: theme.spacing.lg }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Fingerprint size={18} color={theme.colors.primary} />
-              <Text variant="label" style={{ fontWeight: '800', fontSize: 15 }}>
-                {t('settings_biometric_lock') || 'Biometric Security'}
-              </Text>
+              <Pressable
+                onPress={() => setBudgetModalOpen(false)}
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: 14,
+                  backgroundColor: theme.colors.surfaceElevated,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <X size={15} color={theme.colors.text} />
+              </Pressable>
             </View>
-            <Switch
-              value={isBiometricEnabled}
-              onValueChange={(val) => {
-                void toggleBiometric(val).then((success) => {
-                  if (!success && val) {
-                    Alert.alert(t('common_error'), t('security_not_supported'));
-                  }
-                });
-              }}
-              trackColor={{ false: theme.colors.border, true: theme.colors.primary }}
-              thumbColor="#FFFFFF"
-            />
-          </View>
 
-          <Text variant="caption" muted style={{ lineHeight: 17, fontSize: 12 }}>
-            Require {biometricTypeName} authentication upon launching SpendFlow to protect your financial telemetry.
-          </Text>
+            <View style={{ gap: 8 }}>
+              <Text variant="label" style={{ fontSize: 12 }}>
+                Monthly Amount ({currentCurrencyObj.symbol})
+              </Text>
+              <TextInput
+                value={budgetInput}
+                onChangeText={(t) => setBudgetInput(t.replace(/[^0-9.]/g, ''))}
+                placeholder="e.g. 14000"
+                placeholderTextColor={theme.colors.textMuted}
+                keyboardType="numeric"
+                style={{
+                  height: 48,
+                  borderRadius: theme.radius.md,
+                  borderWidth: 1.5,
+                  borderColor: theme.colors.border,
+                  backgroundColor: theme.colors.surfaceElevated,
+                  paddingHorizontal: 14,
+                  fontSize: 16,
+                  fontWeight: '700',
+                  color: theme.colors.text,
+                }}
+              />
+            </View>
 
-          <View
+            {/* Preset Amount Chips */}
+            <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
+              {[5000, 10000, 14000, 25000, 50000].map((preset) => (
+                <Pressable
+                  key={preset}
+                  onPress={() => setBudgetInput(String(preset))}
+                  style={{
+                    paddingHorizontal: 10,
+                    paddingVertical: 5,
+                    borderRadius: theme.radius.full,
+                    backgroundColor: theme.colors.surfaceElevated,
+                    borderWidth: 1,
+                    borderColor: theme.colors.border,
+                  }}
+                >
+                  <Text variant="caption" style={{ fontWeight: '700' }}>
+                    {currentCurrencyObj.symbol}{preset.toLocaleString()}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 4 }}>
+              <Pressable
+                onPress={() => setBudgetModalOpen(false)}
+                style={{
+                  flex: 1,
+                  paddingVertical: 12,
+                  borderRadius: theme.radius.md,
+                  backgroundColor: theme.colors.surfaceElevated,
+                  borderWidth: 1,
+                  borderColor: theme.colors.border,
+                  alignItems: 'center',
+                }}
+              >
+                <Text style={{ fontWeight: '700', color: theme.colors.text }}>Cancel</Text>
+              </Pressable>
+
+              <Pressable
+                onPress={handleSaveBudget}
+                disabled={savingBudget}
+                style={{
+                  flex: 1,
+                  paddingVertical: 12,
+                  borderRadius: theme.radius.md,
+                  backgroundColor: theme.colors.primary,
+                  alignItems: 'center',
+                }}
+              >
+                <Text style={{ fontWeight: '800', color: '#FFFFFF' }}>
+                  {savingBudget ? 'Saving...' : 'Save Limit'}
+                </Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* ── 2. EDIT PROFILE NAME MODAL ── */}
+      <Modal
+        visible={editProfileModalOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setEditProfileModalOpen(false)}
+      >
+        <Pressable
+          onPress={() => setEditProfileModalOpen(false)}
+          style={{
+            flex: 1,
+            backgroundColor: 'rgba(0,0,0,0.6)',
+            justifyContent: 'center',
+            alignItems: 'center',
+            padding: 24,
+          }}
+        >
+          <Pressable
+            onPress={(e) => e.stopPropagation()}
             style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 6,
-              backgroundColor: theme.colors.surfaceElevated,
-              padding: 10,
-              borderRadius: theme.radius.md,
+              width: '100%',
+              maxWidth: 360,
+              backgroundColor: theme.colors.surface,
+              borderRadius: 20,
+              padding: 20,
+              gap: 16,
               borderWidth: 1,
               borderColor: theme.colors.border,
             }}
           >
-            <ShieldCheck size={16} color={isBiometricEnabled ? theme.colors.success : theme.colors.textMuted} />
-            <Text
-              variant="caption"
-              style={{
-                color: isBiometricEnabled ? theme.colors.success : theme.colors.textMuted,
-                fontWeight: '700',
-              }}
-            >
-              {isBiometricEnabled
-                ? `${t('settings_biometric_enabled')} (${biometricTypeName} Active)`
-                : t('settings_biometric_disabled')}
-            </Text>
-          </View>
-        </Card>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <View
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 10,
+                    backgroundColor: theme.isDark ? 'rgba(129, 140, 248, 0.15)' : '#DCE9E3',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <User size={18} color={theme.colors.primary} />
+                </View>
+                <View>
+                  <Text variant="h3" style={{ fontWeight: '800', fontSize: 16 }}>
+                    Edit Profile
+                  </Text>
+                  <Text variant="caption" muted style={{ fontSize: 11 }}>
+                    Update your account display name
+                  </Text>
+                </View>
+              </View>
 
-        {/* ── 8. ACCOUNT SESSION (SIGN OUT) ── */}
-        <Card style={{ gap: theme.spacing.sm, padding: theme.spacing.lg }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <LogOut size={18} color={theme.colors.primary} />
-            <Text variant="label" style={{ fontWeight: '800', fontSize: 15 }}>
-              Account Session
-            </Text>
-          </View>
+              <Pressable
+                onPress={() => setEditProfileModalOpen(false)}
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: 14,
+                  backgroundColor: theme.colors.surfaceElevated,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <X size={15} color={theme.colors.text} />
+              </Pressable>
+            </View>
 
-          <Text variant="caption" muted style={{ marginBottom: 6 }}>
-            Signed in as {profile?.email}
-          </Text>
+            <View style={{ gap: 8 }}>
+              <Text variant="label" style={{ fontSize: 12 }}>
+                Full Name
+              </Text>
+              <TextInput
+                value={nameInput}
+                onChangeText={setNameInput}
+                placeholder="Enter your name"
+                placeholderTextColor={theme.colors.textMuted}
+                style={{
+                  height: 48,
+                  borderRadius: theme.radius.md,
+                  borderWidth: 1.5,
+                  borderColor: theme.colors.border,
+                  backgroundColor: theme.colors.surfaceElevated,
+                  paddingHorizontal: 14,
+                  fontSize: 16,
+                  fontWeight: '600',
+                  color: theme.colors.text,
+                }}
+              />
+            </View>
 
-          <Button title={t('settings_sign_out') || 'Sign Out'} variant="secondary" icon={LogOut} onPress={signOut} />
-        </Card>
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 4 }}>
+              <Pressable
+                onPress={() => setEditProfileModalOpen(false)}
+                style={{
+                  flex: 1,
+                  paddingVertical: 12,
+                  borderRadius: theme.radius.md,
+                  backgroundColor: theme.colors.surfaceElevated,
+                  borderWidth: 1,
+                  borderColor: theme.colors.border,
+                  alignItems: 'center',
+                }}
+              >
+                <Text style={{ fontWeight: '700', color: theme.colors.text }}>Cancel</Text>
+              </Pressable>
 
-        {/* ── 9. DANGER ZONE (DELETE ACCOUNT) ── */}
-        <Card
-          style={{
-            gap: theme.spacing.sm,
-            padding: theme.spacing.lg,
-            backgroundColor: theme.isDark ? 'rgba(239, 68, 68, 0.06)' : 'rgba(239, 68, 68, 0.04)',
-            borderColor: 'rgba(239, 68, 68, 0.25)',
-            borderWidth: 1,
-          }}
-        >
-          <Text
-            variant="caption"
-            style={{ color: theme.colors.danger, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.6, fontSize: 11 }}
-          >
-            ⚠️ Danger Zone
-          </Text>
-          <Text variant="caption" muted style={{ fontSize: 11, lineHeight: 16 }}>
-            Permanently delete your account and all financial telemetry. This action cannot be reversed.
-          </Text>
-
-          <Pressable
-            onPress={() =>
-              Alert.alert(t('settings_delete_account'), t('settings_delete_confirm'), [
-                { text: t('common_cancel'), style: 'cancel' },
-                { text: t('common_delete'), style: 'destructive', onPress: () => deleteAccount() },
-              ])
-            }
-            style={({ pressed }) => ({
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 6,
-              paddingVertical: 12,
-              paddingHorizontal: 14,
-              borderRadius: theme.radius.md,
-              borderWidth: 1,
-              borderColor: 'rgba(239, 68, 68, 0.35)',
-              backgroundColor: theme.isDark ? 'rgba(239, 68, 68, 0.12)' : 'rgba(239, 68, 68, 0.08)',
-              marginTop: 4,
-              opacity: pressed ? 0.75 : 1,
-            })}
-          >
-            <Trash2 size={14} color={theme.colors.danger} />
-            <Text variant="caption" style={{ color: theme.colors.danger, fontWeight: '700' }}>
-              {t('settings_delete_account') || 'Delete Account Permanently'}
-            </Text>
+              <Pressable
+                onPress={handleSaveName}
+                disabled={savingName}
+                style={{
+                  flex: 1,
+                  paddingVertical: 12,
+                  borderRadius: theme.radius.md,
+                  backgroundColor: theme.colors.primary,
+                  alignItems: 'center',
+                }}
+              >
+                <Text style={{ fontWeight: '800', color: '#FFFFFF' }}>
+                  {savingName ? 'Saving...' : 'Save Name'}
+                </Text>
+              </Pressable>
+            </View>
           </Pressable>
-        </Card>
+        </Pressable>
+      </Modal>
 
-        {/* ── 10. APP VERSION & BRAND FOOTER ── */}
-        <View style={{ alignItems: 'center', gap: 3, marginTop: theme.spacing.xs }}>
-          <Text variant="caption" muted style={{ fontWeight: '700', fontSize: 12 }}>
-            SpendFlow v2.0.0
-          </Text>
-          <Text variant="caption" muted style={{ fontSize: 10 }}>
-            See Where Your Money Flows • Version 2.0 Build
-          </Text>
-        </View>
-      </ScrollView>
-
-      {/* ── CATEGORY BUDGET CONFIGURATION FORM MODAL ── */}
-      <CategoryBudgetFormModal
-        visible={showCategoryBudgets}
-        onClose={() => setShowCategoryBudgets(false)}
-        onSaved={() => {
-          if (profile?.id) listCategories(profile.id).then(setCategories);
-        }}
-      />
-
-      {/* ── CURRENCY SELECTION MODAL ── */}
+      {/* ── 3. CURRENCY SELECTION MODAL ── */}
       <Modal
         visible={currencyModalOpen}
         transparent
@@ -752,7 +1127,7 @@ export default function SettingsScreen() {
               width: '100%',
               maxWidth: 360,
               backgroundColor: theme.colors.surface,
-              borderRadius: theme.radius.lg,
+              borderRadius: 20,
               padding: 20,
               gap: 16,
               borderWidth: 1,
@@ -760,25 +1135,25 @@ export default function SettingsScreen() {
             }}
           >
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                 <View
                   style={{
-                    width: 34,
-                    height: 34,
+                    width: 36,
+                    height: 36,
                     borderRadius: 10,
-                    backgroundColor: theme.isDark ? 'rgba(99, 102, 241, 0.2)' : 'rgba(79, 70, 229, 0.1)',
+                    backgroundColor: theme.isDark ? 'rgba(129, 140, 248, 0.15)' : '#DCE9E3',
                     alignItems: 'center',
                     justifyContent: 'center',
                   }}
                 >
-                  <Globe size={18} color={theme.colors.primary} />
+                  <DollarSign size={18} color={theme.colors.primary} />
                 </View>
                 <View>
                   <Text variant="h3" style={{ fontWeight: '800', fontSize: 16 }}>
-                    Select Base Currency
+                    Select Currency
                   </Text>
                   <Text variant="caption" muted style={{ fontSize: 11 }}>
-                    Global currency for accounts and analytics
+                    Primary display currency for accounts
                   </Text>
                 </View>
               </View>
@@ -818,7 +1193,7 @@ export default function SettingsScreen() {
                       borderWidth: 1.5,
                       borderColor: isSelected ? theme.colors.primary : theme.colors.border,
                       backgroundColor: isSelected
-                        ? (theme.isDark ? 'rgba(99, 102, 241, 0.2)' : 'rgba(79, 70, 229, 0.08)')
+                        ? (theme.isDark ? 'rgba(129, 140, 248, 0.16)' : '#DCE9E3')
                         : theme.colors.surfaceElevated,
                     }}
                   >
@@ -851,6 +1226,811 @@ export default function SettingsScreen() {
                   </Pressable>
                 );
               })}
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* ── 4. APPEARANCE & DARK MODE MODAL ── */}
+      <Modal
+        visible={appearanceModalOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setAppearanceModalOpen(false)}
+      >
+        <Pressable
+          onPress={() => setAppearanceModalOpen(false)}
+          style={{
+            flex: 1,
+            backgroundColor: 'rgba(0,0,0,0.6)',
+            justifyContent: 'center',
+            alignItems: 'center',
+            padding: 24,
+          }}
+        >
+          <Pressable
+            onPress={(e) => e.stopPropagation()}
+            style={{
+              width: '100%',
+              maxWidth: 360,
+              backgroundColor: theme.colors.surface,
+              borderRadius: 20,
+              padding: 20,
+              gap: 16,
+              borderWidth: 1,
+              borderColor: theme.colors.border,
+            }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <View
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 10,
+                    backgroundColor: theme.isDark ? 'rgba(129, 140, 248, 0.15)' : '#DCE9E3',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Sun size={18} color={theme.colors.primary} />
+                </View>
+                <View>
+                  <Text variant="h3" style={{ fontWeight: '800', fontSize: 16 }}>
+                    Theme
+                  </Text>
+                  <Text variant="caption" muted style={{ fontSize: 11 }}>
+                    Choose your preferred appearance
+                  </Text>
+                </View>
+              </View>
+
+              <Pressable
+                onPress={() => setAppearanceModalOpen(false)}
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: 14,
+                  backgroundColor: theme.colors.surfaceElevated,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <X size={15} color={theme.colors.text} />
+              </Pressable>
+            </View>
+
+            {/* Theme Options */}
+            <View style={{ gap: 8 }}>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                {[
+                  { key: 'light' as ThemePreference, label: 'Light', icon: Sun },
+                  { key: 'dark' as ThemePreference, label: 'Dark', icon: Moon },
+                  { key: 'system' as ThemePreference, label: 'System', icon: Palette },
+                ].map((opt) => {
+                  const isSelected = theme.themePreference === opt.key;
+                  const IconComp = opt.icon;
+                  return (
+                    <Pressable
+                      key={opt.key}
+                      onPress={() => theme.setThemePreference(opt.key)}
+                      style={{
+                        flex: 1,
+                        paddingVertical: 14,
+                        borderRadius: theme.radius.md,
+                        borderWidth: 1.5,
+                        borderColor: isSelected ? theme.colors.primary : theme.colors.border,
+                        backgroundColor: isSelected
+                          ? (theme.isDark ? 'rgba(129, 140, 248, 0.16)' : '#DCE9E3')
+                          : theme.colors.surfaceElevated,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 6,
+                      }}
+                    >
+                      <IconComp size={20} color={isSelected ? theme.colors.primary : theme.colors.textMuted} />
+                      <Text style={{ fontSize: 13, fontWeight: isSelected ? '800' : '600', color: isSelected ? theme.colors.primary : theme.colors.text }}>
+                        {opt.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* ── 5. LANGUAGE SELECTOR MODAL ── */}
+      <Modal
+        visible={languageModalOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setLanguageModalOpen(false)}
+      >
+        <Pressable
+          onPress={() => setLanguageModalOpen(false)}
+          style={{
+            flex: 1,
+            backgroundColor: 'rgba(0,0,0,0.6)',
+            justifyContent: 'center',
+            alignItems: 'center',
+            padding: 24,
+          }}
+        >
+          <Pressable
+            onPress={(e) => e.stopPropagation()}
+            style={{
+              width: '100%',
+              maxWidth: 360,
+              backgroundColor: theme.colors.surface,
+              borderRadius: 20,
+              padding: 20,
+              gap: 16,
+              borderWidth: 1,
+              borderColor: theme.colors.border,
+            }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <View
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 10,
+                    backgroundColor: theme.isDark ? 'rgba(129, 140, 248, 0.15)' : '#DCE9E3',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Globe size={18} color={theme.colors.primary} />
+                </View>
+                <View>
+                  <Text variant="h3" style={{ fontWeight: '800', fontSize: 16 }}>
+                    Select Language
+                  </Text>
+                  <Text variant="caption" muted style={{ fontSize: 11 }}>
+                    Choose your display language
+                  </Text>
+                </View>
+              </View>
+
+              <Pressable
+                onPress={() => setLanguageModalOpen(false)}
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: 14,
+                  backgroundColor: theme.colors.surfaceElevated,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <X size={15} color={theme.colors.text} />
+              </Pressable>
+            </View>
+
+            {/* Language Options List */}
+            <View style={{ gap: 8 }}>
+              {[
+                { code: 'en', name: 'English', native: 'English (US)', flag: '🇺🇸' },
+                { code: 'hi', name: 'Hindi', native: 'हिन्दी', flag: '🇮🇳' },
+                { code: 'ne', name: 'Nepali', native: 'नेपाली', flag: '🇳🇵' },
+              ].map((l) => {
+                const isActive = language === l.code;
+                return (
+                  <Pressable
+                    key={l.code}
+                    onPress={() => {
+                      setLanguage(l.code as any);
+                      setLanguageModalOpen(false);
+                    }}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: 12,
+                      borderRadius: theme.radius.md,
+                      borderWidth: 1.5,
+                      borderColor: isActive ? theme.colors.primary : theme.colors.border,
+                      backgroundColor: isActive
+                        ? (theme.isDark ? 'rgba(129, 140, 248, 0.16)' : '#DCE9E3')
+                        : theme.colors.surfaceElevated,
+                    }}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                      <Text style={{ fontSize: 22 }}>{l.flag}</Text>
+                      <View>
+                        <Text style={{ fontWeight: '800', fontSize: 14, color: isActive ? theme.colors.primary : theme.colors.text }}>
+                          {l.name}
+                        </Text>
+                        <Text variant="caption" muted style={{ fontSize: 11 }}>
+                          {l.native}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {isActive ? (
+                      <View
+                        style={{
+                          width: 22,
+                          height: 22,
+                          borderRadius: 11,
+                          backgroundColor: theme.colors.primary,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                      >
+                        <Check size={13} color="#FFFFFF" />
+                      </View>
+                    ) : null}
+                  </Pressable>
+                );
+              })}
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* ── 5. NOTIFICATIONS & SECURITY MODAL ── */}
+      <Modal
+        visible={securityModalOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSecurityModalOpen(false)}
+      >
+        <Pressable
+          onPress={() => setSecurityModalOpen(false)}
+          style={{
+            flex: 1,
+            backgroundColor: 'rgba(0,0,0,0.6)',
+            justifyContent: 'center',
+            alignItems: 'center',
+            padding: 24,
+          }}
+        >
+          <Pressable
+            onPress={(e) => e.stopPropagation()}
+            style={{
+              width: '100%',
+              maxWidth: 360,
+              backgroundColor: theme.colors.surface,
+              borderRadius: 20,
+              padding: 20,
+              gap: 16,
+              borderWidth: 1,
+              borderColor: theme.colors.border,
+            }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <View
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 10,
+                    backgroundColor: theme.isDark ? 'rgba(129, 140, 248, 0.15)' : '#DCE9E3',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <ShieldCheck size={18} color={theme.colors.primary} />
+                </View>
+                <View>
+                  <Text variant="h3" style={{ fontWeight: '800', fontSize: 16 }}>
+                    Security & Lock
+                  </Text>
+                  <Text variant="caption" muted style={{ fontSize: 11 }}>
+                    Biometric authentication & privacy
+                  </Text>
+                </View>
+              </View>
+
+              <Pressable
+                onPress={() => setSecurityModalOpen(false)}
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: 14,
+                  backgroundColor: theme.colors.surfaceElevated,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <X size={15} color={theme.colors.text} />
+              </Pressable>
+            </View>
+
+            {/* Biometric Toggle Switch */}
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: 14,
+                borderRadius: theme.radius.md,
+                backgroundColor: theme.colors.surfaceElevated,
+                borderWidth: 1,
+                borderColor: theme.colors.border,
+              }}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <Fingerprint size={20} color={theme.colors.primary} />
+                <View style={{ gap: 2 }}>
+                  <Text style={{ fontWeight: '700', fontSize: 14, color: theme.colors.text }}>
+                    Biometric Lock
+                  </Text>
+                  <Text variant="caption" muted style={{ fontSize: 11 }}>
+                    {biometricTypeName || 'Fingerprint / Face ID'}
+                  </Text>
+                </View>
+              </View>
+
+              <Switch
+                value={isBiometricEnabled}
+                onValueChange={(val) => {
+                  void toggleBiometric(val).then((success) => {
+                    if (!success && val) {
+                      Alert.alert(t('common_error'), t('security_not_supported'));
+                    }
+                  });
+                }}
+                trackColor={{ false: theme.colors.border, true: theme.colors.primary }}
+                thumbColor="#FFFFFF"
+              />
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* ── 6. CATEGORY BUDGET CONFIGURATION FORM MODAL ── */}
+      <CategoryBudgetFormModal
+        visible={showCategoryBudgets}
+        onClose={() => setShowCategoryBudgets(false)}
+        onSaved={() => {
+          if (profile?.id) listCategories(profile.id).then(setCategories);
+        }}
+      />
+
+      {/* ── 7. PERMANENT DELETE ACCOUNT & DATA OTP MODAL ── */}
+      <Modal
+        visible={deleteModalOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !sendingDeleteOtp && !verifyingDeleteOtp && setDeleteModalOpen(false)}
+      >
+        <Pressable
+          onPress={() => !sendingDeleteOtp && !verifyingDeleteOtp && setDeleteModalOpen(false)}
+          style={{
+            flex: 1,
+            backgroundColor: 'rgba(0,0,0,0.72)',
+            justifyContent: 'center',
+            alignItems: 'center',
+            padding: 20,
+          }}
+        >
+          <Pressable
+            onPress={(e) => e.stopPropagation()}
+            style={{
+              width: '100%',
+              maxWidth: 370,
+              backgroundColor: theme.colors.surface,
+              borderRadius: 24,
+              padding: 22,
+              gap: 16,
+              borderWidth: 1,
+              borderColor: theme.colors.border,
+              shadowColor: '#000000',
+              shadowOffset: { width: 0, height: 10 },
+              shadowOpacity: 0.35,
+              shadowRadius: 20,
+              elevation: 10,
+            }}
+          >
+            {deleteOtpStep === 'confirm' ? (
+              <>
+                {/* STEP 1: WARNING & REQUEST OTP */}
+                <View style={{ alignItems: 'center', gap: 12, paddingTop: 4 }}>
+                  <View
+                    style={{
+                      width: 54,
+                      height: 54,
+                      borderRadius: 27,
+                      backgroundColor: theme.isDark ? 'rgba(239, 68, 68, 0.18)' : '#FEE2E2',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      borderWidth: 1.5,
+                      borderColor: theme.isDark ? 'rgba(239, 68, 68, 0.4)' : '#FCA5A5',
+                    }}
+                  >
+                    <ShieldAlert size={28} color={theme.colors.danger} />
+                  </View>
+
+                  <View style={{ gap: 6, alignItems: 'center' }}>
+                    <Text variant="h2" style={{ fontWeight: '900', fontSize: 19, textAlign: 'center', color: theme.colors.text }}>
+                      Delete Account & Data?
+                    </Text>
+                    <Text muted style={{ fontSize: 13, textAlign: 'center', lineHeight: 18 }}>
+                      This will permanently wipe all transactions, subscriptions, custom categories, and profile data.
+                    </Text>
+                  </View>
+
+                  {/* Security Target Email Box */}
+                  <View
+                    style={{
+                      width: '100%',
+                      paddingVertical: 10,
+                      paddingHorizontal: 12,
+                      borderRadius: 12,
+                      backgroundColor: theme.colors.surfaceElevated,
+                      borderWidth: 1,
+                      borderColor: theme.colors.border,
+                      alignItems: 'center',
+                      gap: 2,
+                    }}
+                  >
+                    <Text variant="caption" muted style={{ fontSize: 11, fontWeight: '600' }}>
+                      Security OTP will be sent to:
+                    </Text>
+                    <Text style={{ fontSize: 13, fontWeight: '800', color: theme.colors.text }}>
+                      {userEmail}
+                    </Text>
+                  </View>
+
+                  {deleteOtpError ? (
+                    <Text style={{ fontSize: 12, color: theme.colors.danger, textAlign: 'center', fontWeight: '600' }}>
+                      {deleteOtpError}
+                    </Text>
+                  ) : null}
+                </View>
+
+                {/* Actions */}
+                <View style={{ flexDirection: 'row', gap: 10, marginTop: 4 }}>
+                  <Pressable
+                    onPress={() => setDeleteModalOpen(false)}
+                    disabled={sendingDeleteOtp}
+                    style={{
+                      flex: 1,
+                      paddingVertical: 13,
+                      borderRadius: theme.radius.md,
+                      backgroundColor: theme.colors.surfaceElevated,
+                      borderWidth: 1,
+                      borderColor: theme.colors.border,
+                      alignItems: 'center',
+                    }}
+                  >
+                    <Text style={{ fontWeight: '700', color: theme.colors.text }}>Cancel</Text>
+                  </Pressable>
+
+                  <Pressable
+                    onPress={async () => {
+                      if (!userEmail) return;
+                      setSendingDeleteOtp(true);
+                      setDeleteOtpError('');
+                      try {
+                        const res = await sendDeleteAccountOtp(userEmail);
+                        if (res?.rateLimited && res.emergencyCode) {
+                          setDeleteFallbackCode(res.emergencyCode);
+                        } else {
+                          setDeleteFallbackCode(null);
+                        }
+                        setDeleteOtpStep('otp_input');
+                      } catch (err: any) {
+                        setDeleteOtpError(err?.message || 'Failed to send OTP to your email. Please try again.');
+                      } finally {
+                        setSendingDeleteOtp(false);
+                      }
+                    }}
+                    disabled={sendingDeleteOtp}
+                    style={{
+                      flex: 1.4,
+                      paddingVertical: 13,
+                      borderRadius: theme.radius.md,
+                      backgroundColor: theme.colors.danger,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      opacity: sendingDeleteOtp ? 0.7 : 1,
+                    }}
+                  >
+                    <Text style={{ fontWeight: '800', color: '#FFFFFF' }}>
+                      {sendingDeleteOtp ? 'Sending...' : 'Send OTP to Email'}
+                    </Text>
+                  </Pressable>
+                </View>
+              </>
+            ) : (
+              <>
+                {/* STEP 2: ENTER EMAIL OTP & CONFIRM */}
+                <View style={{ alignItems: 'center', gap: 12, paddingTop: 4 }}>
+                  <View
+                    style={{
+                      width: 54,
+                      height: 54,
+                      borderRadius: 27,
+                      backgroundColor: theme.isDark ? 'rgba(99, 102, 241, 0.2)' : 'rgba(79, 70, 229, 0.1)',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      borderWidth: 1.5,
+                      borderColor: theme.colors.primary,
+                    }}
+                  >
+                    <Mail size={26} color={theme.colors.primary} />
+                  </View>
+
+                  <View style={{ gap: 4, alignItems: 'center' }}>
+                    <Text variant="h2" style={{ fontWeight: '900', fontSize: 19, textAlign: 'center', color: theme.colors.text }}>
+                      {deleteFallbackCode ? 'Security Code Bypass' : 'Check Your Email'}
+                    </Text>
+                    <Text muted style={{ fontSize: 12.5, textAlign: 'center', lineHeight: 18 }}>
+                      {deleteFallbackCode ? (
+                        'Enter the 6-digit confirmation code below'
+                      ) : (
+                        <>
+                          Enter the 6-digit security code sent to{'\n'}
+                          <Text style={{ fontWeight: '800', color: theme.colors.text }}>{userEmail}</Text>
+                        </>
+                      )}
+                    </Text>
+                  </View>
+
+                  {/* Supabase Rate Limit Emergency Bypass Notice */}
+                  {deleteFallbackCode ? (
+                    <View
+                      style={{
+                        width: '100%',
+                        padding: 12,
+                        borderRadius: 14,
+                        backgroundColor: theme.isDark ? 'rgba(234, 179, 8, 0.15)' : '#FEF3C7',
+                        borderWidth: 1,
+                        borderColor: theme.isDark ? 'rgba(234, 179, 8, 0.4)' : '#FCD34D',
+                        gap: 3,
+                        alignItems: 'center',
+                      }}
+                    >
+                      <Text style={{ fontSize: 11, fontWeight: '800', color: theme.isDark ? '#FBBF24' : '#B45309', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                        ⚡ Email Rate Limit Bypass
+                      </Text>
+                      <Text style={{ fontSize: 24, fontWeight: '900', color: theme.colors.text, letterSpacing: 5 }}>
+                        {deleteFallbackCode}
+                      </Text>
+                      <Text variant="caption" muted style={{ fontSize: 11, textAlign: 'center' }}>
+                        Supabase email quota reached. Type this code to delete now.
+                      </Text>
+                    </View>
+                  ) : null}
+
+                  {/* 6-Digit OTP Text Input */}
+                  <TextInput
+                    value={deleteOtpCode}
+                    onChangeText={(val) => {
+                      setDeleteOtpCode(val.replace(/\D/g, '').slice(0, 6));
+                      if (deleteOtpError) setDeleteOtpError('');
+                    }}
+                    placeholder="• • • • • •"
+                    placeholderTextColor={theme.colors.textMuted}
+                    keyboardType="number-pad"
+                    maxLength={6}
+                    autoFocus
+                    style={{
+                      width: '100%',
+                      height: 52,
+                      borderRadius: 14,
+                      backgroundColor: theme.colors.surfaceElevated,
+                      borderWidth: 1.5,
+                      borderColor: deleteOtpError ? theme.colors.danger : theme.colors.primary,
+                      fontSize: 24,
+                      fontWeight: '900',
+                      letterSpacing: 8,
+                      textAlign: 'center',
+                      color: theme.colors.text,
+                    }}
+                  />
+
+                  {deleteOtpError ? (
+                    <Text style={{ fontSize: 12, color: theme.colors.danger, textAlign: 'center', fontWeight: '600' }}>
+                      {deleteOtpError}
+                    </Text>
+                  ) : null}
+
+                  {/* Resend Link (only when not rate-limited) */}
+                  {!deleteFallbackCode ? (
+                    <Pressable
+                      onPress={async () => {
+                        if (!userEmail) return;
+                        setSendingDeleteOtp(true);
+                        setDeleteOtpError('');
+                        try {
+                          const res = await sendDeleteAccountOtp(userEmail);
+                          if (res?.rateLimited && res.emergencyCode) {
+                            setDeleteFallbackCode(res.emergencyCode);
+                          } else {
+                            Alert.alert('Sent', 'A new 6-digit OTP code was sent to your email.');
+                          }
+                        } catch (err: any) {
+                          setDeleteOtpError(err?.message || 'Failed to resend OTP.');
+                        } finally {
+                          setSendingDeleteOtp(false);
+                        }
+                      }}
+                      disabled={sendingDeleteOtp}
+                      hitSlop={8}
+                    >
+                      <Text variant="caption" muted style={{ fontSize: 12, textDecorationLine: 'underline', color: theme.colors.primary }}>
+                        {sendingDeleteOtp ? 'Resending...' : "Didn't receive email? Resend code"}
+                      </Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+
+                {/* Actions */}
+                <View style={{ flexDirection: 'row', gap: 10, marginTop: 4 }}>
+                  <Pressable
+                    onPress={() => {
+                      setDeleteOtpStep('confirm');
+                      setDeleteOtpCode('');
+                      setDeleteOtpError('');
+                    }}
+                    disabled={verifyingDeleteOtp}
+                    style={{
+                      flex: 1,
+                      paddingVertical: 13,
+                      borderRadius: theme.radius.md,
+                      backgroundColor: theme.colors.surfaceElevated,
+                      borderWidth: 1,
+                      borderColor: theme.colors.border,
+                      alignItems: 'center',
+                    }}
+                  >
+                    <Text style={{ fontWeight: '700', color: theme.colors.text }}>Back</Text>
+                  </Pressable>
+
+                  <Pressable
+                    onPress={async () => {
+                      if (!deleteOtpCode.trim() || deleteOtpCode.trim().length < 6) {
+                        setDeleteOtpError('Please enter the 6-digit code.');
+                        return;
+                      }
+                      setVerifyingDeleteOtp(true);
+                      setDeleteOtpError('');
+                      try {
+                        await verifyDeleteAccountOtpAndWipe(userEmail, deleteOtpCode, deleteFallbackCode || undefined);
+                        setDeleteModalOpen(false);
+                        router.replace('/(auth)' as any);
+                      } catch (err: any) {
+                        setDeleteOtpError(err?.message || 'Invalid or expired OTP code');
+                      } finally {
+                        setVerifyingDeleteOtp(false);
+                      }
+                    }}
+                    disabled={verifyingDeleteOtp || deleteOtpCode.length < 6}
+                    style={{
+                      flex: 1.6,
+                      paddingVertical: 13,
+                      borderRadius: theme.radius.md,
+                      backgroundColor: theme.colors.danger,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      opacity: verifyingDeleteOtp || deleteOtpCode.length < 6 ? 0.6 : 1,
+                    }}
+                  >
+                    <Text style={{ fontWeight: '800', color: '#FFFFFF', fontSize: 13.5 }}>
+                      {verifyingDeleteOtp ? 'Wiping Data...' : 'Verify & Delete'}
+                    </Text>
+                  </Pressable>
+                </View>
+              </>
+            )}
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* ── 8. SIGN OUT CONFIRMATION MODAL ── */}
+      <Modal
+        visible={signOutModalOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !signingOut && setSignOutModalOpen(false)}
+      >
+        <Pressable
+          onPress={() => !signingOut && setSignOutModalOpen(false)}
+          style={{
+            flex: 1,
+            backgroundColor: 'rgba(0,0,0,0.72)',
+            justifyContent: 'center',
+            alignItems: 'center',
+            padding: 20,
+          }}
+        >
+          <Pressable
+            onPress={(e) => e.stopPropagation()}
+            style={{
+              width: '100%',
+              maxWidth: 360,
+              backgroundColor: theme.colors.surface,
+              borderRadius: 24,
+              padding: 22,
+              gap: 16,
+              borderWidth: 1,
+              borderColor: theme.colors.border,
+              shadowColor: '#000000',
+              shadowOffset: { width: 0, height: 10 },
+              shadowOpacity: 0.3,
+              shadowRadius: 20,
+              elevation: 10,
+            }}
+          >
+            <View style={{ alignItems: 'center', gap: 12, paddingTop: 6 }}>
+              <View
+                style={{
+                  width: 54,
+                  height: 54,
+                  borderRadius: 27,
+                  backgroundColor: theme.isDark ? 'rgba(239, 68, 68, 0.16)' : '#FEE2E2',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderWidth: 1.5,
+                  borderColor: theme.isDark ? 'rgba(239, 68, 68, 0.35)' : '#FCA5A5',
+                }}
+              >
+                <LogOut size={26} color={theme.colors.danger} />
+              </View>
+
+              <View style={{ gap: 6, alignItems: 'center' }}>
+                <Text variant="h2" style={{ fontWeight: '900', fontSize: 19, textAlign: 'center', color: theme.colors.text }}>
+                  Sign out of SpendFlow?
+                </Text>
+                <Text muted style={{ fontSize: 13, textAlign: 'center', lineHeight: 18 }}>
+                  You will need to sign back in with your credentials to access your financial records.
+                </Text>
+              </View>
+            </View>
+
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
+              <Pressable
+                onPress={() => setSignOutModalOpen(false)}
+                disabled={signingOut}
+                style={{
+                  flex: 1,
+                  paddingVertical: 13,
+                  borderRadius: theme.radius.md,
+                  backgroundColor: theme.colors.surfaceElevated,
+                  borderWidth: 1,
+                  borderColor: theme.colors.border,
+                  alignItems: 'center',
+                  opacity: signingOut ? 0.6 : 1,
+                }}
+              >
+                <Text style={{ fontWeight: '700', color: theme.colors.text }}>Cancel</Text>
+              </Pressable>
+
+              <Pressable
+                onPress={async () => {
+                  setSigningOut(true);
+                  try {
+                    await signOut();
+                    setSignOutModalOpen(false);
+                    router.replace('/(auth)' as any);
+                  } catch (err: any) {
+                    Alert.alert('Error', err?.message || 'Failed to sign out');
+                  } finally {
+                    setSigningOut(false);
+                  }
+                }}
+                disabled={signingOut}
+                style={{
+                  flex: 1.2,
+                  paddingVertical: 13,
+                  borderRadius: theme.radius.md,
+                  backgroundColor: theme.colors.danger,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  opacity: signingOut ? 0.7 : 1,
+                }}
+              >
+                <Text style={{ fontWeight: '800', color: '#FFFFFF' }}>
+                  {signingOut ? 'Signing out...' : 'Sign Out'}
+                </Text>
+              </Pressable>
             </View>
           </Pressable>
         </Pressable>

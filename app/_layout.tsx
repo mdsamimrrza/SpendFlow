@@ -78,12 +78,15 @@ function RootNavigator() {
         <Stack.Screen name="expense/add" options={{ presentation: 'modal' }} />
         <Stack.Screen name="expense/[id]" />
         <Stack.Screen name="export" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="bullion" />
       </Stack>
       <AnimatedSplashScreen visible={isLoading} />
       <BiometricLockOverlay />
     </View>
   );
 }
+
+import { PrivacyProvider } from '@/store/PrivacyContext';
 
 export default function Layout() {
   return (
@@ -92,9 +95,11 @@ export default function Layout() {
         <AuthProvider>
           <SecurityProvider>
             <ThemeProvider>
-              <OnboardingProvider>
-                <RootNavigator />
-              </OnboardingProvider>
+              <PrivacyProvider>
+                <OnboardingProvider>
+                  <RootNavigator />
+                </OnboardingProvider>
+              </PrivacyProvider>
             </ThemeProvider>
           </SecurityProvider>
         </AuthProvider>

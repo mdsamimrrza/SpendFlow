@@ -28,47 +28,56 @@ export const typography = {
   label: { fontSize: 13, lineHeight: 16, fontWeight: '700' as const },
 } as const;
 
-// THEME 1: INDIGO SAPPHIRE (LINEAR & VERCEL STYLE)
-const semantic = {
-  primary: '#4F46E5',
-  primaryStrong: '#4338CA',
-  primaryLight: '#E0E7FF',
+export const lightColors = {
+  primary: '#0F5C4D',         // Teal (progress bar, active states, chart line)
+  primaryStrong: '#0A453A',   // Deep Teal
+  primaryLight: '#DCE9E3',    // Teal tint (light backgrounds for teal chips/icons)
+  accent: '#A8791F',          // Brass (highlights, badge percentages)
+  success: '#0F5C4D',         // Teal / Green
+  warning: '#A8791F',         // Brass
+  danger: '#A5442B',          // Rust ("up" spending chip, alerts)
+  info: '#2A6F86',            // Deep Aqua / Slate
+  background: '#EDEAE0',      // Warm parchment paper
+  surface: '#F7F5EC',         // Paper-raised card
+  surfaceElevated: '#E5E2D6', // Elevated parchment
+  text: '#17241F',            // Primary ink (near-black)
+  textMuted: '#4B5C55',       // Soft ink (muted grey-green)
+  faint: '#8B978F',           // Faint ink (labels, timestamps)
+  border: '#CFCABA',          // Rule lines (dotted/dashed dividers)
+  input: '#F7F5EC',           // Paper raised
+  tab: '#F7F5EC',             // Paper raised
+  accentBg: '#DCE9E3',        // Teal tint
+  cardHighlight: '#DCE9E3',   // Highlight tint
+  brass: '#A8791F',           // Brass
+  brassTint: '#F0E3C8',       // Brass tint
+  rust: '#A5442B',            // Rust
+  rustTint: '#F1DCD3',        // Rust tint
+};
+
+export const darkColors = {
+  primary: '#818CF8',
+  primaryStrong: '#A5B4FC',
+  primaryLight: 'rgba(129, 140, 248, 0.18)',
   accent: '#8B5CF6',
   success: '#10B981',
   warning: '#F59E0B',
   danger: '#EF4444',
   info: '#0EA5E9',
-};
-
-export const lightColors = {
-  ...semantic,
-  background: '#F8FAFC',
-  surface: '#FFFFFF',
-  surfaceElevated: '#F1F5F9',
-  text: '#0F172A',
-  textMuted: '#64748B',
-  border: '#E2E8F0',
-  input: '#FFFFFF',
-  tab: '#FFFFFF',
-  accentBg: 'rgba(99, 102, 241, 0.08)',
-  cardHighlight: '#EFF6FF',
-};
-
-export const darkColors = {
-  ...semantic,
-  primary: '#818CF8',
-  primaryStrong: '#A5B4FC',
-  primaryLight: 'rgba(129, 140, 248, 0.18)',
   background: '#0B0F19',
   surface: '#151D2A',
   surfaceElevated: '#1E293B',
   text: '#F8FAFC',
   textMuted: '#94A3B8',
+  faint: '#64748B',
   border: '#273549',
   input: '#151D2A',
   tab: '#151D2A',
   accentBg: 'rgba(129, 140, 248, 0.18)',
   cardHighlight: '#1E293B',
+  brass: '#F59E0B',
+  brassTint: 'rgba(245, 158, 11, 0.15)',
+  rust: '#EF4444',
+  rustTint: 'rgba(239, 68, 68, 0.15)',
 };
 
 export type ThemeColors = typeof lightColors;

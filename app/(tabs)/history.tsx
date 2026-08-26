@@ -52,6 +52,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { PressableScale } from '@/components/ui/PressableScale';
 import { Select } from '@/components/ui/Select';
+import { PrivacyEyeButton } from '@/components/ui/PrivacyEyeButton';
 import { Text } from '@/components/ui/Text';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
 import { SORT_OPTIONS } from '@/constants/app';
@@ -59,6 +60,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { useExpenses } from '@/hooks/useExpenses';
 import { useLanguage } from '@/hooks/useLanguage';
+import { usePrivacy } from '@/hooks/usePrivacy';
 import { useTheme } from '@/hooks/useTheme';
 import { listCategories } from '@/services/categories';
 import { exportCsv, exportExcel, exportPdf } from '@/services/export';
@@ -71,6 +73,7 @@ export default function HistoryScreen() {
   const { profile, session, refreshProfile } = useAuth();
   const { rates } = useExchangeRates();
   const { t } = useLanguage();
+  const { isPrivacyMode } = usePrivacy();
   const theme = useTheme();
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<SortKey>('date_desc');
@@ -315,17 +318,35 @@ export default function HistoryScreen() {
         ListHeaderComponent={
           <View style={{ gap: theme.spacing.md }}>
             {/* ── 1. TOP APP BAR ── */}
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              <View style={{ gap: 2 }}>
-                <Text variant="h1" style={{ fontWeight: '900', letterSpacing: -0.5 }}>
-                  {t('history_title') || 'Transaction History'}
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginTop: 4 }}>
+              <View style={{ gap: 2, flex: 1, minWidth: 0 }}>
+                <Text
+                  variant="caption"
+                  style={{
+                    fontWeight: '700',
+                    textTransform: 'uppercase',
+                    letterSpacing: 1.1,
+                    fontSize: 11,
+                    color: theme.colors.textMuted,
+                  }}
+                >
+                  All Transactions
                 </Text>
-                <Text variant="caption" muted style={{ fontSize: 11 }}>
-                  {totalItems} total transactions · Page {safeCurrentPage} of {totalPages}
+                <Text
+                  variant="h1"
+                  style={{
+                    fontWeight: '800',
+                    fontSize: 28,
+                    letterSpacing: -0.5,
+                    color: theme.colors.text,
+                  }}
+                  numberOfLines={1}
+                >
+                  {t('history_title') || 'History'}
                 </Text>
               </View>
 
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 0 }}>
                 {/* Export Shortcut Button (Prominent & Easy to Tap) */}
                 <Pressable
                   onPress={() => setExportModalOpen(true)}
@@ -333,36 +354,37 @@ export default function HistoryScreen() {
                   style={({ pressed }) => ({
                     flexDirection: 'row',
                     alignItems: 'center',
-                    gap: 6,
-                    paddingHorizontal: 14,
-                    paddingVertical: 9,
+                    gap: 5,
+                    paddingHorizontal: 10,
+                    paddingVertical: 7,
                     borderRadius: theme.radius.full,
-                    backgroundColor: theme.isDark ? 'rgba(99, 102, 241, 0.25)' : 'rgba(79, 70, 229, 0.12)',
+                    backgroundColor: theme.isDark ? 'rgba(99, 102, 241, 0.22)' : 'rgba(79, 70, 229, 0.1)',
                     borderWidth: 1.5,
                     borderColor: theme.colors.primary,
                     opacity: pressed ? 0.8 : 1,
                   })}
                 >
-                  <Download size={16} color={theme.colors.primary} />
-                  <Text style={{ fontWeight: '800', color: theme.colors.primary, fontSize: 13 }}>
+                  <Download size={14} color={theme.colors.primary} />
+                  <Text style={{ fontWeight: '800', color: theme.colors.primary, fontSize: 12 }}>
                     Export
                   </Text>
                 </Pressable>
 
+                <PrivacyEyeButton />
                 <ThemeToggle />
               </View>
             </View>
 
-            {/* ── 2. TOTAL OUTFLOW VAULT SUMMARY CARD (ULTRA-COMPACT) ── */}
+            {/* ── 2. TOTAL OUTFLOW VAULT SUMMARY CARD (CLEAN & SYMMETRICAL) ── */}
             <Card
               style={{
                 paddingHorizontal: 14,
-                paddingVertical: 7,
-                gap: 2,
-                backgroundColor: theme.isDark ? '#0F172A' : '#F0F4FF',
+                paddingVertical: 10,
+                gap: 6,
+                backgroundColor: theme.isDark ? '#0F172A' : theme.colors.cardHighlight,
                 borderRadius: 14,
                 borderWidth: 1.5,
-                borderColor: theme.isDark ? 'rgba(129, 140, 248, 0.35)' : 'rgba(99, 102, 241, 0.25)',
+                borderColor: theme.isDark ? 'rgba(129, 140, 248, 0.35)' : theme.colors.border,
                 shadowColor: theme.colors.primary,
                 shadowOffset: { width: 0, height: 2 },
                 shadowOpacity: theme.isDark ? 0.12 : 0.05,
@@ -370,20 +392,20 @@ export default function HistoryScreen() {
                 elevation: 2,
               }}
             >
-              {/* Header Label Row */}
+              {/* Row 1: Header Label on Left + Entries Badge on Right */}
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
                   <View
                     style={{
-                      width: 16,
-                      height: 16,
+                      width: 18,
+                      height: 18,
                       borderRadius: 4,
                       backgroundColor: theme.isDark ? 'rgba(99, 102, 241, 0.25)' : 'rgba(79, 70, 229, 0.12)',
                       alignItems: 'center',
                       justifyContent: 'center',
                     }}
                   >
-                    <Wallet size={10} color={theme.colors.primary} />
+                    <Wallet size={11} color={theme.colors.primary} />
                   </View>
                   <Text
                     variant="caption"
@@ -392,37 +414,64 @@ export default function HistoryScreen() {
                       fontWeight: '800',
                       textTransform: 'uppercase',
                       letterSpacing: 0.7,
-                      fontSize: 9.5,
+                      fontSize: 10,
                     }}
                   >
                     {t('history_total_outflow') || 'Total Outflow'} · {activeChipLabel(period)}
                   </Text>
                 </View>
 
-                {selectedCategoryId ? (
-                  <Pressable
-                    onPress={() => setSelectedCategoryId(null)}
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  {/* Entries Pill Badge */}
+                  <View
                     style={{
                       flexDirection: 'row',
                       alignItems: 'center',
-                      gap: 3,
+                      gap: 4,
                       paddingHorizontal: 7,
-                      paddingVertical: 1.5,
-                      borderRadius: theme.radius.full,
-                      backgroundColor: theme.colors.primary,
+                      paddingVertical: 2,
+                      borderRadius: 6,
+                      backgroundColor: theme.isDark ? 'rgba(99, 102, 241, 0.18)' : 'rgba(99, 102, 241, 0.1)',
+                      borderWidth: 1,
+                      borderColor: theme.isDark ? 'rgba(129, 140, 248, 0.3)' : 'rgba(99, 102, 241, 0.2)',
                     }}
                   >
-                    <Text style={{ color: '#FFFFFF', fontSize: 9, fontWeight: '800' }}>
-                      Filtered ✕
+                    <Receipt size={10} color={theme.colors.primary} />
+                    <Text
+                      style={{
+                        fontSize: 10,
+                        fontWeight: '800',
+                        color: theme.isDark ? '#E2E8F0' : '#1E293B',
+                      }}
+                    >
+                      {totalItems} {totalItems === 1 ? 'entry' : 'entries'}
                     </Text>
-                  </Pressable>
-                ) : null}
+                  </View>
+
+                  {selectedCategoryId ? (
+                    <Pressable
+                      onPress={() => setSelectedCategoryId(null)}
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 3,
+                        paddingHorizontal: 7,
+                        paddingVertical: 2,
+                        borderRadius: theme.radius.full,
+                        backgroundColor: theme.colors.primary,
+                      }}
+                    >
+                      <Text style={{ color: '#FFFFFF', fontSize: 9.5, fontWeight: '800' }}>
+                        Filtered ✕
+                      </Text>
+                    </Pressable>
+                  ) : null}
+                </View>
               </View>
 
-              {/* Main Metric Row: Ultra-Compact Big Amount on Left, Badges on Right */}
+              {/* Row 2: Outflow Amount on Left + Peak Expense Badge on Right */}
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                {/* Left Side: Outflow Amount */}
-                <View style={{ flex: 1, paddingRight: 6 }}>
+                <View style={{ flex: 1, paddingRight: 8 }}>
                   <Text
                     style={{
                       fontSize: 22,
@@ -439,65 +488,35 @@ export default function HistoryScreen() {
                   </Text>
                 </View>
 
-                {/* Right Side: Badges Stacked Ultra-Compactly */}
-                <View style={{ alignItems: 'flex-end', gap: 3 }}>
-                  {/* Entries Pill Badge */}
+                {highestSingleSpend > 0 ? (
                   <View
                     style={{
                       flexDirection: 'row',
                       alignItems: 'center',
-                      gap: 3.5,
-                      paddingHorizontal: 6.5,
-                      paddingVertical: 1.5,
+                      gap: 4,
+                      paddingHorizontal: 7,
+                      paddingVertical: 2.5,
                       borderRadius: 6,
-                      backgroundColor: theme.isDark ? 'rgba(99, 102, 241, 0.15)' : 'rgba(99, 102, 241, 0.08)',
+                      backgroundColor: theme.isDark ? 'rgba(245, 158, 11, 0.12)' : 'rgba(245, 158, 11, 0.08)',
                       borderWidth: 1,
-                      borderColor: theme.isDark ? 'rgba(129, 140, 248, 0.3)' : 'rgba(99, 102, 241, 0.2)',
+                      borderColor: theme.isDark ? 'rgba(245, 158, 11, 0.3)' : 'rgba(245, 158, 11, 0.2)',
                     }}
                   >
-                    <Receipt size={9} color={theme.colors.primary} />
+                    <Sparkles size={10} color="#F59E0B" />
                     <Text
                       style={{
-                        fontSize: 9.5,
-                        fontWeight: '800',
-                        color: theme.isDark ? '#E2E8F0' : '#1E293B',
+                        fontSize: 10,
+                        fontWeight: '600',
+                        color: theme.colors.textMuted,
                       }}
                     >
-                      {totalItems} {totalItems === 1 ? 'entry' : 'entries'}
+                      Peak:{' '}
+                      <Text style={{ fontWeight: '800', color: theme.isDark ? '#FCD34D' : '#D97706' }}>
+                        {formatMoney(highestSingleSpend, preferredCurrency)}
+                      </Text>
                     </Text>
                   </View>
-
-                  {/* Peak Expense Pill Badge */}
-                  {highestSingleSpend > 0 ? (
-                    <View
-                      style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        gap: 3,
-                        paddingHorizontal: 6.5,
-                        paddingVertical: 1.5,
-                        borderRadius: 6,
-                        backgroundColor: theme.isDark ? 'rgba(245, 158, 11, 0.12)' : 'rgba(245, 158, 11, 0.08)',
-                        borderWidth: 1,
-                        borderColor: theme.isDark ? 'rgba(245, 158, 11, 0.3)' : 'rgba(245, 158, 11, 0.2)',
-                      }}
-                    >
-                      <Sparkles size={8.5} color="#F59E0B" />
-                      <Text
-                        style={{
-                          fontSize: 9.5,
-                          fontWeight: '600',
-                          color: theme.colors.textMuted,
-                        }}
-                      >
-                        Peak:{' '}
-                        <Text style={{ fontWeight: '800', color: theme.isDark ? '#FCD34D' : '#D97706' }}>
-                          {formatMoney(highestSingleSpend, preferredCurrency)}
-                        </Text>
-                      </Text>
-                    </View>
-                  ) : null}
-                </View>
+                ) : null}
               </View>
             </Card>
 

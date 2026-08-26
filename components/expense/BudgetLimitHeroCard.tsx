@@ -1,10 +1,16 @@
 import React from 'react';
 import { Pressable, View } from 'react-native';
 import { Link } from 'expo-router';
-import { AlertCircle, ArrowUpRight, CheckCircle2, ChevronRight, Gauge, Sparkles, Target, Wallet } from 'lucide-react-native';
+import {
+  Clock,
+  CreditCard,
+  Settings,
+} from 'lucide-react-native';
+import { PrivacyEyeButton } from '@/components/ui/PrivacyEyeButton';
 import { Card } from '@/components/ui/Card';
 import { Text } from '@/components/ui/Text';
 import { useLanguage } from '@/hooks/useLanguage';
+import { usePrivacy } from '@/hooks/usePrivacy';
 import { useTheme } from '@/hooks/useTheme';
 import { formatBudgetPercent, formatMoney } from '@/utils/format';
 
@@ -13,6 +19,9 @@ interface BudgetLimitHeroCardProps {
   monthlyBudget: number;
   preferredCurrency: string;
   formattedDate: string;
+  fullMonthName?: string;
+  todayTotal?: number;
+  prevMonthTotal?: number;
 }
 
 export function BudgetLimitHeroCard({
@@ -20,9 +29,12 @@ export function BudgetLimitHeroCard({
   monthlyBudget,
   preferredCurrency,
   formattedDate,
+  todayTotal = 0,
+  prevMonthTotal = 0,
 }: BudgetLimitHeroCardProps) {
   const theme = useTheme();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
+  const { isPrivacyMode } = usePrivacy();
 
   const isBudgetSet = monthlyBudget > 0;
   const remaining = isBudgetSet ? monthlyBudget - monthTotal : 0;
@@ -34,46 +46,54 @@ export function BudgetLimitHeroCard({
     : ratio >= 0.9
     ? '#EF4444'
     : ratio >= 0.75
-    ? '#F59E0B'
-    : theme.colors.success;
+    ? '#A8791F'
+    : theme.colors.primary;
 
-  // Compute days remaining in the current month
-  const now = new Date();
-  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-  const remainingDays = Math.max(1, daysInMonth - now.getDate() + 1);
-  const dailySafeSpend = isBudgetSet && remaining > 0 ? Math.round(remaining / remainingDays) : 0;
+  // Month vs last month comparison calculation
+  let pctVsLastMonth = 0;
+  let isUp = true;
+  if (prevMonthTotal > 0) {
+    const diff = monthTotal - prevMonthTotal;
+    pctVsLastMonth = Math.abs(Math.round((diff / prevMonthTotal) * 1000) / 10);
+    isUp = diff >= 0;
+  } else if (monthTotal > 0) {
+    pctVsLastMonth = 100;
+    isUp = true;
+  }
+
+  // Used percentage calculation
+  const usedPercent = isBudgetSet ? formatBudgetPercent(monthTotal, monthlyBudget) : '0%';
+
+  // Current month name (e.g. "August")
+  const currentMonthName = new Date().toLocaleDateString(
+    language === 'ne' ? 'ne-NP' : language === 'hi' ? 'hi-IN' : 'en-US',
+    { month: 'long' }
+  );
 
   return (
     <Card
       style={{
-        gap: theme.spacing.md,
-        padding: theme.spacing.lg,
-        backgroundColor: theme.isDark ? '#111827' : '#EEF2FF',
-        borderColor: isOverBudget ? theme.colors.danger : theme.colors.primary,
+        gap: 12,
+        padding: 16,
+        backgroundColor: theme.colors.surface,
+        borderColor: isOverBudget
+          ? theme.colors.danger
+          : theme.isDark
+          ? 'rgba(129, 140, 248, 0.35)'
+          : theme.colors.border,
         borderWidth: 1.5,
-        borderRadius: theme.radius.lg,
-        shadowColor: theme.colors.primary,
-        shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: theme.isDark ? 0.25 : 0.12,
-        shadowRadius: 16,
-        elevation: 6,
+        borderRadius: 20,
+        shadowColor: '#000000',
+        shadowOffset: { width: 0, height: 3 },
+        shadowOpacity: theme.isDark ? 0.2 : 0.05,
+        shadowRadius: 8,
+        elevation: 3,
       }}
     >
-      {/* 1. Header: Total Spent Label & Budget Target Indicator */}
+      {/* ── 1. HEADER: [ 💳 TOTAL SPENT IN <MONTH> ] ... [ ⚙️ Settings ] ── */}
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <View
-            style={{
-              width: 28,
-              height: 28,
-              borderRadius: 8,
-              backgroundColor: theme.isDark ? 'rgba(99, 102, 241, 0.2)' : 'rgba(79, 70, 229, 0.12)',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            <Wallet size={16} color={theme.colors.primary} />
-          </View>
+          <CreditCard size={15} color={theme.colors.primary} />
           <Text
             variant="caption"
             style={{
@@ -84,144 +104,225 @@ export function BudgetLimitHeroCard({
               fontSize: 11,
             }}
           >
-            {t('home_total_spent_month') || 'Total Spent This Month'}
+            TOTAL SPENT IN {currentMonthName.toUpperCase()}
           </Text>
         </View>
 
         <Link href="/settings" asChild>
-          <Pressable
-            hitSlop={8}
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 4,
-              paddingHorizontal: 8,
-              paddingVertical: 3,
-              borderRadius: theme.radius.full,
-              backgroundColor: theme.colors.surfaceElevated,
-              borderWidth: 1,
-              borderColor: theme.colors.border,
-            }}
-          >
-            <Target size={12} color={theme.colors.textMuted} />
+          <Pressable hitSlop={8} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            <Settings size={13} color={theme.colors.textMuted} />
             <Text variant="caption" muted style={{ fontSize: 11, fontWeight: '600' }}>
-              {isBudgetSet ? `${formatMoney(monthlyBudget, preferredCurrency)} limit` : 'Set Limit'}
+              Settings
             </Text>
-            <ChevronRight size={12} color={theme.colors.textMuted} />
           </Pressable>
         </Link>
       </View>
 
-      {/* 2. Main Spend Number & Remaining Counter Row */}
-      <View style={{ flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between' }}>
-        <View style={{ gap: 2 }}>
-          <Text
-            variant="h1"
-            style={{
-              fontSize: 34,
-              lineHeight: 40,
-              fontWeight: '800',
-              fontVariant: ['tabular-nums'],
-              color: theme.colors.text,
-            }}
-          >
-            {formatMoney(monthTotal, preferredCurrency)}
-          </Text>
-          <Text variant="caption" muted style={{ fontSize: 12 }}>
-            {formattedDate} • {preferredCurrency}
-          </Text>
-        </View>
-
-        {isBudgetSet ? (
-          <View style={{ alignItems: 'flex-end', gap: 2 }}>
-            <Text variant="caption" muted style={{ fontSize: 11, fontWeight: '600' }}>
-              {isOverBudget ? 'Exceeded by' : 'Remaining Limit'}
-            </Text>
+      {/* ── 2. AMOUNT & DYNAMIC TREND ROW ── */}
+      <View style={{ gap: 2 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Text
-              variant="label"
+              variant="h1"
               style={{
-                fontSize: 16,
-                fontWeight: '800',
-                color: progressColor,
+                fontSize: 28,
+                lineHeight: 34,
+                fontWeight: '900',
                 fontVariant: ['tabular-nums'],
+                color: theme.colors.text,
+                letterSpacing: -0.5,
               }}
             >
-              {formatMoney(Math.abs(remaining), preferredCurrency)}
+              {formatMoney(monthTotal, preferredCurrency)}
+            </Text>
+            <PrivacyEyeButton />
+          </View>
+
+          {/* ▲ 4.1% vs last month badge */}
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 3,
+              paddingHorizontal: 8,
+              paddingVertical: 3,
+              borderRadius: theme.radius.full,
+              backgroundColor: isUp
+                ? (theme.isDark ? 'rgba(239,68,68,0.18)' : '#F1DCD3')
+                : (theme.isDark ? 'rgba(16,185,129,0.18)' : '#DCE9E3'),
+              borderWidth: 1,
+              borderColor: isUp
+                ? (theme.isDark ? '#EF4444' : '#A5442B')
+                : (theme.isDark ? '#10B981' : '#0F5C4D'),
+            }}
+          >
+            <Text
+              style={{
+                fontSize: 10.5,
+                fontWeight: '800',
+                color: isUp
+                  ? (theme.isDark ? '#EF4444' : '#A5442B')
+                  : (theme.isDark ? '#10B981' : '#0F5C4D'),
+              }}
+            >
+              {isUp ? '▲' : '▼'} {pctVsLastMonth}% vs last month
             </Text>
           </View>
-        ) : null}
+        </View>
+
+        <Text variant="caption" muted style={{ fontSize: 12, fontWeight: '500' }}>
+          {formattedDate} • {preferredCurrency}
+        </Text>
       </View>
 
-      {/* 3. Budget Saturation Gauge & Milestone Ticks */}
+      {/* ── 3. REMAINING BADGE & PROGRESS BAR ── */}
       {isBudgetSet ? (
-        <View style={{ gap: 8, backgroundColor: theme.colors.surfaceElevated, padding: 12, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.colors.border }}>
-          {/* Status line */}
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-              {isOverBudget ? (
-                <AlertCircle size={14} color={theme.colors.danger} />
-              ) : (
-                <CheckCircle2 size={14} color={progressColor} />
-              )}
-              <Text variant="caption" style={{ color: progressColor, fontWeight: '700', fontSize: 12 }}>
+        <View style={{ gap: 5, marginTop: 2 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              <Clock size={12} color={isOverBudget ? theme.colors.danger : '#A8791F'} />
+              <Text
+                style={{
+                  fontSize: 12,
+                  fontWeight: '700',
+                  color: isOverBudget ? theme.colors.danger : '#A8791F',
+                }}
+              >
                 {isOverBudget
-                  ? `Over budget limit by ${formatMoney(Math.abs(remaining), preferredCurrency)}`
-                  : `${formatBudgetPercent(monthTotal, monthlyBudget)} used (${formatMoney(remaining, preferredCurrency)} left)`}
+                  ? `${formatMoney(Math.abs(remaining), preferredCurrency)} exceeded`
+                  : `${formatMoney(remaining, preferredCurrency)} remaining`}
               </Text>
             </View>
 
-            <Text variant="caption" muted style={{ fontSize: 11 }}>
-              {remainingDays} days left
+            <Text variant="caption" muted style={{ fontSize: 11, fontWeight: '600' }}>
+              Target: {formatMoney(monthlyBudget, preferredCurrency)} ({usedPercent})
             </Text>
           </View>
 
-          {/* Segmented Progress Bar */}
-          <View style={{ position: 'relative', height: 8, borderRadius: 4, overflow: 'hidden', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)' }}>
+          {/* Progress Bar */}
+          <View
+            style={{
+              position: 'relative',
+              height: 6,
+              borderRadius: 3,
+              overflow: 'hidden',
+              backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : theme.colors.surfaceElevated,
+            }}
+          >
             <View
               style={{
                 width: `${Math.min(ratio * 100, 100)}%`,
                 height: '100%',
                 backgroundColor: progressColor,
-                borderRadius: 4,
+                borderRadius: 3,
               }}
             />
           </View>
-
-          {/* Daily Safe Spend Velocity */}
-          {dailySafeSpend > 0 && !isOverBudget ? (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 2 }}>
-              <Sparkles size={13} color={theme.colors.primary} />
-              <Text variant="caption" muted style={{ fontSize: 11 }}>
-                Safe spend pace: <Text style={{ color: theme.colors.primary, fontWeight: '700' }}>{formatMoney(dailySafeSpend, preferredCurrency)} / day</Text>
-              </Text>
-            </View>
-          ) : null}
         </View>
-      ) : (
-        /* No Budget Set Prompt */
-        <Link href="/settings" asChild>
-          <Pressable
+      ) : null}
+
+      {/* ── 4. BOTTOM 3-BOX METRICS TILES (SPENT TODAY | TARGET LIMIT | BUDGET STATUS) ── */}
+      <View
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 8,
+          marginTop: 2,
+        }}
+      >
+        {/* Box 1: Spent Today */}
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: theme.colors.surfaceElevated,
+            borderRadius: 14,
+            paddingVertical: 9,
+            paddingHorizontal: 6,
+            borderWidth: 1,
+            borderColor: theme.colors.border,
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 2,
+          }}
+        >
+          <Text variant="caption" muted style={{ fontSize: 10, fontWeight: '600', letterSpacing: 0.2 }}>
+            Spent Today
+          </Text>
+          <Text
+            numberOfLines={1}
             style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              padding: 12,
-              borderRadius: theme.radius.md,
-              backgroundColor: theme.colors.surfaceElevated,
-              borderWidth: 1,
-              borderColor: theme.colors.border,
+              fontSize: 13,
+              fontWeight: '800',
+              color: theme.colors.text,
+              fontVariant: ['tabular-nums'],
             }}
           >
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <Gauge size={16} color={theme.colors.primary} />
-              <Text variant="caption" style={{ fontWeight: '600', color: theme.colors.text }}>
-                Set a Monthly Budget Limit to activate alerts & remaining gauges
-              </Text>
-            </View>
-            <ArrowUpRight size={14} color={theme.colors.primary} />
-          </Pressable>
-        </Link>
-      )}
+            {formatMoney(todayTotal, preferredCurrency)}
+          </Text>
+        </View>
+
+        {/* Box 2: Target Limit */}
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: theme.colors.surfaceElevated,
+            borderRadius: 14,
+            paddingVertical: 9,
+            paddingHorizontal: 6,
+            borderWidth: 1,
+            borderColor: theme.colors.border,
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 2,
+          }}
+        >
+          <Text variant="caption" muted style={{ fontSize: 10, fontWeight: '600', letterSpacing: 0.2 }}>
+            Target Limit
+          </Text>
+          <Text
+            numberOfLines={1}
+            style={{
+              fontSize: 13,
+              fontWeight: '800',
+              color: theme.colors.text,
+              fontVariant: ['tabular-nums'],
+            }}
+          >
+            {isBudgetSet ? formatMoney(monthlyBudget, preferredCurrency) : 'Not set'}
+          </Text>
+        </View>
+
+        {/* Box 3: Budget Status */}
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: theme.colors.surfaceElevated,
+            borderRadius: 14,
+            paddingVertical: 9,
+            paddingHorizontal: 6,
+            borderWidth: 1,
+            borderColor: theme.colors.border,
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 2,
+          }}
+        >
+          <Text variant="caption" muted style={{ fontSize: 10, fontWeight: '600', letterSpacing: 0.2 }}>
+            Budget Status
+          </Text>
+          <Text
+            numberOfLines={1}
+            style={{
+              fontSize: 13,
+              fontWeight: '800',
+              color: progressColor,
+              fontVariant: ['tabular-nums'],
+            }}
+          >
+            {usedPercent} Used
+          </Text>
+        </View>
+      </View>
     </Card>
   );
 }

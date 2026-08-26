@@ -299,7 +299,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
           style={{
             padding: theme.spacing.lg,
             gap: 12,
-            backgroundColor: theme.isDark ? '#111827' : '#EEF2FF',
+            backgroundColor: theme.isDark ? '#111827' : theme.colors.cardHighlight,
             borderWidth: 2,
             borderColor: theme.colors.primary,
           }}
@@ -320,7 +320,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
                 paddingHorizontal: 10,
                 paddingVertical: 5,
                 borderRadius: theme.radius.full,
-                backgroundColor: theme.isDark ? 'rgba(99, 102, 241, 0.25)' : 'rgba(79, 70, 229, 0.12)',
+                backgroundColor: theme.isDark ? 'rgba(99, 102, 241, 0.25)' : theme.colors.primaryLight,
                 borderWidth: 1.5,
                 borderColor: theme.colors.primary,
               }}

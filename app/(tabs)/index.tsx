@@ -1,5 +1,5 @@
-import React, { useCallback, useRef, useState } from 'react';
-import { FlatList, Pressable, RefreshControl, View } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Animated, Easing, FlatList, Pressable, RefreshControl, View } from 'react-native';
 import { Link, useFocusEffect, useRouter } from 'expo-router';
 import { ArrowRight, Plus, ReceiptText } from 'lucide-react-native';
 import { Avatar } from '@/components/ui/Avatar';
@@ -9,6 +9,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { ExpenseItem } from '@/components/expense/ExpenseItem';
 import { PressableScale } from '@/components/ui/PressableScale';
 import { ProfileQuickCard } from '@/components/ui/ProfileQuickCard';
+import { PrivacyEyeButton } from '@/components/ui/PrivacyEyeButton';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { StockTrendChart } from '@/components/expense/StockTrendChart';
 import { Text } from '@/components/ui/Text';
@@ -17,6 +18,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { useExpenses } from '@/hooks/useExpenses';
 import { useLanguage } from '@/hooks/useLanguage';
+import { usePrivacy } from '@/hooks/usePrivacy';
 import { useSync } from '@/hooks/useSync';
 import { useTheme } from '@/hooks/useTheme';
 import { currentMonthRange, isoDate, sumExpenses } from '@/utils/format';
@@ -24,6 +26,7 @@ import { currentMonthRange, isoDate, sumExpenses } from '@/utils/format';
 export default function HomeScreen() {
   const { profile, session, refreshProfile } = useAuth();
   const { language, setLanguage, t } = useLanguage();
+  const { isPrivacyMode } = usePrivacy();
   const theme = useTheme();
   const router = useRouter();
   const { rates } = useExchangeRates();
@@ -54,6 +57,19 @@ export default function HomeScreen() {
     rates,
   );
 
+  const prevMonthTotal = sumExpenses(
+    expenses.items.filter((expense) => expense.date >= month.previousFrom && expense.date <= month.previousTo),
+    preferredCurrency,
+    rates,
+  );
+
+  const todayIso = isoDate(new Date());
+  const todayTotal = sumExpenses(
+    expenses.items.filter((expense) => expense.date === todayIso),
+    preferredCurrency,
+    rates,
+  );
+
   const monthlyBudget = profile?.monthly_budget ? Number(profile.monthly_budget) : 0;
 
   // Time-aware greeting
@@ -66,8 +82,61 @@ export default function HomeScreen() {
     month: 'short',
   });
 
+  const fullMonthName = new Date().toLocaleDateString(language === 'ne' ? 'ne-NP' : language === 'hi' ? 'hi-IN' : 'en-US', {
+    month: 'long',
+    year: 'numeric',
+  });
+
   const latestExpenses = expenses.items.slice(0, 3);
   const displayName = profile?.display_name || profile?.email?.split('@')[0] || 'User';
+
+  // Very subtle micro-floating animation (slight 3px vertical & 1.5px horizontal drift)
+  const floatY = useRef(new Animated.Value(0)).current;
+  const floatX = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const yAnim = Animated.loop(
+      Animated.sequence([
+        Animated.timing(floatY, {
+          toValue: -3,
+          duration: 2200,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: true,
+        }),
+        Animated.timing(floatY, {
+          toValue: 0,
+          duration: 2200,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+
+    const xAnim = Animated.loop(
+      Animated.sequence([
+        Animated.timing(floatX, {
+          toValue: 1.5,
+          duration: 2800,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: true,
+        }),
+        Animated.timing(floatX, {
+          toValue: -1.5,
+          duration: 2800,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+
+    yAnim.start();
+    xAnim.start();
+
+    return () => {
+      yAnim.stop();
+      xAnim.stop();
+    };
+  }, [floatY, floatX]);
 
   if (expenses.loading && expenses.items.length === 0) {
     return (
@@ -120,23 +189,6 @@ export default function HomeScreen() {
               </View>
 
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.spacing.sm }}>
-                {/* Language Switch Pill */}
-                <Pressable
-                  onPress={() => setLanguage(language === 'en' ? 'hi' : language === 'hi' ? 'ne' : 'en')}
-                  style={{
-                    backgroundColor: theme.colors.surfaceElevated,
-                    paddingHorizontal: 10,
-                    paddingVertical: 6,
-                    borderRadius: theme.radius.full,
-                    borderWidth: 1,
-                    borderColor: theme.colors.border,
-                  }}
-                >
-                  <Text variant="caption" style={{ fontWeight: '700', fontSize: 11 }}>
-                    {language === 'en' ? '🇮🇳 HI' : language === 'hi' ? '🇳🇵 NE' : '🇺🇸 EN'}
-                  </Text>
-                </Pressable>
-
                 <ThemeToggle />
 
                 {/* Profile Avatar */}
@@ -169,6 +221,9 @@ export default function HomeScreen() {
               monthlyBudget={monthlyBudget}
               preferredCurrency={preferredCurrency}
               formattedDate={formattedDate}
+              fullMonthName={fullMonthName}
+              todayTotal={todayTotal}
+              prevMonthTotal={prevMonthTotal}
             />
 
             {/* 3. STOCK-STYLE FINANCIAL TREND WAVE GRAPH (1D / 7D / 4W / 6M / 1Y) */}
@@ -183,35 +238,15 @@ export default function HomeScreen() {
               targetCurrency={preferredCurrency}
             />
 
-            {/* 5. RECENT TRANSACTIONS HEADER */}
+            {/* 5. RECENT ACTIVITY HEADER */}
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <ReceiptText size={18} color={theme.colors.primary} />
-                <Text variant="h3" style={{ fontWeight: '800' }}>
-                  {t('home_recent_activity') || 'Recent Activity'}
-                </Text>
-                <View
-                  style={{
-                    paddingHorizontal: 8,
-                    paddingVertical: 2,
-                    borderRadius: theme.radius.full,
-                    backgroundColor: theme.colors.surfaceElevated,
-                    borderWidth: 1,
-                    borderColor: theme.colors.border,
-                  }}
-                >
-                  <Text variant="caption" style={{ fontWeight: '700', fontSize: 11, color: theme.colors.primary }}>
-                    {expenses.items.length}
-                  </Text>
-                </View>
-              </View>
-
+              <Text variant="h3" style={{ fontWeight: '800' }}>{t('home_recent_activity') || 'Recent Activity'}</Text>
               <Link href="/history" asChild>
                 <Pressable hitSlop={8} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                   <Text variant="caption" style={{ color: theme.colors.primary, fontWeight: '700' }}>
-                    {t('home_view_all') || 'View All'}
+                    {t('home_view_all') || 'View all'} ({expenses.items.length})
                   </Text>
-                  <ArrowRight size={13} color={theme.colors.primary} />
+                  <ArrowRight size={14} color={theme.colors.primary} />
                 </Pressable>
               </Link>
             </View>
@@ -258,8 +293,15 @@ export default function HomeScreen() {
       {/* Profile quick drawer modal */}
       <ProfileQuickCard visible={profileCardOpen} onClose={() => setProfileCardOpen(false)} />
 
-      {/* Floating + Add Expense Button */}
-      <View style={{ position: 'absolute', bottom: 86, right: 20 }}>
+      {/* Floating + Add Expense Button with subtle micro-drift */}
+      <Animated.View
+        style={{
+          position: 'absolute',
+          bottom: 86,
+          right: 20,
+          transform: [{ translateY: floatY }, { translateX: floatX }],
+        }}
+      >
         <Link href="/expense/add" asChild>
           <PressableScale
             activeScale={0.85}
@@ -280,7 +322,7 @@ export default function HomeScreen() {
             <Plus size={28} color="#FFFFFF" strokeWidth={2.5} />
           </PressableScale>
         </Link>
-      </View>
+      </Animated.View>
     </View>
   );
 }
