@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Pressable, View } from 'react-native';
 import { Link } from 'expo-router';
 import {
@@ -70,6 +70,12 @@ export function BudgetLimitHeroCard({
     { month: 'long' }
   );
 
+  // Calculate unmasked text length to establish stable minimum width
+  const unmaskedLength = useMemo(() => {
+    const unmaskedStr = formatMoney(monthTotal, preferredCurrency, false);
+    return Math.max(140, unmaskedStr.length * 15.5);
+  }, [monthTotal, preferredCurrency]);
+
   return (
     <Card
       style={{
@@ -90,17 +96,17 @@ export function BudgetLimitHeroCard({
         elevation: 3,
       }}
     >
-      {/* ── 1. HEADER: [ 💳 TOTAL SPENT IN <MONTH> ] ... [ ⚙️ Settings ] ── */}
+      {/* ── 1. HEADER: [ 💳    TOTAL SPENT IN <MONTH> ] ... [ ⚙️ Settings ] ── */}
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <CreditCard size={15} color={theme.colors.primary} />
+          <CreditCard size={15} color={theme.isDark ? '#14c181' : '#064E3B'} />
           <Text
             variant="caption"
             style={{
-              color: theme.colors.primary,
+              color: theme.isDark ? '#34D399' : '#064E3B',
               textTransform: 'uppercase',
               letterSpacing: 0.8,
-              fontWeight: '800',
+              fontWeight: '600',
               fontSize: 11,
             }}
           >
@@ -122,19 +128,22 @@ export function BudgetLimitHeroCard({
       <View style={{ gap: 2 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <Text
-              variant="h1"
-              style={{
-                fontSize: 28,
-                lineHeight: 34,
-                fontWeight: '900',
-                fontVariant: ['tabular-nums'],
-                color: theme.colors.text,
-                letterSpacing: -0.5,
-              }}
-            >
-              {formatMoney(monthTotal, preferredCurrency)}
-            </Text>
+            <View style={{ minWidth: unmaskedLength, justifyContent: 'center' }}>
+              <Text
+                variant="h1"
+                numberOfLines={1}
+                style={{
+                  fontSize: 28,
+                  lineHeight: 34,
+                  fontWeight: '900',
+                  fontVariant: ['tabular-nums'],
+                  color: theme.colors.text,
+                  letterSpacing: -0.5,
+                }}
+              >
+                {formatMoney(monthTotal, preferredCurrency)}
+              </Text>
+            </View>
             <PrivacyEyeButton />
           </View>
 

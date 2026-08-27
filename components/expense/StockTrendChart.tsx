@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Dimensions, Pressable, View } from 'react-native';
+import { Pressable, useWindowDimensions, View } from 'react-native';
 import Svg, { Circle, Defs, Line, LinearGradient, Path, Rect, Stop, Text as SvgText } from 'react-native-svg';
 import { ArrowDownRight, ArrowUpRight, TrendingUp } from 'lucide-react-native';
 import { Card } from '@/components/ui/Card';
@@ -35,7 +35,8 @@ export function StockTrendChart({
   const theme = useTheme();
   const { t, language } = useLanguage();
   const { convert } = useExchangeRates();
-  const { isPrivacyMode } = usePrivacy();
+  usePrivacy();
+  const { width } = useWindowDimensions();
   const [filter, setFilter] = useState<TimeFilter>('daily');
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -59,8 +60,7 @@ export function StockTrendChart({
     };
   }, []);
 
-  const screenWidth = Dimensions.get('window').width;
-  const chartWidth = Math.max(screenWidth - 64, 280);
+  const chartWidth = Math.max(Math.min(width - 64, 720), 280);
   const chartHeight = 180;
   const chartPadLeft = 6;
   const chartPadRight = 6;

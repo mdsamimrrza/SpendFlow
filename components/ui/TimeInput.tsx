@@ -18,7 +18,7 @@ interface TimeInputProps {
   error?: string;
 }
 
-export function autoFormatTimeDigits(rawText: string, prevText = ''): string {
+function autoFormatTimeDigits(rawText: string, prevText = ''): string {
   const isDeleting = rawText.length < prevText.length;
 
   if (isDeleting) {

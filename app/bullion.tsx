@@ -1,10 +1,10 @@
 import React, { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  Dimensions,
   Pressable,
   ScrollView,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -39,7 +39,8 @@ export default function BullionScreen() {
   const theme = useTheme();
   const router = useRouter();
   const { language, t } = useLanguage();
-  const { isPrivacyMode } = usePrivacy();
+  usePrivacy();
+  const { width } = useWindowDimensions();
 
   // Determine initial country based on language or profile default
   const defaultCountry: TargetCountryMarket = language === 'ne' ? 'NEPAL' : 'INDIA';
@@ -121,27 +122,21 @@ export default function BullionScreen() {
     return generateBullionHistoricalTrend(activeBenchmark.price, trendMonths, activeBenchmark.metal);
   }, [activeBenchmark.price, trendMonths, activeBenchmark.metal]);
 
-  const { minPrice, maxPrice, periodGainPct, endPrice } = useMemo(() => {
+  const { minPrice, maxPrice } = useMemo(() => {
     if (historyPoints.length === 0) {
-      return { minPrice: 0, maxPrice: 0, periodGainPct: 0, endPrice: 0 };
+      return { minPrice: 0, maxPrice: 0 };
     }
     const pricesList = historyPoints.map((p) => p.price);
     const min = Math.min(...pricesList);
     const max = Math.max(...pricesList);
-    const start = historyPoints[0].price;
-    const end = historyPoints[historyPoints.length - 1].price;
-    const gain = start > 0 ? ((end - start) / start) * 100 : 0;
     return {
       minPrice: min,
       maxPrice: max,
-      periodGainPct: Math.round(gain * 10) / 10,
-      endPrice: end,
     };
   }, [historyPoints]);
 
   // Chart Geometry
-  const screenWidth = Dimensions.get('window').width;
-  const chartWidth = Math.max(screenWidth - 64, 280);
+  const chartWidth = Math.max(Math.min(width - 64, 720), 280);
   const chartHeight = 190;
   const padLeft = 46;
   const padRight = 10;
@@ -210,16 +205,20 @@ export default function BullionScreen() {
     }
   }
 
-  // Format updated timestamp
+  // Format updated market session label
   const updatedReadable = useMemo(() => {
-    if (!rawRates?.updatedAt) return 'Live Spot Rates';
+    if (prices?.fixingLabel) {
+      const closedSuffix = prices.isMarketClosed ? ' · Closed Today' : '';
+      return `${prices.fixingLabel}${closedSuffix}`;
+    }
+    if (!rawRates?.updatedAt) return 'Official Market Benchmark';
     try {
       const d = new Date(rawRates.updatedAt);
-      return `Last updated ${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+      return `Market Rate · ${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`;
     } catch {
-      return 'Live Spot Rates';
+      return 'Official Market Benchmark';
     }
-  }, [rawRates?.updatedAt]);
+  }, [prices?.fixingLabel, prices?.isMarketClosed, rawRates?.updatedAt]);
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background }}>

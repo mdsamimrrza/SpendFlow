@@ -72,9 +72,11 @@ const styles = StyleSheet.create({
   base: {
     minHeight: 46,
     paddingHorizontal: 16,
+    maxWidth: '100%',
     alignItems: 'center',
     justifyContent: 'center',
     flexDirection: 'row',
+    flexShrink: 1,
     gap: 8,
   },
 });

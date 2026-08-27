@@ -1,3 +1,4 @@
+import '@/utils/polyfills';
 import 'react-native-url-polyfill/auto';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -30,8 +31,8 @@ function RootNavigator() {
   const segmentKey = segments.join('/');
   const isLoading = loading || onboardingDone === null;
 
-  // Ensure plenty of safe clearance from status bar / camera punch hole on mobile
-  const topPadding = Platform.OS === 'web' ? 0 : Math.max(insets.top, Platform.OS === 'android' ? 38 : 0);
+  // SafeAreaProvider already accounts for each device's status bar and cutout.
+  const topPadding = Platform.OS === 'web' ? 0 : insets.top;
 
   useEffect(() => {
     void deactivateKeepAwake().catch(() => {});

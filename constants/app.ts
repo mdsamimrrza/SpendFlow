@@ -3,7 +3,6 @@ import { PaymentMethod, PeriodKey, SortKey } from '@/types';
 export const PAGE_SIZE = 20;
 export const OFFLINE_QUEUE_KEY = 'spendflow_offline_queue';
 export const EXPENSE_CACHE_KEY = 'spendflow_expense_cache';
-export const PROFILE_CACHE_KEY = 'spendflow_profile_cache';
 
 export const CURRENCIES = ['NPR', 'USD', 'INR', 'EUR', 'GBP'] as const;
 export const PAYMENT_METHODS: PaymentMethod[] = ['Cash', 'Card', 'UPI', 'Other'];

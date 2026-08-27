@@ -1,4 +1,4 @@
-import React, { createContext, PropsWithChildren, useCallback, useContext, useEffect, useState } from 'react';
+import React, { createContext, PropsWithChildren, useCallback, useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 import { setGlobalPrivacyMode } from '@/utils/format';
@@ -50,8 +50,4 @@ export function PrivacyProvider({ children }: PropsWithChildren) {
       {children}
     </PrivacyContext.Provider>
   );
-}
-
-export function usePrivacy() {
-  return useContext(PrivacyContext);
 }

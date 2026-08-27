@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pressable, View } from 'react-native';
+import { Pressable, useWindowDimensions, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { AlertTriangle, CheckCircle2, PieChart, TrendingDown, TrendingUp } from 'lucide-react-native';
 import { Card } from '@/components/ui/Card';
@@ -24,6 +24,8 @@ export function BudgetAnalyticsCard({ expenses, targetCurrency }: BudgetAnalytic
   const { convert } = useExchangeRates();
   const { t } = useLanguage();
   const { isPrivacyMode } = usePrivacy();
+  const { width } = useWindowDimensions();
+  const isCompact = width < 390;
 
   const currency = targetCurrency ?? profile?.preferred_currency ?? 'NPR';
   const now = new Date();
@@ -86,7 +88,7 @@ export function BudgetAnalyticsCard({ expenses, targetCurrency }: BudgetAnalytic
       ) : (
         <View style={{ gap: theme.spacing.md }}>
           {/* Analysis Rows */}
-          <View style={{ flexDirection: 'row', gap: theme.spacing.md }}>
+          <View style={{ flexDirection: isCompact ? 'column' : 'row', gap: theme.spacing.md }}>
             {/* Daily Allowance */}
             <View style={{ flex: 1, backgroundColor: theme.colors.surfaceElevated, padding: theme.spacing.md, borderRadius: theme.radius.md, gap: 4 }}>
               <Text variant="caption" muted>

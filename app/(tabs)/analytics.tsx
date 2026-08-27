@@ -1,6 +1,7 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { Pressable, RefreshControl, ScrollView, View } from 'react-native';
+import { Modal, Pressable, RefreshControl, ScrollView, useWindowDimensions, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
+import * as Haptics from 'expo-haptics';
 import {
   Activity,
   ArrowDownRight,
@@ -19,6 +20,7 @@ import {
   TrendingDown,
   TrendingUp,
   Wallet,
+  X,
   Zap,
 } from 'lucide-react-native';
 import { BudgetAnalyticsCard } from '@/components/expense/BudgetAnalyticsCard';
@@ -44,6 +46,7 @@ import { Category, PeriodKey } from '@/types';
 import { filterExpensesByPeriod, formatMoney, sumExpenses } from '@/utils/format';
 
 type AnalyticsSectionTab = 'overview' | 'categories' | 'habits' | 'all';
+type KpiMetricKey = 'total_spent' | 'daily_velocity' | 'peak_expense' | 'average_ticket';
 
 export default function AnalyticsScreen() {
   const { profile, session } = useAuth();
@@ -51,10 +54,13 @@ export default function AnalyticsScreen() {
   const { isPrivacyMode } = usePrivacy();
   const theme = useTheme();
   const { rates, convert } = useExchangeRates();
+  const { width } = useWindowDimensions();
+  const isCompact = width < 390;
   const [period, setPeriod] = useState<PeriodKey>('month');
   const [activeTab, setActiveTab] = useState<AnalyticsSectionTab>('overview');
   const [categories, setCategories] = useState<Category[]>([]);
   const [categoryModalVisible, setCategoryModalVisible] = useState(false);
+  const [kpiModalMetric, setKpiModalMetric] = useState<KpiMetricKey | null>(null);
   const expenses = useExpenses(profile?.id ?? session?.user?.id);
 
   const loadCategories = useCallback(() => {
@@ -149,6 +155,11 @@ export default function AnalyticsScreen() {
   const showCategories = activeTab === 'categories' || activeTab === 'all';
   const showHabits = activeTab === 'habits' || activeTab === 'all';
 
+  function openKpiModal(metric: KpiMetricKey) {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+    setKpiModalMetric(metric);
+  }
+
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: theme.colors.background }}
@@ -219,12 +230,14 @@ export default function AnalyticsScreen() {
       </View>
 
       {/* ── 3. FOCUS SUB-TABS (Overview | Categories | Habits | All) ── */}
-      <View
-        style={{
-          flexDirection: 'row',
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={{
+          gap: 4,
+          padding: 4,
           backgroundColor: theme.colors.surfaceElevated,
           borderRadius: theme.radius.lg,
-          padding: 4,
           borderWidth: 1,
           borderColor: theme.colors.border,
         }}
@@ -237,11 +250,12 @@ export default function AnalyticsScreen() {
               key={tab.key}
               onPress={() => setActiveTab(tab.key)}
               style={{
-                flex: 1,
                 flexDirection: 'row',
                 alignItems: 'center',
                 justifyContent: 'center',
                 gap: 5,
+                minWidth: isCompact ? 112 : 0,
+                paddingHorizontal: 10,
                 paddingVertical: 8,
                 borderRadius: theme.radius.md,
                 backgroundColor: isActive ? (theme.isDark ? '#1E293B' : '#FFFFFF') : 'transparent',
@@ -267,7 +281,7 @@ export default function AnalyticsScreen() {
             </Pressable>
           );
         })}
-      </View>
+      </ScrollView>
 
       {/* ═══════════════════════════════════════════════
           SECTION 1: OVERVIEW & PERFORMANCE
@@ -283,108 +297,148 @@ export default function AnalyticsScreen() {
             </View>
           )}
 
-          {/* 4-Tile Executive KPI Cards */}
+          {/* 4-Tile Executive KPI Cards (Tapping Icon or Card opens calculation explainer) */}
           <View style={{ gap: 10 }}>
             {/* Row 1: Total Spent & Daily Burn Velocity */}
-            <View style={{ flexDirection: 'row', gap: 10 }}>
-              <Card
-                style={{
+            <View style={{ flexDirection: isCompact ? 'column' : 'row', gap: 10 }}>
+              {/* Card 1: Total Spent */}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="About Total Spent"
+                onPress={() => openKpiModal('total_spent')}
+                style={({ pressed }) => ({
                   flex: 1,
-                  padding: 14,
-                  gap: 4,
-                  backgroundColor: theme.isDark ? '#111827' : theme.colors.cardHighlight,
-                  borderWidth: 1.5,
-                  borderColor: theme.colors.primary,
-                }}
+                  opacity: pressed ? 0.85 : 1,
+                })}
               >
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <Text variant="caption" style={{ color: theme.colors.primary, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.6, fontSize: 10 }}>
-                    {t('analytics_total_spending') || 'Total Spent'}
+                <Card
+                  style={{
+                    padding: 14,
+                    gap: 4,
+                    backgroundColor: theme.isDark ? '#111827' : theme.colors.cardHighlight,
+                    borderWidth: 1.5,
+                    borderColor: theme.colors.primary,
+                  }}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <Text variant="caption" style={{ color: theme.colors.primary, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.6, fontSize: 10 }}>
+                      {t('analytics_total_spending') || 'Total Spent'}
+                    </Text>
+                    <Wallet size={16} color={theme.colors.primary} />
+                  </View>
+                  <Text variant="h2" style={{ fontSize: 20, fontWeight: '800', fontVariant: ['tabular-nums'] }}>
+                    {formatMoney(totalSpend, preferredCurrency)}
                   </Text>
-                  <Wallet size={15} color={theme.colors.primary} />
-                </View>
-                <Text variant="h2" style={{ fontSize: 20, fontWeight: '800', fontVariant: ['tabular-nums'] }}>
-                  {formatMoney(totalSpend, preferredCurrency)}
-                </Text>
-                <Text variant="caption" muted style={{ fontSize: 11 }}>
-                  {filteredItems.length} transactions
-                </Text>
-              </Card>
+                  <Text variant="caption" muted style={{ fontSize: 11 }}>
+                    {filteredItems.length} transactions
+                  </Text>
+                </Card>
+              </Pressable>
 
-              <Card
-                style={{
+              {/* Card 2: Daily Velocity */}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="About Daily Velocity"
+                onPress={() => openKpiModal('daily_velocity')}
+                style={({ pressed }) => ({
                   flex: 1,
-                  padding: 14,
-                  gap: 4,
-                  backgroundColor: theme.colors.surfaceElevated,
-                  borderWidth: 1,
-                  borderColor: theme.colors.border,
-                }}
+                  opacity: pressed ? 0.85 : 1,
+                })}
               >
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <Text variant="caption" muted style={{ fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.6, fontSize: 10 }}>
-                    Daily Velocity
+                <Card
+                  style={{
+                    padding: 14,
+                    gap: 4,
+                    backgroundColor: theme.colors.surfaceElevated,
+                    borderWidth: 1,
+                    borderColor: theme.colors.border,
+                  }}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <Text variant="caption" muted style={{ fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.6, fontSize: 10 }}>
+                      Daily Velocity
+                    </Text>
+                    <Gauge size={16} color={theme.colors.primary} />
+                  </View>
+                  <Text variant="h2" style={{ fontSize: 20, fontWeight: '800', fontVariant: ['tabular-nums'], color: theme.colors.text }}>
+                    {formatMoney(dailyVelocity, preferredCurrency)}
                   </Text>
-                  <Gauge size={15} color={theme.colors.primary} />
-                </View>
-                <Text variant="h2" style={{ fontSize: 20, fontWeight: '800', fontVariant: ['tabular-nums'], color: theme.colors.text }}>
-                  {formatMoney(dailyVelocity, preferredCurrency)}
-                </Text>
-                <Text variant="caption" muted style={{ fontSize: 11 }}>
-                  Burn rate / day
-                </Text>
-              </Card>
+                  <Text variant="caption" muted style={{ fontSize: 11 }}>
+                    Burn rate / day
+                  </Text>
+                </Card>
+              </Pressable>
             </View>
 
             {/* Row 2: Peak Single Expense & Average Ticket Size */}
-            <View style={{ flexDirection: 'row', gap: 10 }}>
-              <Card
-                style={{
+            <View style={{ flexDirection: isCompact ? 'column' : 'row', gap: 10 }}>
+              {/* Card 3: Peak Expense */}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="About Peak Expense"
+                onPress={() => openKpiModal('peak_expense')}
+                style={({ pressed }) => ({
                   flex: 1,
-                  padding: 14,
-                  gap: 4,
-                  backgroundColor: theme.colors.surfaceElevated,
-                  borderWidth: 1,
-                  borderColor: theme.colors.border,
-                }}
+                  opacity: pressed ? 0.85 : 1,
+                })}
               >
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <Text variant="caption" muted style={{ fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.6, fontSize: 10 }}>
-                    Peak Expense
+                <Card
+                  style={{
+                    padding: 14,
+                    gap: 4,
+                    backgroundColor: theme.colors.surfaceElevated,
+                    borderWidth: 1,
+                    borderColor: theme.colors.border,
+                  }}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <Text variant="caption" muted style={{ fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.6, fontSize: 10 }}>
+                      Peak Expense
+                    </Text>
+                    <Zap size={16} color="#F59E0B" />
+                  </View>
+                  <Text variant="h2" style={{ fontSize: 20, fontWeight: '800', fontVariant: ['tabular-nums'], color: theme.colors.text }}>
+                    {peakItem ? formatMoney(peakItem.amount, preferredCurrency) : '—'}
                   </Text>
-                  <Zap size={15} color="#F59E0B" />
-                </View>
-                <Text variant="h2" style={{ fontSize: 20, fontWeight: '800', fontVariant: ['tabular-nums'], color: theme.colors.text }}>
-                  {peakItem ? formatMoney(peakItem.amount, preferredCurrency) : '—'}
-                </Text>
-                <Text variant="caption" muted style={{ fontSize: 11 }} numberOfLines={1}>
-                  {peakItem ? `${peakItem.expense.categories?.icon || '💳'} ${peakItem.expense.description || peakItem.expense.categories?.name || 'Expense'}` : 'No purchases'}
-                </Text>
-              </Card>
+                  <Text variant="caption" muted style={{ fontSize: 11 }} numberOfLines={1}>
+                    {peakItem ? `${peakItem.expense.categories?.icon || '💳'} ${peakItem.expense.description || peakItem.expense.categories?.name || 'Expense'}` : 'No purchases'}
+                  </Text>
+                </Card>
+              </Pressable>
 
-              <Card
-                style={{
+              {/* Card 4: Average Ticket */}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="About Average Ticket"
+                onPress={() => openKpiModal('average_ticket')}
+                style={({ pressed }) => ({
                   flex: 1,
-                  padding: 14,
-                  gap: 4,
-                  backgroundColor: theme.colors.surfaceElevated,
-                  borderWidth: 1,
-                  borderColor: theme.colors.border,
-                }}
+                  opacity: pressed ? 0.85 : 1,
+                })}
               >
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <Text variant="caption" muted style={{ fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.6, fontSize: 10 }}>
-                    Average Ticket
+                <Card
+                  style={{
+                    padding: 14,
+                    gap: 4,
+                    backgroundColor: theme.colors.surfaceElevated,
+                    borderWidth: 1,
+                    borderColor: theme.colors.border,
+                  }}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <Text variant="caption" muted style={{ fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.6, fontSize: 10 }}>
+                      Average Ticket
+                    </Text>
+                    <Sparkles size={16} color="#38BDF8" />
+                  </View>
+                  <Text variant="h2" style={{ fontSize: 20, fontWeight: '800', fontVariant: ['tabular-nums'], color: theme.colors.text }}>
+                    {formatMoney(averageTicket, preferredCurrency)}
                   </Text>
-                  <Sparkles size={15} color="#38BDF8" />
-                </View>
-                <Text variant="h2" style={{ fontSize: 20, fontWeight: '800', fontVariant: ['tabular-nums'], color: theme.colors.text }}>
-                  {formatMoney(averageTicket, preferredCurrency)}
-                </Text>
-                <Text variant="caption" muted style={{ fontSize: 11 }}>
-                  Per transaction size
-                </Text>
-              </Card>
+                  <Text variant="caption" muted style={{ fontSize: 11 }}>
+                    Per transaction size
+                  </Text>
+                </Card>
+              </Pressable>
             </View>
           </View>
 
@@ -457,7 +511,13 @@ export default function AnalyticsScreen() {
                           ({pm.count} {pm.count === 1 ? 'tx' : 'txs'})
                         </Text>
                       </View>
-                      <Text variant="caption" style={{ fontWeight: '800', color: theme.colors.primary }}>
+                      <Text
+                        variant="caption"
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.72}
+                        style={{ flexShrink: 1, textAlign: 'right', fontWeight: '800', color: theme.colors.primary }}
+                      >
                         {formatMoney(pm.total, preferredCurrency)} ({pm.pct}%)
                       </Text>
                     </View>
@@ -495,9 +555,9 @@ export default function AnalyticsScreen() {
             </View>
           )}
 
-          {/* Day-of-Week Rhythm & Time-of-Day Chrono Patterns */}
+          {/* Day-of-Week Rhythm & Time-of-Day Chrono Patterns with Week-by-Week Navigation */}
           <FinancialInsights
-            expenses={filteredItems}
+            expenses={expenses.items}
             targetCurrency={preferredCurrency}
           />
 
@@ -515,6 +575,317 @@ export default function AnalyticsScreen() {
         onClose={() => setCategoryModalVisible(false)}
         onSaved={loadCategories}
       />
+
+      {/* ── KPI METRICS CALCULATION EXPLAINER MODAL ── */}
+      <Modal
+        visible={Boolean(kpiModalMetric)}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setKpiModalMetric(null)}
+      >
+        <Pressable
+          onPress={() => setKpiModalMetric(null)}
+          style={{
+            flex: 1,
+            backgroundColor: 'rgba(0,0,0,0.72)',
+            justifyContent: 'center',
+            alignItems: 'center',
+            padding: 20,
+          }}
+        >
+          <Pressable
+            onPress={(e) => e.stopPropagation()}
+            style={{
+              width: '100%',
+              maxWidth: 420,
+              backgroundColor: theme.colors.surface,
+              borderRadius: 24,
+              padding: 22,
+              gap: 16,
+              borderWidth: 1.2,
+              borderColor: theme.colors.border,
+              shadowColor: '#000000',
+              shadowOffset: { width: 0, height: 10 },
+              shadowOpacity: 0.35,
+              shadowRadius: 20,
+              elevation: 10,
+            }}
+          >
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ gap: 16, paddingBottom: 2 }}
+            >
+            {/* Modal Header & Body: Total Spent */}
+            {kpiModalMetric === 'total_spent' && (
+              <>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                    <View
+                      style={{
+                        width: 40,
+                        height: 40,
+                        borderRadius: 20,
+                        backgroundColor: theme.isDark ? 'rgba(15, 159, 142, 0.15)' : '#DCE9E3',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      <Wallet size={20} color={theme.colors.primary} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text variant="h3" style={{ fontWeight: '800', fontSize: 16 }}>
+                        Total Spending
+                      </Text>
+                      <Text variant="caption" muted style={{ fontSize: 11.5 }}>
+                        Cumulative Outflow in Selected Period
+                      </Text>
+                    </View>
+                  </View>
+                  <Pressable
+                    onPress={() => setKpiModalMetric(null)}
+                    hitSlop={8}
+                    style={{
+                      width: 32,
+                      height: 32,
+                      borderRadius: 16,
+                      backgroundColor: theme.colors.surfaceElevated,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      borderWidth: 1,
+                      borderColor: theme.colors.border,
+                    }}
+                  >
+                    <X size={15} color={theme.colors.text} />
+                  </Pressable>
+                </View>
+
+                <View style={{ gap: 10 }}>
+                  <Text muted style={{ fontSize: 13, lineHeight: 18 }}>
+                    Total Spending is the aggregate sum of all valid expenses recorded in the currently selected period, converted into your preferred currency ({preferredCurrency}).
+                  </Text>
+
+                  <View style={{ padding: 12, borderRadius: 12, backgroundColor: theme.colors.surfaceElevated, borderWidth: 1, borderColor: theme.colors.border, gap: 4 }}>
+                    <Text style={{ fontWeight: '800', fontSize: 12, color: theme.colors.primary, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                      How it is calculated
+                    </Text>
+                    <Text variant="caption" style={{ fontSize: 12.5, color: theme.colors.text, lineHeight: 17 }}>
+                      Sum of all (Transaction Amount × Live Exchange Rate) for the active timeframe filter ({filteredItems.length} transactions = {formatMoney(totalSpend, preferredCurrency)}).
+                    </Text>
+                  </View>
+                </View>
+              </>
+            )}
+
+            {/* Modal Header & Body: Daily Velocity */}
+            {kpiModalMetric === 'daily_velocity' && (
+              <>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                    <View
+                      style={{
+                        width: 40,
+                        height: 40,
+                        borderRadius: 20,
+                        backgroundColor: theme.isDark ? 'rgba(15, 159, 142, 0.15)' : '#DCE9E3',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      <Gauge size={20} color={theme.colors.primary} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text variant="h3" style={{ fontWeight: '800', fontSize: 16 }}>
+                        Daily Velocity
+                      </Text>
+                      <Text variant="caption" muted style={{ fontSize: 11.5 }}>
+                        Average Daily Lifestyle Burn Rate
+                      </Text>
+                    </View>
+                  </View>
+                  <Pressable
+                    onPress={() => setKpiModalMetric(null)}
+                    hitSlop={8}
+                    style={{
+                      width: 32,
+                      height: 32,
+                      borderRadius: 16,
+                      backgroundColor: theme.colors.surfaceElevated,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      borderWidth: 1,
+                      borderColor: theme.colors.border,
+                    }}
+                  >
+                    <X size={15} color={theme.colors.text} />
+                  </Pressable>
+                </View>
+
+                <View style={{ gap: 10 }}>
+                  <Text muted style={{ fontSize: 13, lineHeight: 18 }}>
+                    Daily Velocity measures how much money leaves your wallet per calendar day on average. It represents your active burn-rate rhythm.
+                  </Text>
+
+                  <View style={{ padding: 12, borderRadius: 12, backgroundColor: theme.colors.surfaceElevated, borderWidth: 1, borderColor: theme.colors.border, gap: 4 }}>
+                    <Text style={{ fontWeight: '800', fontSize: 12, color: theme.colors.primary, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                      How it is calculated
+                    </Text>
+                    <Text variant="caption" style={{ fontSize: 12.5, color: theme.colors.text, lineHeight: 17 }}>
+                      Total Spend in Period ÷ Elapsed Days = {formatMoney(dailyVelocity, preferredCurrency)} / day.
+                    </Text>
+                  </View>
+
+                  <View style={{ padding: 10, borderRadius: 10, backgroundColor: theme.isDark ? 'rgba(56, 189, 248, 0.1)' : 'rgba(56, 189, 248, 0.08)' }}>
+                    <Text variant="caption" style={{ color: '#0284C7', fontSize: 12, lineHeight: 16 }}>
+                      💡 <Text style={{ fontWeight: '700' }}>Projected Month Total:</Text> At {formatMoney(dailyVelocity, preferredCurrency)}/day, your 30-day outflow projects to ~{formatMoney(dailyVelocity * 30, preferredCurrency)}.
+                    </Text>
+                  </View>
+                </View>
+              </>
+            )}
+
+            {/* Modal Header & Body: Peak Expense */}
+            {kpiModalMetric === 'peak_expense' && (
+              <>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                    <View
+                      style={{
+                        width: 40,
+                        height: 40,
+                        borderRadius: 20,
+                        backgroundColor: theme.isDark ? 'rgba(245, 158, 11, 0.15)' : '#FEF3C7',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      <Zap size={20} color="#F59E0B" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text variant="h3" style={{ fontWeight: '800', fontSize: 16 }}>
+                        Peak Expense
+                      </Text>
+                      <Text variant="caption" muted style={{ fontSize: 11.5 }}>
+                        Highest Single Transaction
+                      </Text>
+                    </View>
+                  </View>
+                  <Pressable
+                    onPress={() => setKpiModalMetric(null)}
+                    hitSlop={8}
+                    style={{
+                      width: 32,
+                      height: 32,
+                      borderRadius: 16,
+                      backgroundColor: theme.colors.surfaceElevated,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      borderWidth: 1,
+                      borderColor: theme.colors.border,
+                    }}
+                  >
+                    <X size={15} color={theme.colors.text} />
+                  </Pressable>
+                </View>
+
+                <View style={{ gap: 10 }}>
+                  <Text muted style={{ fontSize: 13, lineHeight: 18 }}>
+                    Peak Expense spotlights the single largest individual purchase recorded in this period to help you quickly identify heavy outlier outflows.
+                  </Text>
+
+                  <View style={{ padding: 12, borderRadius: 12, backgroundColor: theme.colors.surfaceElevated, borderWidth: 1, borderColor: theme.colors.border, gap: 4 }}>
+                    <Text style={{ fontWeight: '800', fontSize: 12, color: '#F59E0B', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                      Highest Single Outflow
+                    </Text>
+                    <Text variant="caption" style={{ fontSize: 12.5, color: theme.colors.text, lineHeight: 17 }}>
+                      {peakItem ? `${formatMoney(peakItem.amount, preferredCurrency)} (${peakItem.expense.description || peakItem.expense.categories?.name || 'Expense'})` : 'No transactions logged in this timeframe.'}
+                    </Text>
+                  </View>
+                </View>
+              </>
+            )}
+
+            {/* Modal Header & Body: Average Ticket */}
+            {kpiModalMetric === 'average_ticket' && (
+              <>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                    <View
+                      style={{
+                        width: 40,
+                        height: 40,
+                        borderRadius: 20,
+                        backgroundColor: theme.isDark ? 'rgba(56, 189, 248, 0.15)' : '#E0F2FE',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      <Sparkles size={20} color="#38BDF8" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text variant="h3" style={{ fontWeight: '800', fontSize: 16 }}>
+                        Average Ticket
+                      </Text>
+                      <Text variant="caption" muted style={{ fontSize: 11.5 }}>
+                        Average Size Per Transaction
+                      </Text>
+                    </View>
+                  </View>
+                  <Pressable
+                    onPress={() => setKpiModalMetric(null)}
+                    hitSlop={8}
+                    style={{
+                      width: 32,
+                      height: 32,
+                      borderRadius: 16,
+                      backgroundColor: theme.colors.surfaceElevated,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      borderWidth: 1,
+                      borderColor: theme.colors.border,
+                    }}
+                  >
+                    <X size={15} color={theme.colors.text} />
+                  </Pressable>
+                </View>
+
+                <View style={{ gap: 10 }}>
+                  <Text muted style={{ fontSize: 13, lineHeight: 18 }}>
+                    Average Ticket is the average amount spent each time you make a purchase (every time you pay via Cash, Card, or UPI).
+                  </Text>
+
+                  <View style={{ padding: 12, borderRadius: 12, backgroundColor: theme.colors.surfaceElevated, borderWidth: 1, borderColor: theme.colors.border, gap: 4 }}>
+                    <Text style={{ fontWeight: '800', fontSize: 12, color: '#38BDF8', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                      How it is calculated
+                    </Text>
+                    <Text variant="caption" style={{ fontSize: 12.5, color: theme.colors.text, lineHeight: 17 }}>
+                      Total Spend ({formatMoney(totalSpend, preferredCurrency)}) ÷ Number of Transactions ({filteredItems.length}) = {formatMoney(averageTicket, preferredCurrency)} / purchase.
+                    </Text>
+                  </View>
+                </View>
+              </>
+            )}
+
+            {/* Dismiss Button */}
+            <Pressable
+              onPress={() => setKpiModalMetric(null)}
+              style={{
+                width: '100%',
+                paddingVertical: 12,
+                borderRadius: 14,
+                backgroundColor: theme.colors.primary,
+                alignItems: 'center',
+                justifyContent: 'center',
+                marginTop: 2,
+              }}
+            >
+              <Text style={{ fontWeight: '800', color: '#FFFFFF', fontSize: 14 }}>
+                Got It
+              </Text>
+            </Pressable>
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </ScrollView>
   );
 }

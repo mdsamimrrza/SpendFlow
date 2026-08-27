@@ -1,5 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Easing, Image, StyleSheet, useColorScheme, View } from 'react-native';
+import {
+  Animated,
+  Easing,
+  Platform,
+  StyleSheet,
+  useColorScheme,
+  View,
+} from 'react-native';
+import Svg, { Path } from 'react-native-svg';
 import { useLanguage } from '@/hooks/useLanguage';
 import { useTheme } from '@/hooks/useTheme';
 import { Text } from './Text';
@@ -9,15 +17,10 @@ interface AnimatedSplashScreenProps {
   onFinish?: () => void;
 }
 
-/**
- * STYLE 6 (THEME-ADAPTIVE): Diamond Cyber Matrix + Dynamic Letter-Tracking + Cascading Punchline
- * Dynamically adapts color palette to Light Mode vs Dark Mode based on system / user preference.
- */
 export function AnimatedSplashScreen({ visible, onFinish }: AnimatedSplashScreenProps) {
   const { t } = useLanguage();
   const systemScheme = useColorScheme();
-  
-  // Try using useTheme if available, fallback gracefully to systemScheme
+
   let isDark = systemScheme === 'dark';
   try {
     const themeContext = useTheme();
@@ -25,11 +28,10 @@ export function AnimatedSplashScreen({ visible, onFinish }: AnimatedSplashScreen
       isDark = themeContext.isDark;
     }
   } catch {
-    // Fallback to system colorScheme if mounted outside ThemeProvider
     isDark = systemScheme === 'dark';
   }
 
-  const fullPunchline = t('splash_punchline');
+  const fullPunchline = t('splash_punchline') || 'See Where Your Money Flows';
   const words = useMemo(() => fullPunchline.split(' ').filter(Boolean), [fullPunchline]);
 
   const [hidden, setHidden] = useState(false);
@@ -37,65 +39,55 @@ export function AnimatedSplashScreen({ visible, onFinish }: AnimatedSplashScreen
 
   const fadeAnim = useRef(new Animated.Value(1)).current;
 
-  // Diamond Frame & Outer Orbit Ring
-  const frameRotate = useRef(new Animated.Value(45)).current;
-  const frameScale = useRef(new Animated.Value(0.2)).current;
-  const frameOpacity = useRef(new Animated.Value(0)).current;
+  // Gold Seal Ring & Orbit Animations
+  const sealScale = useRef(new Animated.Value(0.3)).current;
+  const sealOpacity = useRef(new Animated.Value(0)).current;
   const outerRingRotate = useRef(new Animated.Value(0)).current;
-
-  // Icon Pop & Flare Sweep
-  const iconScale = useRef(new Animated.Value(0.4)).current;
-  const iconOpacity = useRef(new Animated.Value(0)).current;
-  const flareTranslateX = useRef(new Animated.Value(-150)).current;
   const haloGlow = useRef(new Animated.Value(0.2)).current;
+  const flareTranslateX = useRef(new Animated.Value(-160)).current;
 
-  // Title Letter-Spacing Tracking
+  // Title Letter-Spacing & Fade
   const titleOpacity = useRef(new Animated.Value(0)).current;
-  const titleTranslateY = useRef(new Animated.Value(18)).current;
-  const titleLetterSpacing = useRef(new Animated.Value(6)).current;
+  const titleTranslateY = useRef(new Animated.Value(20)).current;
+  const titleLetterSpacing = useRef(new Animated.Value(5)).current;
 
-  // Punchline Badge
+  // Punchline Badge & Staggered Word Wave
   const badgeOpacity = useRef(new Animated.Value(0)).current;
-  const badgeScale = useRef(new Animated.Value(0.85)).current;
-  const sparklePulse = useRef(new Animated.Value(0.2)).current;
+  const badgeScale = useRef(new Animated.Value(0.88)).current;
+  const sparklePulse = useRef(new Animated.Value(0.3)).current;
 
-  // Individual Animated values for each word in the punchline
   const wordAnims = useRef(
     words.map(() => ({
       opacity: new Animated.Value(0),
-      translateY: new Animated.Value(12),
-      scale: new Animated.Value(0.65),
+      translateY: new Animated.Value(14),
+      scale: new Animated.Value(0.7),
     })),
   ).current;
 
   useEffect(() => {
-    // 1. Diamond Frame Unfurl & Outer Ring Counter-Rotation
+    // 1. Gold Seal Medallion Spring Pop & Halo Radiance
     Animated.parallel([
-      Animated.timing(frameOpacity, { toValue: 1, duration: 550, useNativeDriver: true }),
-      Animated.spring(frameScale, { toValue: 1, friction: 6.5, tension: 40, useNativeDriver: true }),
-      Animated.spring(frameRotate, { toValue: 0, friction: 6.5, tension: 40, useNativeDriver: true }),
-
-      Animated.timing(iconOpacity, { toValue: 1, duration: 500, delay: 170, useNativeDriver: true }),
-      Animated.spring(iconScale, { toValue: 1, friction: 6.5, tension: 50, delay: 170, useNativeDriver: true }),
-      Animated.timing(haloGlow, { toValue: 0.85, duration: 1000, useNativeDriver: true }),
+      Animated.timing(sealOpacity, { toValue: 1, duration: 600, useNativeDriver: true }),
+      Animated.spring(sealScale, { toValue: 1, friction: 6, tension: 45, useNativeDriver: true }),
+      Animated.timing(haloGlow, { toValue: 0.9, duration: 1100, useNativeDriver: true }),
     ]).start();
 
-    // 2. Counter-rotating outer ring loop
+    // 2. Continuous rotating celestial orbit ring
     Animated.loop(
       Animated.timing(outerRingRotate, {
         toValue: 1,
-        duration: 12000,
+        duration: 14000,
         easing: Easing.linear,
         useNativeDriver: true,
       }),
     ).start();
 
-    // 3. Diagonal Flare Sweep across Icon
+    // 3. Shimmer flare sweep across the golden coin
     Animated.sequence([
-      Animated.delay(500),
+      Animated.delay(450),
       Animated.timing(flareTranslateX, {
-        toValue: 160,
-        duration: 700,
+        toValue: 180,
+        duration: 750,
         easing: Easing.inOut(Easing.quad),
         useNativeDriver: true,
       }),
@@ -103,18 +95,23 @@ export function AnimatedSplashScreen({ visible, onFinish }: AnimatedSplashScreen
 
     // 4. Title & Dynamic Letter-Tracking Expansion
     Animated.sequence([
-      Animated.delay(500),
+      Animated.delay(450),
       Animated.parallel([
         Animated.timing(titleOpacity, { toValue: 1, duration: 550, useNativeDriver: true }),
         Animated.spring(titleTranslateY, { toValue: 0, friction: 6.5, tension: 55, useNativeDriver: true }),
-        Animated.timing(titleLetterSpacing, { toValue: 1, duration: 700, easing: Easing.out(Easing.cubic), useNativeDriver: false }),
+        Animated.timing(titleLetterSpacing, {
+          toValue: 0.5,
+          duration: 750,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: false,
+        }),
       ]),
     ]).start();
 
     // 5. Punchline Capsule Pop & Cascading Word Wave
     const wordAnimations = wordAnims.map((anim) =>
       Animated.parallel([
-        Animated.timing(anim.opacity, { toValue: 1, duration: 330, useNativeDriver: true }),
+        Animated.timing(anim.opacity, { toValue: 1, duration: 320, useNativeDriver: true }),
         Animated.spring(anim.translateY, { toValue: 0, friction: 5.5, tension: 60, useNativeDriver: true }),
         Animated.spring(anim.scale, { toValue: 1, friction: 5.5, tension: 60, useNativeDriver: true }),
       ]),
@@ -126,19 +123,18 @@ export function AnimatedSplashScreen({ visible, onFinish }: AnimatedSplashScreen
         Animated.spring(badgeScale, { toValue: 1, friction: 6.5, tension: 55, useNativeDriver: true }),
       ]).start();
 
-      Animated.stagger(120, wordAnimations).start(() => {
-        // Hold completed presentation for clean, comfortable reading
+      Animated.stagger(110, wordAnimations).start(() => {
         setTimeout(() => {
           setCanDismiss(true);
-        }, 800);
+        }, 700);
       });
-    }, 700);
+    }, 650);
 
-    // Glowing corner brackets pulse loop
+    // Glowing sparkle pulse loop
     Animated.loop(
       Animated.sequence([
-        Animated.timing(sparklePulse, { toValue: 1, duration: 1000, useNativeDriver: true }),
-        Animated.timing(sparklePulse, { toValue: 0.25, duration: 1000, useNativeDriver: true }),
+        Animated.timing(sparklePulse, { toValue: 1, duration: 1100, useNativeDriver: true }),
+        Animated.timing(sparklePulse, { toValue: 0.3, duration: 1100, useNativeDriver: true }),
       ]),
     ).start();
 
@@ -147,13 +143,10 @@ export function AnimatedSplashScreen({ visible, onFinish }: AnimatedSplashScreen
     badgeOpacity,
     badgeScale,
     flareTranslateX,
-    frameOpacity,
-    frameRotate,
-    frameScale,
     haloGlow,
-    iconOpacity,
-    iconScale,
     outerRingRotate,
+    sealOpacity,
+    sealScale,
     sparklePulse,
     titleLetterSpacing,
     titleOpacity,
@@ -162,7 +155,6 @@ export function AnimatedSplashScreen({ visible, onFinish }: AnimatedSplashScreen
   ]);
 
   useEffect(() => {
-    // Exit fade out animation when initial loading finishes AND all punchline word animations completed
     if (!visible && canDismiss) {
       Animated.timing(fadeAnim, {
         toValue: 0,
@@ -180,30 +172,22 @@ export function AnimatedSplashScreen({ visible, onFinish }: AnimatedSplashScreen
     return null;
   }
 
-  const frameSpin = frameRotate.interpolate({
-    inputRange: [0, 45],
-    outputRange: ['0deg', '45deg'],
-  });
-
   const outerSpin = outerRingRotate.interpolate({
     inputRange: [0, 1],
     outputRange: ['0deg', '360deg'],
   });
 
   // Dynamic Theme Colors
-  const bgColor = isDark ? '#06090F' : '#F8FAFC';
-  const titleColor = isDark ? '#F8FAFC' : '#0F172A';
-  const haloColor = isDark ? '#6366F1' : '#A5B4FC';
-  const orbitRingColor = isDark ? 'rgba(129, 140, 248, 0.25)' : 'rgba(99, 102, 241, 0.2)';
-  const diamondBorderColor = isDark ? '#818CF8' : '#6366F1';
-  const diamondBgColor = isDark ? 'rgba(99, 102, 241, 0.1)' : 'rgba(99, 102, 241, 0.05)';
-  const bracketColor = isDark ? '#A5B4FC' : '#6366F1';
-  const iconBorderColor = isDark ? 'rgba(165, 180, 252, 0.55)' : 'rgba(99, 102, 241, 0.35)';
-  const iconBgColor = isDark ? '#1E1B4B' : '#EEF2FF';
-  const badgeBgColor = isDark ? 'rgba(99, 102, 241, 0.14)' : 'rgba(99, 102, 241, 0.08)';
-  const badgeBorderColor = isDark ? 'rgba(129, 140, 248, 0.35)' : 'rgba(99, 102, 241, 0.25)';
-  const wordColor = isDark ? '#E0E7FF' : '#334155';
-  const highlightWordColor = isDark ? '#818CF8' : '#4F46E5';
+  const goldColor = '#A8791F';
+  const bgColor = isDark ? '#0B0F19' : '#F2EFE9';
+  const sealBg = isDark ? '#141B26' : '#FAFAF8';
+  const titleColor = isDark ? '#FFFFFF' : '#111827';
+  const haloColor = isDark ? 'rgba(168, 121, 31, 0.25)' : 'rgba(168, 121, 31, 0.15)';
+  const orbitRingColor = isDark ? 'rgba(168, 121, 31, 0.4)' : 'rgba(168, 121, 31, 0.3)';
+  const badgeBgColor = isDark ? 'rgba(168, 121, 31, 0.15)' : 'rgba(168, 121, 31, 0.12)';
+  const badgeBorderColor = isDark ? 'rgba(168, 121, 31, 0.35)' : 'rgba(168, 121, 31, 0.25)';
+  const wordColor = isDark ? '#FFFFFF' : '#111827';
+  const highlightWordColor = goldColor;
 
   return (
     <Animated.View
@@ -217,9 +201,9 @@ export function AnimatedSplashScreen({ visible, onFinish }: AnimatedSplashScreen
       pointerEvents={visible ? 'auto' : 'none'}
     >
       <View style={styles.centerContent}>
-        {/* Geometric Diamond Frame Stage */}
+        {/* ── STAGE: GOLD SEAL EMBLEM + ORBIT + SHIMMER ── */}
         <View style={styles.stage}>
-          {/* Ambient Glowing Halo */}
+          {/* Radiant Ambient Glow Halo */}
           <Animated.View
             style={[
               styles.ambientHalo,
@@ -241,63 +225,103 @@ export function AnimatedSplashScreen({ visible, onFinish }: AnimatedSplashScreen
             ]}
           />
 
-          {/* Rotating Diamond Glow Frame */}
+          {/* 4 Golden Alignment Dots (North, East, South, West) */}
+          <Animated.View style={[styles.alignmentDot, { top: 0, backgroundColor: goldColor, opacity: sparklePulse }]} />
+          <Animated.View style={[styles.alignmentDot, { bottom: 0, backgroundColor: goldColor, opacity: sparklePulse }]} />
+          <Animated.View style={[styles.alignmentDot, { left: 10, backgroundColor: goldColor, opacity: sparklePulse }]} />
+          <Animated.View style={[styles.alignmentDot, { right: 10, backgroundColor: goldColor, opacity: sparklePulse }]} />
+
+          {/* Golden 'S' Coin Seal Medallion */}
           <Animated.View
             style={[
-              styles.diamondFrame,
+              styles.sealWrapper,
               {
-                borderColor: diamondBorderColor,
-                backgroundColor: diamondBgColor,
-                opacity: frameOpacity,
-                transform: [{ scale: frameScale }, { rotate: frameSpin }],
-              },
-            ]}
-          />
-
-          {/* 4 Floating Neon Sparkle Particles */}
-          <Animated.View style={[styles.sparkleDot, { top: 6, left: 24, backgroundColor: bracketColor, opacity: sparklePulse }]} />
-          <Animated.View style={[styles.sparkleDot, { top: 6, right: 24, backgroundColor: bracketColor, opacity: sparklePulse }]} />
-          <Animated.View style={[styles.sparkleDot, { bottom: 6, left: 24, backgroundColor: bracketColor, opacity: sparklePulse }]} />
-          <Animated.View style={[styles.sparkleDot, { bottom: 6, right: 24, backgroundColor: bracketColor, opacity: sparklePulse }]} />
-
-          {/* Corner Cyber Brackets */}
-          <Animated.View style={[styles.cornerBracket, styles.bracketTopLeft, { borderColor: bracketColor, opacity: sparklePulse }]} />
-          <Animated.View style={[styles.cornerBracket, styles.bracketTopRight, { borderColor: bracketColor, opacity: sparklePulse }]} />
-          <Animated.View style={[styles.cornerBracket, styles.bracketBottomLeft, { borderColor: bracketColor, opacity: sparklePulse }]} />
-          <Animated.View style={[styles.cornerBracket, styles.bracketBottomRight, { borderColor: bracketColor, opacity: sparklePulse }]} />
-
-          {/* Center App Icon with Light Flare Sweep */}
-          <Animated.View
-            style={[
-              styles.iconWrapper,
-              {
-                borderColor: iconBorderColor,
-                backgroundColor: iconBgColor,
-                opacity: iconOpacity,
-                transform: [{ scale: iconScale }],
+                opacity: sealOpacity,
+                transform: [{ scale: sealScale }],
               },
             ]}
           >
-            <Image
-              source={isDark ? require('../../assets/icon.png') : require('../../assets/icon-light.png')}
-              style={styles.logoImage}
-              resizeMode="cover"
-            />
+            {/* Outer Coin Circle */}
+            <View
+              style={{
+                width: 104,
+                height: 104,
+                borderRadius: 52,
+                borderWidth: 3.5,
+                borderColor: goldColor,
+                backgroundColor: sealBg,
+                alignItems: 'center',
+                justifyContent: 'center',
+                shadowColor: goldColor,
+                shadowOffset: { width: 0, height: 8 },
+                shadowOpacity: isDark ? 0.45 : 0.25,
+                shadowRadius: 16,
+                elevation: 12,
+                overflow: 'hidden',
+              }}
+            >
+              {/* Inner Concentric Ring */}
+              <View
+                style={{
+                  width: 86,
+                  height: 86,
+                  borderRadius: 43,
+                  borderWidth: 1.2,
+                  borderColor: goldColor,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 48,
+                    lineHeight: 58,
+                    fontWeight: '900',
+                    color: goldColor,
+                    fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',
+                    includeFontPadding: true,
+                    textAlignVertical: 'center',
+                  }}
+                >
+                  S
+                </Text>
+              </View>
 
-            {/* Shimmer Light Flare Beam */}
-            <Animated.View
-              style={[
-                styles.shimmerFlare,
-                {
-                  transform: [{ translateX: flareTranslateX }],
-                },
-              ]}
-            />
+              {/* Shimmer Light Flare Beam Sweep */}
+              <Animated.View
+                style={[
+                  styles.shimmerFlare,
+                  {
+                    transform: [{ translateX: flareTranslateX }],
+                  },
+                ]}
+              />
+            </View>
+
+            {/* Twin Curved Pedestal Arcs */}
+            <Svg width={112} height={24} viewBox="0 0 72 16" style={{ marginTop: 4 }}>
+              <Path
+                d="M 6 4 Q 36 14 66 4"
+                fill="none"
+                stroke={goldColor}
+                strokeWidth="2.5"
+                strokeLinecap="round"
+              />
+              <Path
+                d="M 16 11 Q 36 17 56 11"
+                fill="none"
+                stroke={goldColor}
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                opacity={0.7}
+              />
+            </Svg>
           </Animated.View>
         </View>
 
-        {/* Brand Title with Dynamic Letter-Tracking */}
+        {/* ── BRAND TITLE & PUNCHLINE STACK ── */}
         <View style={styles.textStack}>
+          {/* Animated Serif Title with Letter Tracking */}
           <Animated.View
             style={{
               opacity: titleOpacity,
@@ -310,10 +334,11 @@ export function AnimatedSplashScreen({ visible, onFinish }: AnimatedSplashScreen
                 {
                   color: titleColor,
                   letterSpacing: titleLetterSpacing,
+                  fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',
                 },
               ]}
             >
-              {t('splash_title')}
+              SpendFlow
             </Animated.Text>
           </Animated.View>
 
@@ -367,7 +392,7 @@ export function AnimatedSplashScreen({ visible, onFinish }: AnimatedSplashScreen
 
 const styles = StyleSheet.create({
   container: {
-    ...StyleSheet.absoluteFillObject,
+    ...(StyleSheet.absoluteFillObject as any),
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 9999,
@@ -375,10 +400,10 @@ const styles = StyleSheet.create({
   centerContent: {
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 22,
+    gap: 20,
   },
   stage: {
-    width: 190,
+    width: 210,
     height: 190,
     alignItems: 'center',
     justifyContent: 'center',
@@ -386,116 +411,64 @@ const styles = StyleSheet.create({
   },
   ambientHalo: {
     position: 'absolute',
-    width: 160,
-    height: 160,
-    borderRadius: 80,
-    shadowColor: '#818CF8',
+    width: 170,
+    height: 170,
+    borderRadius: 85,
+    shadowColor: '#A8791F',
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.95,
-    shadowRadius: 45,
+    shadowOpacity: 0.85,
+    shadowRadius: 38,
   },
   outerOrbitRing: {
     position: 'absolute',
-    width: 176,
-    height: 176,
-    borderRadius: 88,
-    borderWidth: 1.2,
+    width: 188,
+    height: 188,
+    borderRadius: 94,
+    borderWidth: 1.5,
     borderStyle: 'dashed',
   },
-  diamondFrame: {
+  alignmentDot: {
     position: 'absolute',
-    width: 144,
-    height: 144,
-    borderRadius: 26,
-    borderWidth: 1.8,
-    shadowColor: '#818CF8',
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    shadowColor: '#A8791F',
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.9,
-    shadowRadius: 24,
+    shadowOpacity: 0.8,
+    shadowRadius: 4,
   },
-  sparkleDot: {
-    position: 'absolute',
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    shadowColor: '#818CF8',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 1,
-    shadowRadius: 6,
-  },
-  cornerBracket: {
-    position: 'absolute',
-    width: 15,
-    height: 15,
-  },
-  bracketTopLeft: {
-    top: 8,
-    left: 8,
-    borderTopWidth: 2,
-    borderLeftWidth: 2,
-  },
-  bracketTopRight: {
-    top: 8,
-    right: 8,
-    borderTopWidth: 2,
-    borderRightWidth: 2,
-  },
-  bracketBottomLeft: {
-    bottom: 8,
-    left: 8,
-    borderBottomWidth: 2,
-    borderLeftWidth: 2,
-  },
-  bracketBottomRight: {
-    bottom: 8,
-    right: 8,
-    borderBottomWidth: 2,
-    borderRightWidth: 2,
-  },
-  iconWrapper: {
-    width: 116,
-    height: 116,
-    borderRadius: 28,
-    overflow: 'hidden',
-    shadowColor: '#6366F1',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.65,
-    shadowRadius: 24,
-    elevation: 18,
-    borderWidth: 1.5,
-    position: 'relative',
-  },
-  logoImage: {
-    width: '100%',
-    height: '100%',
+  sealWrapper: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'visible',
   },
   shimmerFlare: {
     position: 'absolute',
     top: 0,
     bottom: 0,
-    width: 45,
-    backgroundColor: 'rgba(255, 255, 255, 0.35)',
+    width: 40,
+    backgroundColor: 'rgba(255, 255, 255, 0.4)',
     transform: [{ skewX: '-25deg' }],
   },
   textStack: {
     alignItems: 'center',
-    gap: 8,
+    gap: 10,
   },
   brandTitle: {
-    fontSize: 36,
+    fontSize: 38,
     fontWeight: '900',
     textAlign: 'center',
   },
   punchlineBadge: {
     alignItems: 'center',
-    paddingHorizontal: 16,
+    paddingHorizontal: 18,
     paddingVertical: 8,
-    borderRadius: 22,
-    borderWidth: 1.2,
-    shadowColor: '#818CF8',
+    borderRadius: 20,
+    borderWidth: 1,
+    shadowColor: '#A8791F',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 10,
+    shadowOpacity: 0.18,
+    shadowRadius: 8,
   },
   wordsRow: {
     flexDirection: 'row',
@@ -505,8 +478,8 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   brandWord: {
-    fontSize: 14,
+    fontSize: 13.5,
     fontWeight: '700',
-    letterSpacing: 0.3,
+    letterSpacing: 0.2,
   },
 });

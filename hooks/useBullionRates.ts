@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
-import { BullionRates, computeBullionPrices, ComputedBullionPrices, fetchLiveBullionRates } from '@/services/bullion';
+import { BullionRates, computeBullionPrices, ComputedBullionPrices, fetchMarketFixedBullionRates } from '@/services/bullion';
 
 export function useBullionRates(targetCurrencyOverride?: string) {
   const { profile } = useAuth();
@@ -16,14 +16,14 @@ export function useBullionRates(targetCurrencyOverride?: string) {
     if (isManualRefresh) setLoading(true);
     setError(null);
     try {
-      const data = await fetchLiveBullionRates();
+      const data = await fetchMarketFixedBullionRates(currency, isManualRefresh);
       setRawRates(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not fetch bullion rates');
     } finally {
       if (isManualRefresh) setLoading(false);
     }
-  }, []);
+  }, [currency]);
 
   useEffect(() => {
     void loadBullion(false);

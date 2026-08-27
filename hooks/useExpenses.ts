@@ -1,8 +1,9 @@
 import NetInfo from '@react-native-community/netinfo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { listCategories } from '@/services/categories';
 import { createExpense, getCachedExpenses, listExpenses, softDeleteExpense, updateExpense } from '@/services/expenses';
-import { checkAndNotifyBudgetThreshold, notifyExpenseAdded, notifyLargeExpense } from '@/services/notifications';
+import { checkAndNotifyBudgetThreshold, checkAndNotifyCategoryBudgetThreshold, notifyExpenseAdded, notifyLargeExpense } from '@/services/notifications';
 import { EXPENSE_CACHE_KEY } from '@/constants/app';
 import { Expense, ExpenseFilters, ExpenseInput, SortKey } from '@/types';
 import { currentMonthRange, sumExpenses } from '@/utils/format';
@@ -11,13 +12,12 @@ import { enqueueOfflineOperation } from '@/utils/offlineQueue';
 type ExpenseChangeListener = () => void;
 const listeners = new Set<ExpenseChangeListener>();
 
-export function notifyExpensesChanged() {
+function notifyExpensesChanged() {
   listeners.forEach((listener) => listener());
 }
 
 async function getEffectiveMonthlyBudget(userId?: string): Promise<number> {
   try {
-    // 1. Check user profile cache
     const profileJson = await AsyncStorage.getItem('@spendflow_cached_profile');
     if (profileJson) {
       const parsed = JSON.parse(profileJson);
@@ -25,7 +25,6 @@ async function getEffectiveMonthlyBudget(userId?: string): Promise<number> {
         return Number(parsed.monthly_budget);
       }
     }
-    // 2. Check direct budget cache
     if (userId) {
       const directBudget = await AsyncStorage.getItem(`@spendflow_monthly_budget_${userId}`);
       if (directBudget && Number(directBudget) > 0) {
@@ -55,8 +54,27 @@ async function triggerExpenseNotifications(
     const monthTotal = sumExpenses(monthItems, currency);
     const monthlyBudget = await getEffectiveMonthlyBudget(userId);
 
+    // 1. Global Monthly Budget alerts
     if (monthlyBudget > 0) {
       void checkAndNotifyBudgetThreshold(monthTotal + amount, monthlyBudget, currency);
+    }
+
+    // 2. Category Budget alerts (Strictly 90% and 100% only)
+    if (userId && categoryId) {
+      const categories = await listCategories(userId);
+      const targetCat = categories.find((c) => c.id === categoryId);
+      if (targetCat && targetCat.budget_monthly && Number(targetCat.budget_monthly) > 0) {
+        const catMonthItems = monthItems.filter((item) => item.category_id === categoryId);
+        const catMonthTotal = sumExpenses(catMonthItems, currency);
+        void checkAndNotifyCategoryBudgetThreshold(
+          targetCat.id,
+          targetCat.name,
+          targetCat.icon,
+          catMonthTotal + amount,
+          Number(targetCat.budget_monthly),
+          currency,
+        );
+      }
     }
   } catch {
     // Ignore background notification check errors
@@ -80,21 +98,16 @@ export function useExpenses(userId?: string, filters?: ExpenseFilters, sort: Sor
         setLoading(false);
         return;
       }
-      if (loadingPage.current) return;
       loadingPage.current = true;
       setError(null);
-      if (pageToLoad === 0) {
-        setItems((current) => {
-          if (!current.length) setLoading(true);
-          return current;
-        });
-      } else {
-        setLoadingMore(true);
-      }
+      if (pageToLoad === 0 && !replace) setRefreshing(true);
+      else if (pageToLoad > 0) setLoadingMore(true);
+      else setLoading(true);
+
       try {
-        const result = await listExpenses(userId, pageToLoad, filters, sort);
-        setItems((current) => (replace ? result.items : [...current, ...result.items]));
-        setHasMore(result.hasMore);
+        const pageData = await listExpenses(userId, pageToLoad, filters, sort);
+        setItems((current) => (replace || pageToLoad === 0 ? pageData.items : [...current, ...pageData.items]));
+        setHasMore(pageData.hasMore);
         setPage(pageToLoad);
       } catch (err) {
         const cached = await getCachedExpenses();
@@ -139,7 +152,8 @@ export function useExpenses(userId?: string, filters?: ExpenseFilters, sort: Sor
     if (!userId) throw new Error('No user found.');
     const state = await NetInfo.fetch();
     const online = Boolean(state.isConnected && state.isInternetReachable !== false);
-    if (!online) {
+
+    const saveLocally = async () => {
       await enqueueOfflineOperation({ type: id ? 'update' : 'create', payload: { ...input, id } });
       const localId = id || `offline-${Date.now()}`;
       const localExpense: Expense = {
@@ -170,12 +184,22 @@ export function useExpenses(userId?: string, filters?: ExpenseFilters, sort: Sor
 
       notifyExpensesChanged();
       void triggerExpenseNotifications(userId, Number(input.amount), input.category_id, input.description, input.currency, items);
+    };
+
+    if (!online) {
+      await saveLocally();
       return;
     }
-    if (id) await updateExpense(id, input);
-    else await createExpense(userId, input);
-    notifyExpensesChanged();
-    void triggerExpenseNotifications(userId, Number(input.amount), input.category_id, input.description, input.currency, items);
+
+    try {
+      if (id) await updateExpense(id, input);
+      else await createExpense(userId, input);
+      notifyExpensesChanged();
+      void triggerExpenseNotifications(userId, Number(input.amount), input.category_id, input.description, input.currency, items);
+    } catch (err) {
+      // Cloud insert failed -> fallback seamlessly to local storage
+      await saveLocally();
+    }
   };
 
   const remove = useCallback(async (id: string) => {

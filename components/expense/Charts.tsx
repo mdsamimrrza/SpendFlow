@@ -149,7 +149,13 @@ function ExpenseDetailModal({
                 <Text variant="caption" muted style={{ fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.8, fontSize: 10 }}>
                   {t('expense_amount')}
                 </Text>
-                <Text variant="h1" style={{ fontSize: 32, fontWeight: '800', color: theme.colors.primary }}>
+                  <Text
+                    variant="h1"
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.72}
+                    style={{ fontSize: 32, fontWeight: '800', color: theme.colors.primary, maxWidth: '100%' }}
+                  >
                   {formatMoney(convertedAmount, currency)}
                 </Text>
                 {isDifferentCurrency ? (
@@ -167,7 +173,7 @@ function ExpenseDetailModal({
                     <Tag size={15} color={theme.colors.textMuted} />
                     <Text variant="caption" muted>{t('expense_category')}</Text>
                   </View>
-                  <Text variant="label" style={{ fontWeight: '700' }}>
+                  <Text variant="label" style={{ flexShrink: 1, textAlign: 'right', fontWeight: '700' }}>
                     {expense.categories?.icon} {expense.categories?.name || 'Uncategorized'}
                   </Text>
                 </View>
@@ -180,7 +186,7 @@ function ExpenseDetailModal({
                     <Calendar size={15} color={theme.colors.textMuted} />
                     <Text variant="caption" muted>{t('expense_date')}</Text>
                   </View>
-                  <Text variant="label" style={{ fontWeight: '600' }}>
+                  <Text variant="label" style={{ flexShrink: 1, textAlign: 'right', fontWeight: '600' }}>
                     {expense.date} {expense.time ? `· 🕒 ${formatTime12(expense.time)}` : ''}
                   </Text>
                 </View>
@@ -193,7 +199,7 @@ function ExpenseDetailModal({
                     <CreditCard size={15} color={theme.colors.textMuted} />
                     <Text variant="caption" muted>{t('expense_payment_method')}</Text>
                   </View>
-                  <Text variant="label" style={{ fontWeight: '600', textTransform: 'capitalize' }}>
+                  <Text variant="label" style={{ flexShrink: 1, textAlign: 'right', fontWeight: '600', textTransform: 'capitalize' }}>
                     {expense.payment_method}
                   </Text>
                 </View>
@@ -578,7 +584,7 @@ export function CategoryBreakdown({ expenses, targetCurrency }: { expenses: Expe
 }
 
 /* ── 📈 7-DAY INTERACTIVE SPENDING TREND ── */
-export function TrendBars({ expenses, targetCurrency }: { expenses: Expense[]; targetCurrency?: string }) {
+function TrendBars({ expenses, targetCurrency }: { expenses: Expense[]; targetCurrency?: string }) {
   const theme = useTheme();
   const { profile } = useAuth();
   const { rates, convert } = useExchangeRates();
@@ -910,7 +916,13 @@ export function TrendBars({ expenses, targetCurrency }: { expenses: Expense[]; t
                     </View>
 
                     <View style={{ alignItems: 'flex-end', gap: 2 }}>
-                      <Text variant="label" style={{ fontWeight: '800', color: theme.colors.text, fontSize: 15 }}>
+                      <Text
+                        variant="label"
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.72}
+                        style={{ fontWeight: '800', color: theme.colors.text, fontSize: 15 }}
+                      >
                         {formatMoney(converted, currency)}
                       </Text>
                       {isDifferent ? (

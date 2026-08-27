@@ -12,6 +12,7 @@ const isExpoGo = Constants.executionEnvironment === 'storeClient';
 if (!isExpoGo) {
   Notifications.setNotificationHandler({
     handleNotification: async () => ({
+      shouldShowAlert: true,
       shouldShowBanner: true,
       shouldShowList: true,
       shouldPlaySound: true,
@@ -21,7 +22,7 @@ if (!isExpoGo) {
 }
 
 // 1. Request Notification Permissions & Initialize Android Channel
-export async function requestNotificationPermissions(): Promise<boolean> {
+async function requestNotificationPermissions(): Promise<boolean> {
   if (Platform.OS === 'web') return false;
 
   try {
@@ -83,24 +84,6 @@ export async function resetBudgetAlertHistory(monthKey?: string): Promise<void> 
   }
 }
 
-export async function sendTestBudgetAlert(currency = 'NPR'): Promise<boolean> {
-  const hasPermission = await requestNotificationPermissions();
-  if (!hasPermission) return false;
-
-  await Notifications.scheduleNotificationAsync({
-    content: {
-      title: '🟡 50% Budget Halfway Mark',
-      body: `You have used 50% (${formatMoney(5000, currency)}) of your ${formatMoney(10000, currency)} budget. ${formatMoney(5000, currency)} remaining.`,
-      data: { type: 'budget_threshold', percent: 50 },
-      sound: true,
-      // @ts-expect-error channelId is supported on Android
-      channelId: 'default',
-    },
-    trigger: null, // Send immediately
-  });
-  return true;
-}
-
 export async function checkAndNotifyBudgetThreshold(
   monthTotal: number,
   monthlyBudget: number,
@@ -156,6 +139,80 @@ export async function checkAndNotifyBudgetThreshold(
         title: currentBracket.title,
         body: bodyMsg,
         data: { type: 'budget_threshold', percent: currentBracket.percent },
+        sound: true,
+        // @ts-expect-error channelId is supported on Android
+        channelId: 'default',
+      },
+      trigger: null, // Send immediately
+    });
+  }
+}
+
+// Category Budget Thresholds (Strictly 90% and 100% only)
+const CATEGORY_THRESHOLDS = [
+  { percent: 90, emoji: '⚠️' },
+  { percent: 100, emoji: '💥' },
+] as const;
+
+export async function checkAndNotifyCategoryBudgetThreshold(
+  categoryId: string,
+  categoryName: string,
+  categoryIcon = '📌',
+  monthCategoryTotal: number,
+  categoryMonthlyBudget: number,
+  currency = 'NPR',
+): Promise<void> {
+  if (Platform.OS === 'web' || !categoryMonthlyBudget || categoryMonthlyBudget <= 0 || !categoryId) return;
+
+  const currentMonthKey = new Date().toISOString().slice(0, 7); // e.g. "2026-08"
+  const pct = Math.floor((monthCategoryTotal / categoryMonthlyBudget) * 100);
+
+  // Check only 90% and 100% thresholds
+  const currentBracket = [...CATEGORY_THRESHOLDS].reverse().find((item) => pct >= item.percent);
+  if (!currentBracket) return;
+
+  const targetStorageKey = `@spendflow_cat_alert_sent_${currentMonthKey}_${categoryId}_${currentBracket.percent}`;
+  const memoryKey = `cat_${currentMonthKey}_${categoryId}_${currentBracket.percent}`;
+
+  if (notifiedThresholdsMemory.has(memoryKey)) {
+    return;
+  }
+
+  const alreadySent = await AsyncStorage.getItem(targetStorageKey).catch(() => null);
+  if (alreadySent) {
+    notifiedThresholdsMemory.add(memoryKey);
+    return;
+  }
+
+  // Mark this bracket and lower category brackets as sent
+  for (const item of CATEGORY_THRESHOLDS) {
+    if (item.percent <= currentBracket.percent) {
+      notifiedThresholdsMemory.add(`cat_${currentMonthKey}_${categoryId}_${item.percent}`);
+      const storageKey = `@spendflow_cat_alert_sent_${currentMonthKey}_${categoryId}_${item.percent}`;
+      await AsyncStorage.setItem(storageKey, 'true').catch(() => {});
+    }
+  }
+
+  const hasPermission = await requestNotificationPermissions();
+  if (hasPermission) {
+    const cleanName = cleanCategoryLabel(categoryName) || 'Category';
+    const isExceeded = currentBracket.percent >= 100;
+    const title = `${currentBracket.emoji} ${cleanName}: ${isExceeded ? 'Budget Exceeded!' : '90% Budget Alert'}`;
+    let bodyMsg = '';
+
+    if (isExceeded) {
+      const excess = monthCategoryTotal - categoryMonthlyBudget;
+      bodyMsg = `${categoryIcon} You have spent ${formatMoney(monthCategoryTotal, currency)} of your ${formatMoney(categoryMonthlyBudget, currency)} ${cleanName} limit (Over by ${formatMoney(excess, currency)}).`;
+    } else {
+      const remaining = categoryMonthlyBudget - monthCategoryTotal;
+      bodyMsg = `${categoryIcon} You have used ${pct}% (${formatMoney(monthCategoryTotal, currency)}) of your ${formatMoney(categoryMonthlyBudget, currency)} ${cleanName} budget. ${formatMoney(remaining, currency)} remaining.`;
+    }
+
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title,
+        body: bodyMsg,
+        data: { type: 'category_budget_threshold', categoryId, percent: currentBracket.percent },
         sound: true,
         // @ts-expect-error channelId is supported on Android
         channelId: 'default',

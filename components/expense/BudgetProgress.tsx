@@ -388,8 +388,8 @@ export function BudgetProgress({
                               </Text>
                             </View>
 
-                            <Text style={{ fontSize: 12, fontWeight: '800', color: theme.colors.danger }}>
-                              -{formatMoney(Number(item.amount), item.currency || currency)}
+                            <Text style={{ fontSize: 12, fontWeight: '800', color: theme.colors.text }}>
+                              {formatMoney(Number(item.amount), item.currency || currency)}
                             </Text>
                           </View>
                         ))}

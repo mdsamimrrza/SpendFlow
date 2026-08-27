@@ -63,60 +63,6 @@ export async function softDeleteExpense(id: string) {
   if (error) throw error;
 }
 
-export async function restoreExpense(id: string) {
-  const { error } = await supabase.from('expenses').update({ deleted_at: null }).eq('id', id);
-  if (error) throw error;
-}
-
-export async function seedDemoExpenses(userId: string) {
-  const { data: existing, error: existingError } = await supabase
-    .from('expenses')
-    .select('id')
-    .eq('user_id', userId)
-    .like('description', 'Demo: %')
-    .limit(1);
-  if (existingError) throw existingError;
-  if (existing?.length) return 0;
-
-  const categories = await seedDefaultCategories(userId);
-  const categoryByName = new Map(categories.map((category) => [category.name, category.id]));
-  const dateForDaysAgo = (daysAgo: number) => new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  const entries = [
-    { category: 'Food', amount: 450, description: 'Demo: Lunch with colleagues', daysAgo: 0, time: '13:15:00', payment_method: 'Cash' },
-    { category: 'Transport', amount: 220, description: 'Demo: Ride to office', daysAgo: 1, time: '08:40:00', payment_method: 'UPI' },
-    { category: 'Shopping', amount: 1850, description: 'Demo: Weekly groceries', daysAgo: 2, time: '06:30:00', payment_method: 'Card' },
-    { category: 'Entertainment', amount: 900, description: 'Demo: Movie night', daysAgo: 4, time: '07:45:00', payment_method: 'Card' },
-    { category: 'Utilities', amount: 2400, description: 'Demo: Internet bill', daysAgo: 7, time: '10:00:00', payment_method: 'UPI' },
-    { category: 'Food', amount: 680, description: 'Demo: Dinner out', daysAgo: 10, time: '08:20:00', payment_method: 'Card' },
-    { category: 'Medical', amount: 1200, description: 'Demo: Pharmacy', daysAgo: 14, time: '11:10:00', payment_method: 'Cash' },
-    { category: 'Travel', amount: 5200, description: 'Demo: Weekend trip', daysAgo: 22, time: '05:30:00', payment_method: 'Card' },
-    { category: 'Education', amount: 1500, description: 'Demo: Online course', daysAgo: 35, time: '09:00:00', payment_method: 'UPI' },
-  ];
-
-  const rows = entries.flatMap((entry) => {
-    const categoryId = categoryByName.get(entry.category);
-    return categoryId
-      ? [{
-          amount: entry.amount,
-          description: entry.description,
-          time: entry.time,
-          payment_method: entry.payment_method,
-          category_id: categoryId,
-          user_id: userId,
-          currency: 'NPR',
-          date: dateForDaysAgo(entry.daysAgo),
-          notes: 'Seeded demo entry',
-          is_synced: true,
-        }]
-      : [];
-  });
-  if (!rows.length) throw new Error('No categories available for demo data.');
-
-  const { error } = await supabase.from('expenses').insert(rows);
-  if (error) throw error;
-  return rows.length;
-}
-
 function parseCsvLine(line: string) {
   const cells: string[] = [];
   let cell = '';

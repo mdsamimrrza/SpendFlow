@@ -162,15 +162,24 @@ export async function ensureProfile(): Promise<UserProfile> {
 
   await seedDefaultCategories(user.id).catch(() => []);
 
-  // Check local budget cache
+  // 1. Check user_metadata (Supabase Auth cloud metadata synced on every device)
+  const metaBudgetRaw = user.user_metadata?.monthly_budget;
+  const metaBudget = metaBudgetRaw !== undefined && metaBudgetRaw !== null && Number(metaBudgetRaw) > 0
+    ? Number(metaBudgetRaw)
+    : null;
+
+  // 2. Check local budget cache
   const localBudgetRaw = await AsyncStorage.getItem(`@spendflow_monthly_budget_${user.id}`).catch(() => null);
   const localBudget = localBudgetRaw ? Number(localBudgetRaw) : null;
 
-  const finalBudget = dbProfile?.monthly_budget !== undefined && dbProfile?.monthly_budget !== null
+  // 3. Resolve authoritative budget (DB > Auth Metadata > Local Cache)
+  const finalBudget = dbProfile?.monthly_budget !== undefined && dbProfile?.monthly_budget !== null && Number(dbProfile.monthly_budget) > 0
     ? Number(dbProfile.monthly_budget)
+    : metaBudget !== null
+    ? metaBudget
     : localBudget;
 
-  if (finalBudget !== null && finalBudget !== undefined) {
+  if (finalBudget !== null && finalBudget !== undefined && finalBudget > 0) {
     await AsyncStorage.setItem(`@spendflow_monthly_budget_${user.id}`, String(finalBudget)).catch(() => {});
   }
 
@@ -179,8 +188,8 @@ export async function ensureProfile(): Promise<UserProfile> {
     email: user.email,
     display_name: dbProfile?.display_name ?? (user.user_metadata.display_name as string | undefined) ?? (user.user_metadata.full_name as string | undefined) ?? null,
     avatar_url: dbProfile?.avatar_url ?? (user.user_metadata.avatar_url as string | undefined) ?? null,
-    preferred_currency: dbProfile?.preferred_currency ?? 'NPR',
-    theme_preference: dbProfile?.theme_preference ?? 'system',
+    preferred_currency: dbProfile?.preferred_currency ?? (user.user_metadata?.preferred_currency as string | undefined) ?? 'NPR',
+    theme_preference: dbProfile?.theme_preference ?? (user.user_metadata?.theme_preference as any) ?? 'system',
     monthly_budget: finalBudget,
     created_at: dbProfile?.created_at ?? new Date().toISOString(),
     updated_at: dbProfile?.updated_at ?? new Date().toISOString(),
@@ -294,7 +303,7 @@ export async function deleteAccount() {
   }
 }
 
-export async function sendDeleteAccountOtp(email: string): Promise<{ rateLimited?: boolean; emergencyCode?: string }> {
+export async function sendDeleteAccountOtp(email: string): Promise<{ rateLimited?: boolean }> {
   const cleanEmail = email.trim();
   try {
     const { error } = await supabase.auth.signInWithOtp({
@@ -306,8 +315,7 @@ export async function sendDeleteAccountOtp(email: string): Promise<{ rateLimited
     if (error) {
       const isRateLimit = error.message?.toLowerCase().includes('rate limit') || (error as any).status === 429;
       if (isRateLimit) {
-        const emergencyCode = String(Math.floor(100000 + Math.random() * 900000));
-        return { rateLimited: true, emergencyCode };
+        return { rateLimited: true };
       }
 
       // Fallback: retry standard OTP send without shouldCreateUser constraint
@@ -317,8 +325,7 @@ export async function sendDeleteAccountOtp(email: string): Promise<{ rateLimited
       if (retryError) {
         const isRetryRateLimit = retryError.message?.toLowerCase().includes('rate limit') || (retryError as any).status === 429;
         if (isRetryRateLimit) {
-          const emergencyCode = String(Math.floor(100000 + Math.random() * 900000));
-          return { rateLimited: true, emergencyCode };
+          return { rateLimited: true };
         }
         throw retryError;
       }
@@ -327,24 +334,17 @@ export async function sendDeleteAccountOtp(email: string): Promise<{ rateLimited
   } catch (err: any) {
     const isRateLimit = err?.message?.toLowerCase().includes('rate limit') || err?.status === 429;
     if (isRateLimit) {
-      const emergencyCode = String(Math.floor(100000 + Math.random() * 900000));
-      return { rateLimited: true, emergencyCode };
+      return { rateLimited: true };
     }
     throw err;
   }
 }
 
-export async function verifyDeleteAccountOtpAndWipe(email: string, token: string, emergencyCode?: string) {
+export async function verifyDeleteAccountOtpAndWipe(email: string, token: string) {
   const cleanEmail = email.trim();
   const cleanToken = token.trim();
 
-  // 1. If rate-limited and emergency code matches
-  if (emergencyCode && cleanToken === emergencyCode.trim()) {
-    await deleteAccount();
-    return;
-  }
-
-  // 2. Try standard email OTP verification
+  // 1. Try standard email OTP verification
   try {
     const { error } = await supabase.auth.verifyOtp({
       email: cleanEmail,
@@ -359,7 +359,7 @@ export async function verifyDeleteAccountOtpAndWipe(email: string, token: string
     // Continue fallback
   }
 
-  // 3. Try magiclink verification
+  // 2. Try magiclink verification
   try {
     const { error: recoveryError } = await supabase.auth.verifyOtp({
       email: cleanEmail,
@@ -372,11 +372,6 @@ export async function verifyDeleteAccountOtpAndWipe(email: string, token: string
     }
   } catch {
     // Continue fallback
-  }
-
-  if (emergencyCode && cleanToken === emergencyCode.trim()) {
-    await deleteAccount();
-    return;
   }
 
   throw new Error('Invalid or expired OTP code. Please try again.');

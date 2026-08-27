@@ -8,7 +8,7 @@ export function setGlobalPrivacyMode(enabled: boolean) {
   globalPrivacyMode = enabled;
 }
 
-export function isGlobalPrivacyMode() {
+function isGlobalPrivacyMode() {
   return globalPrivacyMode;
 }
 

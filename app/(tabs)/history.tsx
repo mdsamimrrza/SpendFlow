@@ -375,46 +375,33 @@ export default function HistoryScreen() {
               </View>
             </View>
 
-            {/* ── 2. TOTAL OUTFLOW VAULT SUMMARY CARD (CLEAN & SYMMETRICAL) ── */}
+            {/* ── 2. TOTAL OUTFLOW VAULT SUMMARY CARD (CLEAN & COMPACT) ── */}
             <Card
               style={{
                 paddingHorizontal: 14,
-                paddingVertical: 10,
-                gap: 6,
-                backgroundColor: theme.isDark ? '#0F172A' : theme.colors.cardHighlight,
-                borderRadius: 14,
-                borderWidth: 1.5,
+                paddingVertical: 9,
+                gap: 4,
+                backgroundColor: theme.colors.surface,
                 borderColor: theme.isDark ? 'rgba(129, 140, 248, 0.35)' : theme.colors.border,
-                shadowColor: theme.colors.primary,
+                borderWidth: 1.5,
+                borderRadius: 16,
+                shadowColor: '#000000',
                 shadowOffset: { width: 0, height: 2 },
-                shadowOpacity: theme.isDark ? 0.12 : 0.05,
-                shadowRadius: 6,
-                elevation: 2,
+                shadowOpacity: theme.isDark ? 0.2 : 0.05,
               }}
             >
               {/* Row 1: Header Label on Left + Entries Badge on Right */}
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-                  <View
-                    style={{
-                      width: 18,
-                      height: 18,
-                      borderRadius: 4,
-                      backgroundColor: theme.isDark ? 'rgba(99, 102, 241, 0.25)' : 'rgba(79, 70, 229, 0.12)',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                  >
-                    <Wallet size={11} color={theme.colors.primary} />
-                  </View>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Wallet size={15} color={theme.isDark ? '#34D399' : '#064E3B'} />
                   <Text
                     variant="caption"
                     style={{
-                      color: theme.colors.primary,
-                      fontWeight: '800',
+                      color: theme.isDark ? '#34D399' : '#064E3B',
+                      fontWeight: '600',
                       textTransform: 'uppercase',
-                      letterSpacing: 0.7,
-                      fontSize: 10,
+                      letterSpacing: 0.8,
+                      fontSize: 11,
                     }}
                   >
                     {t('history_total_outflow') || 'Total Outflow'} · {activeChipLabel(period)}
@@ -428,20 +415,20 @@ export default function HistoryScreen() {
                       flexDirection: 'row',
                       alignItems: 'center',
                       gap: 4,
-                      paddingHorizontal: 7,
-                      paddingVertical: 2,
-                      borderRadius: 6,
-                      backgroundColor: theme.isDark ? 'rgba(99, 102, 241, 0.18)' : 'rgba(99, 102, 241, 0.1)',
+                      paddingHorizontal: 8,
+                      paddingVertical: 3,
+                      borderRadius: theme.radius.full,
+                      backgroundColor: theme.colors.surfaceElevated,
                       borderWidth: 1,
-                      borderColor: theme.isDark ? 'rgba(129, 140, 248, 0.3)' : 'rgba(99, 102, 241, 0.2)',
+                      borderColor: theme.colors.border,
                     }}
                   >
                     <Receipt size={10} color={theme.colors.primary} />
                     <Text
                       style={{
-                        fontSize: 10,
+                        fontSize: 10.5,
                         fontWeight: '800',
-                        color: theme.isDark ? '#E2E8F0' : '#1E293B',
+                        color: theme.colors.text,
                       }}
                     >
                       {totalItems} {totalItems === 1 ? 'entry' : 'entries'}
@@ -455,8 +442,8 @@ export default function HistoryScreen() {
                         flexDirection: 'row',
                         alignItems: 'center',
                         gap: 3,
-                        paddingHorizontal: 7,
-                        paddingVertical: 2,
+                        paddingHorizontal: 8,
+                        paddingVertical: 3,
                         borderRadius: theme.radius.full,
                         backgroundColor: theme.colors.primary,
                       }}
@@ -474,10 +461,10 @@ export default function HistoryScreen() {
                 <View style={{ flex: 1, paddingRight: 8 }}>
                   <Text
                     style={{
-                      fontSize: 22,
-                      lineHeight: 26,
+                      fontSize: 28,
+                      lineHeight: 34,
                       fontWeight: '900',
-                      color: theme.colors.primary,
+                      color: theme.colors.text,
                       fontVariant: ['tabular-nums'],
                       letterSpacing: -0.5,
                     }}
@@ -494,18 +481,18 @@ export default function HistoryScreen() {
                       flexDirection: 'row',
                       alignItems: 'center',
                       gap: 4,
-                      paddingHorizontal: 7,
-                      paddingVertical: 2.5,
-                      borderRadius: 6,
-                      backgroundColor: theme.isDark ? 'rgba(245, 158, 11, 0.12)' : 'rgba(245, 158, 11, 0.08)',
+                      paddingHorizontal: 8,
+                      paddingVertical: 3,
+                      borderRadius: theme.radius.full,
+                      backgroundColor: theme.isDark ? 'rgba(245, 158, 11, 0.12)' : '#FEF3C7',
                       borderWidth: 1,
-                      borderColor: theme.isDark ? 'rgba(245, 158, 11, 0.3)' : 'rgba(245, 158, 11, 0.2)',
+                      borderColor: theme.isDark ? 'rgba(245, 158, 11, 0.3)' : 'rgba(245, 158, 11, 0.25)',
                     }}
                   >
-                    <Sparkles size={10} color="#F59E0B" />
+                    <Sparkles size={11} color="#F59E0B" />
                     <Text
                       style={{
-                        fontSize: 10,
+                        fontSize: 10.5,
                         fontWeight: '600',
                         color: theme.colors.textMuted,
                       }}

@@ -163,9 +163,9 @@ export function AuthProvider({ children }: PropsWithChildren) {
             email: session.user.email ?? '',
             display_name: (session.user.user_metadata?.display_name as string) ?? null,
             avatar_url: (session.user.user_metadata?.avatar_url as string) ?? null,
-            preferred_currency: 'NPR',
-            theme_preference: 'system',
-            monthly_budget: null,
+            preferred_currency: (session.user.user_metadata?.preferred_currency as string) ?? 'NPR',
+            theme_preference: (session.user.user_metadata?.theme_preference as any) ?? 'system',
+            monthly_budget: session.user.user_metadata?.monthly_budget ? Number(session.user.user_metadata.monthly_budget) : null,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           });

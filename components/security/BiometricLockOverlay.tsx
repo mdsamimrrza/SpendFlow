@@ -1,11 +1,12 @@
 import React, { useEffect, useRef } from 'react';
-import { Animated, Image, Pressable, StyleSheet, View } from 'react-native';
-import { Fingerprint, Lock, LogOut, ShieldCheck } from 'lucide-react-native';
+import { Animated, Pressable, StyleSheet, View } from 'react-native';
+import { Fingerprint, Lock, LogOut } from 'lucide-react-native';
+import { SpendFlowSealLogo } from '@/components/ui/SpendFlowSealLogo';
+import { Text } from '@/components/ui/Text';
 import { useAuth } from '@/hooks/useAuth';
 import { useLanguage } from '@/hooks/useLanguage';
 import { useSecurity } from '@/hooks/useSecurity';
 import { useTheme } from '@/hooks/useTheme';
-import { Text } from '@/components/ui/Text';
 
 export function BiometricLockOverlay() {
   const { isLocked, authenticate, biometricTypeName } = useSecurity();
@@ -42,15 +43,15 @@ export function BiometricLockOverlay() {
   return (
     <View style={[styles.overlay, { backgroundColor: '#0B0F19' }]}>
       <View style={styles.content}>
-        {/* App Logo */}
-        <View style={styles.logoWrapper}>
-          <Image source={require('@/assets/icon.png')} style={styles.logo} resizeMode="cover" />
+        {/* SpendFlow Gold Seal Brand Logo */}
+        <View style={{ marginBottom: 8 }}>
+          <SpendFlowSealLogo size={80} isDark={true} />
         </View>
 
         {/* Lock Title & Subtitle */}
         <View style={styles.textWrapper}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <Lock size={22} color="#818CF8" />
+            <Lock size={20} color="#818CF8" />
             <Text variant="h2" style={{ color: '#F8FAFC', fontWeight: '800' }}>
               {t('security_unlock_title')}
             </Text>
@@ -102,7 +103,7 @@ export function BiometricLockOverlay() {
 
 const styles = StyleSheet.create({
   overlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...(StyleSheet.absoluteFillObject as any),
     zIndex: 99999,
     alignItems: 'center',
     justifyContent: 'center',
@@ -111,24 +112,6 @@ const styles = StyleSheet.create({
   content: {
     alignItems: 'center',
     gap: 16,
-  },
-  logoWrapper: {
-    width: 88,
-    height: 88,
-    borderRadius: 22,
-    overflow: 'hidden',
-    borderWidth: 1.5,
-    borderColor: 'rgba(129, 140, 248, 0.4)',
-    shadowColor: '#818CF8',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.35,
-    shadowRadius: 12,
-    elevation: 10,
-    marginBottom: 8,
-  },
-  logo: {
-    width: '100%',
-    height: '100%',
   },
   textWrapper: {
     alignItems: 'center',

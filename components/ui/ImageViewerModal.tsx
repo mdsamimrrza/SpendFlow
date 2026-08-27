@@ -5,8 +5,8 @@ import {
   StyleSheet,
   View,
   Image,
-  Dimensions,
   Platform,
+  useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Trash2, X, ZoomIn } from 'lucide-react-native';
@@ -21,8 +21,6 @@ interface ImageViewerModalProps {
   onRemove?: () => void;
 }
 
-const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
-
 export function ImageViewerModal({
   visible,
   imageUrl,
@@ -30,6 +28,7 @@ export function ImageViewerModal({
   onRemove,
 }: ImageViewerModalProps) {
   const theme = useTheme();
+  const { width, height } = useWindowDimensions();
 
   if (!imageUrl) return null;
 
@@ -85,7 +84,7 @@ export function ImageViewerModal({
           <View style={styles.imageContainer}>
             <Image
               source={{ uri: imageUrl }}
-              style={styles.fullImage}
+              style={[styles.fullImage, { width, height: height * 0.75 }]}
               resizeMode="contain"
             />
           </View>
@@ -108,7 +107,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.94)',
   },
   backdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...(StyleSheet.absoluteFillObject as any),
   },
   safeArea: {
     flex: 1,
@@ -141,10 +140,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 10,
   },
-  fullImage: {
-    width: screenWidth,
-    height: screenHeight * 0.75,
-  },
+  fullImage: {},
   bottomBar: {
     alignItems: 'center',
     paddingBottom: 24,

@@ -82,13 +82,13 @@ export default function SettingsScreen() {
   const [appearanceModalOpen, setAppearanceModalOpen] = useState(false);
   const [languageModalOpen, setLanguageModalOpen] = useState(false);
   const [securityModalOpen, setSecurityModalOpen] = useState(false);
+  const [notificationsModalOpen, setNotificationsModalOpen] = useState(false);
   const [showCategoryBudgets, setShowCategoryBudgets] = useState(false);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [deleteOtpStep, setDeleteOtpStep] = useState<'confirm' | 'otp_input'>('confirm');
   const [deleteOtpCode, setDeleteOtpCode] = useState('');
   const [sendingDeleteOtp, setSendingDeleteOtp] = useState(false);
   const [verifyingDeleteOtp, setVerifyingDeleteOtp] = useState(false);
-  const [deleteFallbackCode, setDeleteFallbackCode] = useState<string | null>(null);
   const [deleteOtpError, setDeleteOtpError] = useState('');
   const [signOutModalOpen, setSignOutModalOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
@@ -303,6 +303,12 @@ export default function SettingsScreen() {
               >
                 {profile?.email || 'SpendFlow Account'}
               </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 3 }}>
+                <ShieldCheck size={13} color={theme.colors.success} />
+                <Text variant="caption" style={{ color: theme.colors.success, fontWeight: '700', fontSize: 11 }}>
+                  Verified Cloud Account
+                </Text>
+              </View>
             </View>
           </View>
 
@@ -489,9 +495,63 @@ export default function SettingsScreen() {
           {/* Dotted Divider */}
           <View style={{ height: 1, backgroundColor: theme.colors.border, marginHorizontal: 16, opacity: 0.6 }} />
 
-          {/* Item 4: Notifications & Security */}
+          {/* Item 4: App Lock & Security */}
           <Pressable
             onPress={() => setSecurityModalOpen(true)}
+            style={({ pressed }) => ({
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              paddingHorizontal: 16,
+              paddingVertical: 14,
+              backgroundColor: pressed
+                ? (theme.isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)')
+                : 'transparent',
+            })}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+              <View
+                style={{
+                  width: 38,
+                  height: 38,
+                  borderRadius: 10,
+                  backgroundColor: theme.isDark ? 'rgba(129, 140, 248, 0.15)' : '#DCE9E3',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Fingerprint size={19} color={theme.colors.primary} />
+              </View>
+              <View>
+                <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
+                  App Lock & Security
+                </Text>
+                <Text variant="caption" muted style={{ fontSize: 11 }}>
+                  {biometricTypeName || 'Fingerprint / Face ID'}
+                </Text>
+              </View>
+            </View>
+
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text
+                style={{
+                  fontSize: 13,
+                  color: isBiometricEnabled ? theme.colors.success : theme.colors.textMuted,
+                  fontWeight: '700',
+                }}
+              >
+                {isBiometricEnabled ? 'Enabled' : 'Off'}
+              </Text>
+              <ChevronRight size={16} color={theme.colors.textMuted} />
+            </View>
+          </Pressable>
+
+          {/* Dotted Divider */}
+          <View style={{ height: 1, backgroundColor: theme.colors.border, marginHorizontal: 16, opacity: 0.6 }} />
+
+          {/* Item 5: Budget Notifications */}
+          <Pressable
+            onPress={() => setNotificationsModalOpen(true)}
             style={({ pressed }) => ({
               flexDirection: 'row',
               alignItems: 'center',
@@ -522,8 +582,8 @@ export default function SettingsScreen() {
             </View>
 
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Text style={{ fontSize: 14, color: theme.colors.textMuted, fontWeight: '500' }}>
-                {isBiometricEnabled ? 'On' : 'Active'}
+              <Text style={{ fontSize: 13, color: theme.colors.primary, fontWeight: '700' }}>
+                Active
               </Text>
               <ChevronRight size={16} color={theme.colors.textMuted} />
             </View>
@@ -1519,6 +1579,126 @@ export default function SettingsScreen() {
         </Pressable>
       </Modal>
 
+      {/* ── 6. BUDGET NOTIFICATIONS & ALERTS MODAL ── */}
+      <Modal
+        visible={notificationsModalOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setNotificationsModalOpen(false)}
+      >
+        <Pressable
+          onPress={() => setNotificationsModalOpen(false)}
+          style={{
+            flex: 1,
+            backgroundColor: 'rgba(0,0,0,0.6)',
+            justifyContent: 'center',
+            alignItems: 'center',
+            padding: 24,
+          }}
+        >
+          <Pressable
+            onPress={(e) => e.stopPropagation()}
+            style={{
+              width: '100%',
+              maxWidth: 360,
+              backgroundColor: theme.colors.surface,
+              borderRadius: 20,
+              padding: 20,
+              gap: 16,
+              borderWidth: 1,
+              borderColor: theme.colors.border,
+            }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <View
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 10,
+                    backgroundColor: theme.isDark ? 'rgba(129, 140, 248, 0.15)' : '#DCE9E3',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Bell size={18} color={theme.colors.primary} />
+                </View>
+                <View>
+                  <Text variant="h3" style={{ fontWeight: '800', fontSize: 16 }}>
+                    Budget Notifications
+                  </Text>
+                  <Text variant="caption" muted style={{ fontSize: 11 }}>
+                    Graduated milestone alerts
+                  </Text>
+                </View>
+              </View>
+
+              <Pressable
+                onPress={() => setNotificationsModalOpen(false)}
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: 14,
+                  backgroundColor: theme.colors.surfaceElevated,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <X size={15} color={theme.colors.text} />
+              </Pressable>
+            </View>
+
+            <View style={{ gap: 10 }}>
+              <View
+                style={{
+                  padding: 14,
+                  borderRadius: theme.radius.md,
+                  backgroundColor: theme.colors.surfaceElevated,
+                  borderWidth: 1,
+                  borderColor: theme.colors.border,
+                  gap: 8,
+                }}
+              >
+                <Text style={{ fontWeight: '700', fontSize: 13, color: theme.colors.text }}>
+                  🎯 Active Milestone Thresholds:
+                </Text>
+                <View style={{ gap: 6 }}>
+                  <Text variant="caption" style={{ fontSize: 12, color: theme.colors.textMuted }}>
+                    🟢 <Text style={{ fontWeight: '700', color: theme.colors.text }}>25% & 50%</Text> - Pacing milestone alerts
+                  </Text>
+                  <Text variant="caption" style={{ fontSize: 12, color: theme.colors.textMuted }}>
+                    🟡 <Text style={{ fontWeight: '700', color: theme.colors.text }}>75% & 90%</Text> - Caution milestone warnings
+                  </Text>
+                  <Text variant="caption" style={{ fontSize: 12, color: theme.colors.textMuted }}>
+                    🔴 <Text style={{ fontWeight: '700', color: theme.colors.text }}>100%+</Text> - Budget ceiling exceeded alert
+                  </Text>
+                </View>
+              </View>
+
+              <Pressable
+                onPress={async () => {
+                  await resetBudgetAlertHistory();
+                  Alert.alert('Notifications Reset', 'Budget alert threshold history has been reset for this month.');
+                }}
+                style={({ pressed }) => ({
+                  paddingVertical: 12,
+                  borderRadius: theme.radius.md,
+                  backgroundColor: theme.colors.surfaceElevated,
+                  borderWidth: 1,
+                  borderColor: theme.colors.border,
+                  alignItems: 'center',
+                  opacity: pressed ? 0.75 : 1,
+                })}
+              >
+                <Text style={{ fontSize: 13, fontWeight: '700', color: theme.colors.primary }}>
+                  🔄 Reset Alert Suppression History
+                </Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
       {/* ── 6. CATEGORY BUDGET CONFIGURATION FORM MODAL ── */}
       <CategoryBudgetFormModal
         visible={showCategoryBudgets}
@@ -1645,10 +1825,9 @@ export default function SettingsScreen() {
                       setDeleteOtpError('');
                       try {
                         const res = await sendDeleteAccountOtp(userEmail);
-                        if (res?.rateLimited && res.emergencyCode) {
-                          setDeleteFallbackCode(res.emergencyCode);
-                        } else {
-                          setDeleteFallbackCode(null);
+                        if (res?.rateLimited) {
+                          setDeleteOtpError('Email rate limit reached. Please wait before requesting another delete code.');
+                          return;
                         }
                         setDeleteOtpStep('otp_input');
                       } catch (err: any) {
@@ -1695,45 +1874,13 @@ export default function SettingsScreen() {
 
                   <View style={{ gap: 4, alignItems: 'center' }}>
                     <Text variant="h2" style={{ fontWeight: '900', fontSize: 19, textAlign: 'center', color: theme.colors.text }}>
-                      {deleteFallbackCode ? 'Security Code Bypass' : 'Check Your Email'}
+                      Check Your Email
                     </Text>
                     <Text muted style={{ fontSize: 12.5, textAlign: 'center', lineHeight: 18 }}>
-                      {deleteFallbackCode ? (
-                        'Enter the 6-digit confirmation code below'
-                      ) : (
-                        <>
-                          Enter the 6-digit security code sent to{'\n'}
-                          <Text style={{ fontWeight: '800', color: theme.colors.text }}>{userEmail}</Text>
-                        </>
-                      )}
+                      Enter the 6-digit security code sent to{'\n'}
+                      <Text style={{ fontWeight: '800', color: theme.colors.text }}>{userEmail}</Text>
                     </Text>
                   </View>
-
-                  {/* Supabase Rate Limit Emergency Bypass Notice */}
-                  {deleteFallbackCode ? (
-                    <View
-                      style={{
-                        width: '100%',
-                        padding: 12,
-                        borderRadius: 14,
-                        backgroundColor: theme.isDark ? 'rgba(234, 179, 8, 0.15)' : '#FEF3C7',
-                        borderWidth: 1,
-                        borderColor: theme.isDark ? 'rgba(234, 179, 8, 0.4)' : '#FCD34D',
-                        gap: 3,
-                        alignItems: 'center',
-                      }}
-                    >
-                      <Text style={{ fontSize: 11, fontWeight: '800', color: theme.isDark ? '#FBBF24' : '#B45309', textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                        ⚡ Email Rate Limit Bypass
-                      </Text>
-                      <Text style={{ fontSize: 24, fontWeight: '900', color: theme.colors.text, letterSpacing: 5 }}>
-                        {deleteFallbackCode}
-                      </Text>
-                      <Text variant="caption" muted style={{ fontSize: 11, textAlign: 'center' }}>
-                        Supabase email quota reached. Type this code to delete now.
-                      </Text>
-                    </View>
-                  ) : null}
 
                   {/* 6-Digit OTP Text Input */}
                   <TextInput
@@ -1769,7 +1916,7 @@ export default function SettingsScreen() {
                   ) : null}
 
                   {/* Resend Link (only when not rate-limited) */}
-                  {!deleteFallbackCode ? (
+                  {true ? (
                     <Pressable
                       onPress={async () => {
                         if (!userEmail) return;
@@ -1777,11 +1924,11 @@ export default function SettingsScreen() {
                         setDeleteOtpError('');
                         try {
                           const res = await sendDeleteAccountOtp(userEmail);
-                          if (res?.rateLimited && res.emergencyCode) {
-                            setDeleteFallbackCode(res.emergencyCode);
-                          } else {
-                            Alert.alert('Sent', 'A new 6-digit OTP code was sent to your email.');
+                          if (res?.rateLimited) {
+                            setDeleteOtpError('Email rate limit reached. Please wait before requesting another code.');
+                            return;
                           }
+                          Alert.alert('Sent', 'A new 6-digit OTP code was sent to your email.');
                         } catch (err: any) {
                           setDeleteOtpError(err?.message || 'Failed to resend OTP.');
                         } finally {
@@ -1829,7 +1976,7 @@ export default function SettingsScreen() {
                       setVerifyingDeleteOtp(true);
                       setDeleteOtpError('');
                       try {
-                        await verifyDeleteAccountOtpAndWipe(userEmail, deleteOtpCode, deleteFallbackCode || undefined);
+                        await verifyDeleteAccountOtpAndWipe(userEmail, deleteOtpCode);
                         setDeleteModalOpen(false);
                         router.replace('/(auth)' as any);
                       } catch (err: any) {

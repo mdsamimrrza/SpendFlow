@@ -166,7 +166,7 @@ export function ProfileQuickCard({ visible, onClose }: ProfileQuickCardProps) {
                   SpendFlow Profile
                 </Text>
                 <Text variant="caption" muted style={{ fontSize: 10 }}>
-                  Account & Security Hub (Swipe down to dismiss)
+                  Account & Security Hub
                 </Text>
               </View>
             </View>

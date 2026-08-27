@@ -62,7 +62,7 @@ export default function ExportScreen() {
     }
     setIsExporting('pdf');
     try {
-      await exportPdf(filteredItems, profile, `${periodLabel} Statement`, preferredCurrency);
+      await exportPdf(filteredItems, profile, preferredCurrency);
     } catch (err) {
       Alert.alert('Export Failed', err instanceof Error ? err.message : 'Could not generate PDF statement.');
     } finally {

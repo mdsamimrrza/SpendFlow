@@ -1,11 +1,12 @@
+import '@/utils/polyfills';
 import { Alert, Platform } from 'react-native';
-import writeXlsxFile from 'write-excel-file/browser';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
+import * as FileSystem from 'expo-file-system/legacy';
 import { Expense, UserProfile } from '@/types';
 import { formatMoney, groupByCategory } from '@/utils/format';
 
-export function generateExportFileName(expenses: Expense[], ext: 'pdf' | 'xlsx' | 'csv'): string {
+function generateExportFileName(expenses: Expense[], ext: 'pdf' | 'xlsx' | 'csv'): string {
   const now = new Date();
   const months = Array.from(new Set(expenses.map((e) => e.date?.slice(0, 7)))).filter(Boolean);
 
@@ -43,8 +44,6 @@ function downloadWebFile(blob: Blob, filename: string) {
   document.body.removeChild(a);
 }
 
-import { StorageAccessFramework, readAsStringAsync, writeAsStringAsync, EncodingType } from 'expo-file-system/legacy';
-
 /**
  * Saves the file directly to Android Downloads/chosen folder using StorageAccessFramework (SAF)
  * or falls back to system sharing dialog.
@@ -57,11 +56,11 @@ async function saveOrShareFile(
 ) {
   if (Platform.OS === 'android') {
     try {
-      if (StorageAccessFramework) {
-        const permissions = await StorageAccessFramework.requestDirectoryPermissionsAsync();
+      if (FileSystem.StorageAccessFramework) {
+        const permissions = await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
         if (permissions.granted) {
           const directoryUri = permissions.directoryUri;
-          const newFileUri = await StorageAccessFramework.createFileAsync(
+          const newFileUri = await FileSystem.StorageAccessFramework.createFileAsync(
             directoryUri,
             fileName,
             mimeType,
@@ -69,13 +68,13 @@ async function saveOrShareFile(
 
           let content = base64Content;
           if (!content) {
-            content = await readAsStringAsync(fileUri, {
-              encoding: EncodingType.Base64,
+            content = await FileSystem.readAsStringAsync(fileUri, {
+              encoding: FileSystem.EncodingType.Base64,
             });
           }
 
-          await writeAsStringAsync(newFileUri, content, {
-            encoding: EncodingType.Base64,
+          await FileSystem.writeAsStringAsync(newFileUri, content, {
+            encoding: FileSystem.EncodingType.Base64,
           });
 
           Alert.alert('Download Complete ✅', `Statement saved to your selected folder as:\n\n${fileName}`);
@@ -121,15 +120,13 @@ export async function exportCsv(expenses: Expense[]) {
   }
 
   // Native Mobile (Android / iOS)
-  const { File, Paths } = await import('expo-file-system');
-  const file = new File(Paths.cache, fileName);
-  if (file.exists) {
-    file.delete();
-  }
-  file.write(csvContent);
+  const fileUri = `${FileSystem.cacheDirectory}${fileName}`;
+  await FileSystem.writeAsStringAsync(fileUri, csvContent, {
+    encoding: FileSystem.EncodingType.UTF8,
+  });
 
   const base64Content = btoa(unescape(encodeURIComponent(csvContent)));
-  await saveOrShareFile(file.uri, fileName, 'text/csv', base64Content);
+  await saveOrShareFile(fileUri, fileName, 'text/csv', base64Content);
 }
 
 // ── 2. EXCEL (XLSX) EXPORT ──
@@ -170,11 +167,12 @@ export async function exportExcel(expenses: Expense[], currency = 'NPR') {
     ]),
   ];
 
-  const workbook = await writeXlsxFile([
-    { sheet: 'Expenses Ledger', data: expenseRows },
-    { sheet: 'Category Analytics', data: summaryRows },
-  ]);
-  const blob = await workbook.toBlob();
+  const writeXlsxFileModule = await import('write-excel-file');
+  const writeXlsxFile = writeXlsxFileModule.default;
+
+  const blob = await writeXlsxFile([expenseRows, summaryRows], {
+    sheets: ['Expenses Ledger', 'Category Analytics'],
+  });
 
   if (Platform.OS === 'web') {
     downloadWebFile(blob, fileName);
@@ -182,11 +180,7 @@ export async function exportExcel(expenses: Expense[], currency = 'NPR') {
   }
 
   // Native Mobile: Write to named cache file
-  const { File, Paths } = await import('expo-file-system');
-  const file = new File(Paths.cache, fileName);
-  if (file.exists) {
-    file.delete();
-  }
+  const fileUri = `${FileSystem.cacheDirectory}${fileName}`;
   const arrayBuffer = await blob.arrayBuffer();
   const bytes = new Uint8Array(arrayBuffer);
   let binary = '';
@@ -194,59 +188,55 @@ export async function exportExcel(expenses: Expense[], currency = 'NPR') {
     binary += String.fromCharCode(bytes[i]);
   }
   const base64 = btoa(binary);
-  file.write(bytes);
+
+  await FileSystem.writeAsStringAsync(fileUri, base64, {
+    encoding: FileSystem.EncodingType.Base64,
+  });
 
   await saveOrShareFile(
-    file.uri,
+    fileUri,
     fileName,
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     base64,
   );
 }
 
-// ── 3. LUXURY PDF STATEMENT EXPORT ──
-export async function exportPdf(
-  expenses: Expense[],
-  profile?: UserProfile | null,
-  customTitle?: string,
-  currency = 'NPR',
-) {
+// ── 3. PDF EXPORT (COMPREHENSIVE PROFESSIONAL FINANCIAL STATEMENT) ──
+export async function exportPdf(expenses: Expense[], profile?: UserProfile | null, currency = 'NPR') {
   const fileName = generateExportFileName(expenses, 'pdf');
-  const totalAmount = expenses.reduce((s, e) => s + Number(e.amount), 0);
-  const categories = groupByCategory(expenses, currency);
-  const avgPerTx = expenses.length > 0 ? Math.round(totalAmount / expenses.length) : 0;
-  const userName = profile?.display_name || profile?.email?.split('@')[0] || 'SpendFlow User';
-  const userEmail = profile?.email || '';
   const now = new Date();
-  const statementDate = now.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-  const statementId = `SF-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}-${Math.floor(1000 + Math.random() * 9000)}`;
+  const generatedDateStr = now.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 
-  // Find month title for header banner
-  const months = Array.from(new Set(expenses.map((e) => e.date?.slice(0, 7)))).filter(Boolean);
-  let periodTitle = customTitle || 'Financial Statement';
-  if (!customTitle) {
-    if (months.length === 1) {
-      const [year, month] = months[0].split('-');
-      const monthName = new Date(Number(year), Number(month) - 1, 1).toLocaleString('en-US', { month: 'long' });
-      periodTitle = `Monthly Statement — ${monthName} ${year}`;
-    } else if (months.length > 1) {
-      const sorted = [...months].sort();
-      periodTitle = `Statement (${sorted[0]} to ${sorted[sorted.length - 1]})`;
-    }
-  }
+  // Calculate Aggregates
+  const totalSpent = expenses.reduce((sum, e) => sum + Number(e.amount), 0);
+  const totalTransactions = expenses.length;
+  const categorySummary = groupByCategory(expenses, currency);
+  const topCategory = categorySummary[0]?.label ?? 'N/A';
+  const averageSpent = totalTransactions > 0 ? Math.round(totalSpent / totalTransactions) : 0;
 
-  // Category table rows HTML
-  const categoryRowsHtml = categories
-    .map((c) => {
-      const pct = totalAmount > 0 ? Math.round((c.total / totalAmount) * 100) : 0;
+  // Render Category Breakdown Rows
+  const categoryRowsHtml = categorySummary
+    .map((item) => {
+      const percentage = totalSpent > 0 ? Math.round((item.total / totalSpent) * 100) : 0;
       return `
         <tr>
-          <td><span style="font-size: 16px; margin-right: 6px;">${c.icon}</span> <strong>${c.label}</strong></td>
-          <td style="text-align: right; font-weight: 700;">${formatMoney(c.total, currency)}</td>
-          <td style="text-align: right;">${pct}%</td>
-          <td style="width: 140px;">
-            <div style="background: #F1F5F9; border-radius: 4px; height: 8px; overflow: hidden;">
-              <div style="background: #4F46E5; width: ${pct}%; height: 100%; border-radius: 4px;"></div>
+          <td>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 16px;">${item.icon}</span>
+              <span style="font-weight: 600; color: #1E293B;">${item.label}</span>
+            </div>
+          </td>
+          <td style="text-align: right; font-weight: 700; color: #0F172A;">${formatMoney(item.total, currency)}</td>
+          <td style="text-align: right; font-weight: 600; color: #0F5C4D;">${percentage}%</td>
+          <td>
+            <div style="background-color: #E2E8F0; border-radius: 999px; height: 6px; width: 100%; overflow: hidden;">
+              <div style="background-color: #0F5C4D; height: 100%; width: ${percentage}%;"></div>
             </div>
           </td>
         </tr>
@@ -254,247 +244,201 @@ export async function exportPdf(
     })
     .join('');
 
-  // Transaction table rows HTML
+  // Render Transaction Rows
   const transactionRowsHtml = expenses
-    .map((e, idx) => `
-      <tr style="${idx % 2 === 1 ? 'background-color: #F8FAFC;' : ''}">
-        <td style="color: #94A3B8; font-size: 11px;">#${idx + 1}</td>
-        <td><strong>${e.date}</strong> ${e.time ? `<span style="color:#64748B; font-size:11px;">${e.time}</span>` : ''}</td>
-        <td>${e.categories?.icon || '🏷️'} ${e.categories?.name || 'Other'}</td>
-        <td>
-          <div style="font-weight: 600;">${e.description || 'Expense'}</div>
-          ${e.notes ? `<div style="font-size: 10px; color: #64748B;">${e.notes}</div>` : ''}
-        </td>
-        <td><span style="display:inline-block; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; background: #E2E8F0; color: #334155;">${e.payment_method}</span></td>
-        <td style="text-align: right; font-weight: 800; color: #DC2626;">-${formatMoney(Number(e.amount), e.currency || currency)}</td>
-      </tr>
-    `)
+    .map((e, index) => {
+      const categoryName = e.categories?.name ?? 'Uncategorized';
+      const categoryIcon = e.categories?.icon ?? '💳';
+      const desc = e.description || e.notes || '—';
+      const subNotes = e.description && e.notes ? `<div style="font-size: 11px; color: #64748B;">${e.notes}</div>` : '';
+
+      return `
+        <tr style="background-color: ${index % 2 === 0 ? '#FFFFFF' : '#F8FAFC'};">
+          <td style="color: #94A3B8; font-size: 11px; font-weight: 600;">#${index + 1}</td>
+          <td style="font-weight: 600; color: #334155; white-space: nowrap;">${e.date} ${e.time ? `<span style="font-size: 11px; color: #94A3B8;">${e.time}</span>` : ''}</td>
+          <td>
+            <span style="font-size: 13px;">${categoryIcon}</span>
+            <span style="font-weight: 600; color: #1E293B;">${categoryName}</span>
+          </td>
+          <td>
+            <div style="font-weight: 500; color: #334155;">${desc}</div>
+            ${subNotes}
+          </td>
+          <td>
+            <span style="display: inline-block; padding: 2px 8px; border-radius: 4px; background-color: #F1F5F9; font-size: 11px; font-weight: 600; color: #475569; text-transform: uppercase;">${e.payment_method}</span>
+          </td>
+          <td style="text-align: right; font-weight: 800; color: #0F5C4D; white-space: nowrap;">${formatMoney(Number(e.amount), e.currency || currency)}</td>
+        </tr>
+      `;
+    })
     .join('');
+
+  const userName = profile?.display_name || 'SpendFlow User';
+  const userEmail = profile?.email || '';
 
   const html = `
     <!DOCTYPE html>
     <html>
     <head>
-      <meta charset="utf-8">
-      <title>${fileName}</title>
+      <meta charset="utf-8" />
+      <title>SpendFlow Statement</title>
       <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
-        
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body {
-          font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-          color: #0F172A;
-          background: #FFFFFF;
-          padding: 40px 32px;
-          line-height: 1.5;
+        @page {
+          size: A4;
+          margin: 18mm 15mm;
         }
-
-        /* Header */
-        .header {
+        body {
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+          color: #0F172A;
+          margin: 0;
+          padding: 0;
+          font-size: 12px;
+          line-height: 1.5;
+          background-color: #FFFFFF;
+        }
+        .header-container {
           display: flex;
           justify-content: space-between;
           align-items: flex-start;
-          padding-bottom: 24px;
-          border-bottom: 2px solid #E2E8F0;
-          margin-bottom: 24px;
+          border-bottom: 2px solid #0F5C4D;
+          padding-bottom: 16px;
+          margin-bottom: 20px;
         }
-        .logo-container {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-        }
-        .logo-badge {
-          width: 44px;
-          height: 44px;
-          background: #4F46E5;
-          border-radius: 12px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          color: #FFFFFF;
-          font-size: 22px;
+        .brand-title {
+          font-size: 26px;
           font-weight: 900;
-        }
-        .app-title {
-          font-size: 22px;
-          font-weight: 900;
+          color: #0F5C4D;
           letter-spacing: -0.5px;
-          color: #0F172A;
+          margin: 0;
         }
-        .app-subtitle {
+        .brand-subtitle {
           font-size: 11px;
           color: #64748B;
-          font-weight: 600;
-          letter-spacing: 0.5px;
           text-transform: uppercase;
-        }
-        .statement-meta {
-          text-align: right;
-        }
-        .statement-id {
-          font-size: 12px;
-          font-weight: 700;
-          color: #4F46E5;
-        }
-        .statement-date {
-          font-size: 11px;
-          color: #64748B;
+          letter-spacing: 1px;
           margin-top: 2px;
         }
-
-        /* Statement Banner */
-        .banner {
-          background: #0F172A;
-          color: #FFFFFF;
-          border-radius: 12px;
-          padding: 20px 24px;
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 24px;
+        .meta-box {
+          text-align: right;
+          font-size: 11px;
+          color: #475569;
         }
-        .banner-user-name {
-          font-size: 18px;
+        .meta-title {
+          font-size: 14px;
           font-weight: 800;
-          margin-bottom: 2px;
-        }
-        .banner-user-email {
-          font-size: 12px;
-          color: #94A3B8;
-        }
-        .banner-period-tag {
-          background: rgba(255, 255, 255, 0.15);
-          padding: 4px 12px;
-          border-radius: 20px;
-          font-size: 11px;
-          font-weight: 700;
-          text-transform: uppercase;
-          letter-spacing: 0.5px;
-        }
-
-        /* Executive Summary Grid */
-        .summary-grid {
-          display: grid;
-          grid-template-columns: repeat(3, 1fr);
-          gap: 16px;
-          margin-bottom: 28px;
-        }
-        .summary-card {
-          background: #F8FAFC;
-          border: 1px solid #E2E8F0;
-          border-radius: 10px;
-          padding: 16px;
-        }
-        .summary-card.highlight {
-          background: #EEF2FF;
-          border-color: #C7D2FE;
-        }
-        .summary-label {
-          font-size: 11px;
-          font-weight: 700;
-          text-transform: uppercase;
-          color: #64748B;
-          letter-spacing: 0.5px;
+          color: #0F172A;
           margin-bottom: 4px;
         }
-        .summary-value {
-          font-size: 24px;
-          font-weight: 900;
-          color: #0F172A;
+        .summary-cards {
+          display: flex;
+          gap: 12px;
+          margin-bottom: 24px;
         }
-        .summary-value.primary { color: #4F46E5; }
-
-        /* Section Headings */
+        .card {
+          flex: 1;
+          background-color: #F8FAFC;
+          border: 1px solid #E2E8F0;
+          border-radius: 8px;
+          padding: 12px;
+        }
+        .card-label {
+          font-size: 10px;
+          font-weight: 700;
+          color: #64748B;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+        }
+        .card-value {
+          font-size: 18px;
+          font-weight: 800;
+          color: #0F5C4D;
+          margin-top: 4px;
+        }
+        .card-subtext {
+          font-size: 10px;
+          color: #94A3B8;
+          margin-top: 2px;
+        }
         .section-title {
-          font-size: 16px;
+          font-size: 14px;
           font-weight: 800;
           color: #0F172A;
-          margin-bottom: 12px;
-          padding-bottom: 6px;
+          margin-top: 20px;
+          margin-bottom: 10px;
           border-bottom: 1px solid #E2E8F0;
-          display: flex;
-          align-items: center;
-          gap: 6px;
+          padding-bottom: 4px;
         }
-
-        /* Tables */
         table {
           width: 100%;
           border-collapse: collapse;
-          margin-bottom: 28px;
-          font-size: 12px;
+          margin-bottom: 20px;
         }
         th {
-          text-align: left;
-          background: #F8FAFC;
-          padding: 10px 12px;
-          font-weight: 700;
+          background-color: #F1F5F9;
           color: #475569;
+          font-weight: 700;
+          font-size: 11px;
           text-transform: uppercase;
-          font-size: 10px;
           letter-spacing: 0.5px;
-          border-bottom: 1px solid #E2E8F0;
+          padding: 8px 10px;
+          text-align: left;
+          border-bottom: 1px solid #CBD5E1;
         }
         td {
-          padding: 10px 12px;
-          border-bottom: 1px solid #F1F5F9;
-          color: #1E293B;
+          padding: 9px 10px;
+          border-bottom: 1px solid #E2E8F0;
+          vertical-align: middle;
         }
-
-        /* Footer */
         .footer-note {
-          margin-top: 36px;
-          padding-top: 16px;
-          border-top: 1px solid #E2E8F0;
+          margin-top: 30px;
+          padding-top: 12px;
+          border-top: 1px dashed #CBD5E1;
           display: flex;
           justify-content: space-between;
-          font-size: 11px;
+          font-size: 10px;
           color: #94A3B8;
         }
       </style>
     </head>
     <body>
       <!-- Header -->
-      <div class="header">
-        <div class="logo-container">
-          <div class="logo-badge">⚡</div>
-          <div>
-            <div class="app-title">SpendFlow</div>
-            <div class="app-subtitle">Financial Intelligence Platform</div>
+      <div class="header-container">
+        <div>
+          <h1 class="brand-title">SpendFlow</h1>
+          <div class="brand-subtitle">Official Financial Statement</div>
+          <div style="margin-top: 10px; font-size: 12px; font-weight: 700; color: #1E293B;">
+            Account Holder: <span style="color: #0F5C4D;">${userName}</span>
+            ${userEmail ? `<span style="font-weight: 400; color: #64748B;"> (${userEmail})</span>` : ''}
           </div>
         </div>
-        <div class="statement-meta">
-          <div class="statement-id">${statementId}</div>
-          <div class="statement-date">Generated: ${statementDate}</div>
+        <div class="meta-box">
+          <div class="meta-title">EXPENSE REPORT</div>
+          <div><strong>Generated:</strong> ${generatedDateStr}</div>
+          <div><strong>Currency:</strong> ${currency}</div>
+          <div><strong>Total Transactions:</strong> ${totalTransactions}</div>
         </div>
       </div>
 
-      <!-- Banner -->
-      <div class="banner">
-        <div>
-          <div class="banner-user-name">${userName}</div>
-          <div class="banner-user-email">${userEmail}</div>
+      <!-- KPI Summary Cards -->
+      <div class="summary-cards">
+        <div class="card">
+          <div class="card-label">Total Outflow</div>
+          <div class="card-value">${formatMoney(totalSpent, currency)}</div>
+          <div class="card-subtext">Across ${totalTransactions} expense records</div>
         </div>
-        <div class="banner-period-tag">${periodTitle}</div>
-      </div>
-
-      <!-- Key Metrics -->
-      <div class="summary-grid">
-        <div class="summary-card highlight">
-          <div class="summary-label">Total Outflows</div>
-          <div class="summary-value primary">${formatMoney(totalAmount, currency)}</div>
+        <div class="card">
+          <div class="card-label">Top Category</div>
+          <div class="card-value" style="font-size: 15px; color: #1E293B; margin-top: 6px;">${topCategory}</div>
+          <div class="card-subtext">Highest expenditure sector</div>
         </div>
-        <div class="summary-card">
-          <div class="summary-label">Total Transactions</div>
-          <div class="summary-value">${expenses.length}</div>
-        </div>
-        <div class="summary-card">
-          <div class="summary-label">Average Outflow</div>
-          <div class="summary-value">${formatMoney(avgPerTx, currency)}</div>
+        <div class="card">
+          <div class="card-label">Average Spend</div>
+          <div class="card-value" style="color: #2563EB;">${formatMoney(averageSpent, currency)}</div>
+          <div class="card-subtext">Per transaction average</div>
         </div>
       </div>
 
-      <!-- Category Allocation -->
+      <!-- Category Breakdown -->
       <div class="section-title">📊 Category Breakdown</div>
       <table>
         <thead>
@@ -544,13 +488,8 @@ export async function exportPdf(
 
   // Native Mobile: Generate PDF file, copy to named cache file
   const { uri: tempUri } = await Print.printToFileAsync({ html });
-  const { File, Paths } = await import('expo-file-system');
-  const tempFile = new File(tempUri);
-  const targetFile = new File(Paths.cache, fileName);
-  if (targetFile.exists) {
-    targetFile.delete();
-  }
-  tempFile.copy(targetFile);
+  const fileUri = `${FileSystem.cacheDirectory}${fileName}`;
+  await FileSystem.copyAsync({ from: tempUri, to: fileUri });
 
-  await saveOrShareFile(targetFile.uri, fileName, 'application/pdf');
+  await saveOrShareFile(fileUri, fileName, 'application/pdf');
 }

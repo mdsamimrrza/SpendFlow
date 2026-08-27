@@ -10,6 +10,7 @@ import {
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import { Edit3, Trash2 } from 'lucide-react-native';
+import { ExpenseDetailModal } from '@/components/expense/ExpenseDetailModal';
 import { Text } from '@/components/ui/Text';
 import { useAuth } from '@/hooks/useAuth';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
@@ -21,15 +22,17 @@ import { formatMoney, formatTime12 } from '@/utils/format';
 interface ExpenseItemProps {
   expense: Expense;
   onDelete?: (expense: Expense) => void;
+  onPress?: (expense: Expense) => void;
 }
 
-export function ExpenseItem({ expense, onDelete }: ExpenseItemProps) {
+export function ExpenseItem({ expense, onDelete, onPress }: ExpenseItemProps) {
   const theme = useTheme();
   const { profile } = useAuth();
   const { convert } = useExchangeRates();
   const { isPrivacyMode } = usePrivacy();
   const router = useRouter();
 
+  const [detailModalOpen, setDetailModalOpen] = useState(false);
   const translateX = useRef(new Animated.Value(0)).current;
   const isSwipedRef = useRef(false);
 
@@ -93,8 +96,11 @@ export function ExpenseItem({ expense, onDelete }: ExpenseItemProps) {
   function handleCardPress() {
     if (isSwipedRef.current) {
       closeSwipe();
+    } else if (onPress) {
+      onPress(expense);
     } else {
-      router.push(`/expense/${expense.id}` as any);
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+      setDetailModalOpen(true);
     }
   }
 
@@ -119,127 +125,139 @@ export function ExpenseItem({ expense, onDelete }: ExpenseItemProps) {
   }
 
   return (
-    <View style={{ position: 'relative', overflow: 'hidden', borderBottomWidth: 1, borderBottomColor: theme.colors.border }}>
-      {/* ── BACKGROUND ACTION TRAY (Revealed on Swipe) ── */}
-      <View
-        style={{
-          position: 'absolute',
-          right: 0,
-          top: 0,
-          bottom: 0,
-          width: 120,
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'flex-end',
-        }}
-      >
-        {/* Edit Button */}
-        <Pressable
-          onPress={handleEditPress}
+    <>
+      <View style={{ position: 'relative', overflow: 'hidden', borderBottomWidth: 1, borderBottomColor: theme.colors.border }}>
+        {/* ── BACKGROUND ACTION TRAY (Revealed on Swipe) ── */}
+        <View
           style={{
-            width: 55,
-            height: '100%',
-            backgroundColor: theme.colors.primary,
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 2,
-          }}
-        >
-          <Edit3 size={16} color="#FFFFFF" />
-          <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '800' }}>Edit</Text>
-        </Pressable>
-
-        {/* Delete Button */}
-        <Pressable
-          onPress={handleDeletePress}
-          style={{
-            width: 65,
-            height: '100%',
-            backgroundColor: theme.colors.danger,
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 2,
-          }}
-        >
-          <Trash2 size={16} color="#FFFFFF" />
-          <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '800' }}>Delete</Text>
-        </Pressable>
-      </View>
-
-      {/* ── FOREGROUND SWIPEABLE ITEM CARD ── */}
-      <Animated.View
-        {...panResponder.panHandlers}
-        style={{
-          transform: [{ translateX }],
-          backgroundColor: theme.colors.background,
-        }}
-      >
-        <Pressable
-          onPress={handleCardPress}
-          style={({ pressed }) => ({
-            minHeight: 74,
+            position: 'absolute',
+            right: 0,
+            top: 0,
+            bottom: 0,
+            width: 120,
             flexDirection: 'row',
             alignItems: 'center',
-            gap: theme.spacing.md,
-            paddingVertical: theme.spacing.md,
-            paddingHorizontal: 4,
-            opacity: pressed ? 0.75 : 1,
-          })}
+            justifyContent: 'flex-end',
+          }}
         >
-          {/* Category Icon Badge */}
-          <View
+          {/* Edit Button */}
+          <Pressable
+            onPress={handleEditPress}
             style={{
-              width: 44,
-              height: 44,
-              borderRadius: theme.radius.full,
-              backgroundColor: expense.categories?.color ?? theme.colors.surfaceElevated,
+              width: 55,
+              height: '100%',
+              backgroundColor: theme.colors.primary,
               alignItems: 'center',
               justifyContent: 'center',
-              borderWidth: 1,
-              borderColor: theme.colors.border,
+              gap: 2,
             }}
           >
-            <Text style={{ fontSize: 20 }}>{expense.categories?.icon ?? '📌'}</Text>
-          </View>
+            <Edit3 size={16} color="#FFFFFF" />
+            <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '800' }}>Edit</Text>
+          </Pressable>
 
-          {/* Description & Metadata */}
-          <View style={{ flex: 1, gap: 2 }}>
-            <Text variant="label" numberOfLines={1} style={{ fontWeight: '700', fontSize: 14 }}>
-              {expense.description || expense.categories?.name || 'Expense'}
-            </Text>
-            <Text variant="caption" muted style={{ fontSize: 11 }}>
-              {expense.date} {expense.time ? `· ${formatTime12(expense.time)}` : ''} · {expense.payment_method}
-            </Text>
-          </View>
+          {/* Delete Button */}
+          <Pressable
+            onPress={handleDeletePress}
+            style={{
+              width: 65,
+              height: '100%',
+              backgroundColor: theme.colors.danger,
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 2,
+            }}
+          >
+            <Trash2 size={16} color="#FFFFFF" />
+            <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '800' }}>Delete</Text>
+          </Pressable>
+        </View>
 
-          {/* Amount Display */}
-          <View style={{ alignItems: 'flex-end', gap: 2 }}>
-            <Text
-              variant="label"
+        {/* ── FOREGROUND SWIPEABLE ITEM CARD ── */}
+        <Animated.View
+          {...panResponder.panHandlers}
+          style={{
+            transform: [{ translateX }],
+            backgroundColor: theme.colors.background,
+            width: '100%',
+            zIndex: 1,
+          }}
+        >
+          <Pressable
+            onPress={handleCardPress}
+            style={({ pressed }) => ({
+              minHeight: 74,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: theme.spacing.md,
+              paddingVertical: theme.spacing.md,
+              paddingHorizontal: 4,
+              opacity: pressed ? 0.75 : 1,
+            })}
+          >
+            {/* Category Icon Badge */}
+            <View
               style={{
-                fontVariant: ['tabular-nums'],
-                fontSize: 16,
-                fontWeight: '900',
-                color: theme.colors.text,
+                width: 44,
+                height: 44,
+                borderRadius: theme.radius.full,
+                backgroundColor: expense.categories?.color ?? theme.colors.surfaceElevated,
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderWidth: 1,
+                borderColor: theme.colors.border,
               }}
             >
-              -{formatMoney(convertedAmount, preferredCurrency)}
-            </Text>
-            {isDifferentCurrency ? (
+              <Text style={{ fontSize: 20 }}>{expense.categories?.icon ?? '📌'}</Text>
+            </View>
+
+            {/* Description & Metadata */}
+            <View style={{ flex: 1, gap: 2 }}>
+              <Text variant="label" numberOfLines={1} style={{ fontWeight: '700', fontSize: 14 }}>
+                {expense.description || expense.categories?.name || 'Expense'}
+              </Text>
+              <Text variant="caption" muted style={{ fontSize: 11 }}>
+                {expense.date} {expense.time ? `· ${formatTime12(expense.time)}` : ''} · {expense.payment_method}
+              </Text>
+            </View>
+
+            {/* Amount Display */}
+            <View style={{ alignItems: 'flex-end', gap: 2 }}>
               <Text
+                variant="label"
                 style={{
-                  fontSize: 11,
-                  fontWeight: '600',
-                  color: theme.colors.textMuted,
                   fontVariant: ['tabular-nums'],
+                  fontSize: 16,
+                  fontWeight: '900',
+                  color: theme.colors.text,
                 }}
               >
-                ({formatMoney(Number(expense.amount), expense.currency)})
+                {formatMoney(convertedAmount, preferredCurrency)}
               </Text>
-            ) : null}
-          </View>
-        </Pressable>
-      </Animated.View>
-    </View>
+              {isDifferentCurrency ? (
+                <Text
+                  style={{
+                    fontSize: 11,
+                    fontWeight: '600',
+                    color: theme.colors.textMuted,
+                    fontVariant: ['tabular-nums'],
+                  }}
+                >
+                  ({formatMoney(Number(expense.amount), expense.currency)})
+                </Text>
+              ) : null}
+            </View>
+          </Pressable>
+        </Animated.View>
+      </View>
+
+      {/* ── FULL EXPENSE DETAIL PREVIEW MODAL ── */}
+      <ExpenseDetailModal
+        expense={expense}
+        visible={detailModalOpen}
+        onClose={() => setDetailModalOpen(false)}
+        onDelete={onDelete}
+      />
+    </>
   );
 }

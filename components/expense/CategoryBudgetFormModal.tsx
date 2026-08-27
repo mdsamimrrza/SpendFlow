@@ -126,7 +126,7 @@ export function CategoryBudgetFormModal({
     }, 0);
   }, [categories, selectedCatId, amountInput]);
 
-  const allocationPct = monthlyOverall > 0 ? Math.min(Math.round((previewAllocated / monthlyOverall) * 100), 150) : 0;
+  const allocationPct = monthlyOverall > 0 ? Math.round((previewAllocated / monthlyOverall) * 100) : 0;
   const isOverAllocated = monthlyOverall > 0 && previewAllocated > monthlyOverall;
 
   return (
@@ -172,8 +172,8 @@ export function CategoryBudgetFormModal({
               }}
             />
 
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.spacing.sm }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
                 <View
                   style={{
                     width: 36,
@@ -186,11 +186,11 @@ export function CategoryBudgetFormModal({
                 >
                   <Target size={20} color={theme.colors.primary} />
                 </View>
-                <View>
-                  <Text variant="h3" style={{ fontWeight: '800', fontSize: 17 }}>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text variant="h3" numberOfLines={2} style={{ fontWeight: '800', fontSize: 17 }}>
                     {t('category_budget_studio_title') || 'Category Budget Studio'}
                   </Text>
-                  <Text variant="caption" muted style={{ fontSize: 11 }}>
+                  <Text variant="caption" muted numberOfLines={2} style={{ fontSize: 11 }}>
                     {t('category_budget_studio_sub') || 'Allocate custom allowances per category'}
                   </Text>
                 </View>
@@ -226,23 +226,28 @@ export function CategoryBudgetFormModal({
                 borderColor: isOverAllocated ? theme.colors.danger : theme.colors.primary,
               }}
             >
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: theme.spacing.sm }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 }}>
                   <Wallet size={15} color={isOverAllocated ? theme.colors.danger : theme.colors.primary} />
-                  <Text variant="caption" style={{ fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.6, fontSize: 10, color: isOverAllocated ? theme.colors.danger : theme.colors.primary }}>
+                  <Text variant="caption" numberOfLines={2} style={{ flex: 1, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.6, fontSize: 10, color: isOverAllocated ? theme.colors.danger : theme.colors.primary }}>
                     {t('category_budget_allocation_intelligence') || 'Budget Allocation Intelligence'}
                   </Text>
                 </View>
 
                 <Text
                   variant="caption"
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.75}
                   style={{
                     fontWeight: '800',
                     fontSize: 11,
+                    flexShrink: 1,
+                    textAlign: 'right',
                     color: isOverAllocated ? theme.colors.danger : theme.colors.primary,
                   }}
                 >
-                  {allocationPct}% {t('category_budget_allocated') || 'Allocated'}
+                  {allocationPct}% {isOverAllocated ? 'Over' : t('category_budget_allocated') || 'Allocated'}
                 </Text>
               </View>
 
@@ -265,8 +270,8 @@ export function CategoryBudgetFormModal({
                 />
               </View>
 
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Text variant="caption" muted style={{ fontSize: 11 }}>
+              <View style={{ gap: 4 }}>
+                <Text variant="caption" muted numberOfLines={2} style={{ fontSize: 11 }}>
                   Total Category Caps: <Text style={{ fontWeight: '800', color: theme.colors.text }}>{formatMoney(previewAllocated, currency)}</Text>
                 </Text>
 
@@ -483,6 +488,26 @@ export function CategoryBudgetFormModal({
                       </Text>
                     </PressableScale>
                   ))}
+                </View>
+
+                {/* Smart Alert Threshold Indicator */}
+                <View
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 6,
+                    paddingHorizontal: 12,
+                    paddingVertical: 8,
+                    borderRadius: theme.radius.sm,
+                    backgroundColor: theme.isDark ? 'rgba(245, 158, 11, 0.12)' : '#FEF3C7',
+                    borderWidth: 1,
+                    borderColor: theme.isDark ? 'rgba(245, 158, 11, 0.3)' : '#FDE68A',
+                  }}
+                >
+                  <Text style={{ fontSize: 13 }}>🔔</Text>
+                  <Text style={{ fontSize: 11.5, fontWeight: '600', color: theme.isDark ? '#FCD34D' : '#92400E', flex: 1 }}>
+                    Smart alerts trigger at <Text style={{ fontWeight: '800' }}>90%</Text> & <Text style={{ fontWeight: '800' }}>100%+</Text> for this category.
+                  </Text>
                 </View>
 
                 {successMsg ? (
