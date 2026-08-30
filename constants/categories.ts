@@ -1,11 +1,25 @@
+export const DEFAULT_EXPENSE_CATEGORIES = [
+  { name: 'Food', icon: 'utensils', color: '#10B981', type: 'expense' as const },
+  { name: 'Transport', icon: 'car', color: '#10B981', type: 'expense' as const },
+  { name: 'Entertainment', icon: 'film', color: '#10B981', type: 'expense' as const },
+  { name: 'Medical', icon: 'heart-pulse', color: '#10B981', type: 'expense' as const },
+  { name: 'Utilities', icon: 'zap', color: '#10B981', type: 'expense' as const },
+  { name: 'Shopping', icon: 'shopping-bag', color: '#10B981', type: 'expense' as const },
+  { name: 'Travel', icon: 'plane', color: '#10B981', type: 'expense' as const },
+  { name: 'Education', icon: 'graduation-cap', color: '#10B981', type: 'expense' as const },
+  { name: 'Other', icon: 'tag', color: '#10B981', type: 'expense' as const },
+] as const;
+
+export const DEFAULT_INCOME_CATEGORIES = [
+  { name: 'Salary', icon: 'briefcase', color: '#10B981', type: 'income' as const },
+  { name: 'Freelance', icon: 'coins', color: '#10B981', type: 'income' as const },
+  { name: 'Business', icon: 'building', color: '#10B981', type: 'income' as const },
+  { name: 'Investments', icon: 'trending-up', color: '#10B981', type: 'income' as const },
+  { name: 'Gifts', icon: 'gift', color: '#10B981', type: 'income' as const },
+  { name: 'Other Income', icon: 'banknote', color: '#10B981', type: 'income' as const },
+] as const;
+
 export const DEFAULT_CATEGORIES = [
-  { name: 'Food', icon: '🍔', color: '#E85D75' },
-  { name: 'Transport', icon: '🚕', color: '#F59E0B' },
-  { name: 'Entertainment', icon: '🎮', color: '#8B5CF6' },
-  { name: 'Medical', icon: '⚕️', color: '#EF4444' },
-  { name: 'Utilities', icon: '💡', color: '#06B6D4' },
-  { name: 'Shopping', icon: '🛍️', color: '#EC4899' },
-  { name: 'Travel', icon: '✈️', color: '#3B82F6' },
-  { name: 'Education', icon: '📚', color: '#10B981' },
-  { name: 'Other', icon: '📌', color: '#64748B' },
+  ...DEFAULT_EXPENSE_CATEGORIES,
+  ...DEFAULT_INCOME_CATEGORIES,
 ] as const;

@@ -4,58 +4,228 @@ import { seedDefaultCategories } from '@/services/categories';
 import { Expense, ExpenseFilters, ExpenseInput, ExpensePage, SortKey } from '@/types';
 import { supabase } from '@/utils/supabase';
 
+// Default selection with only categories (most common join). Bank accounts joined on demand to avoid duplicates.
 const selection = '*, categories(name, icon, color)';
+const selectionWithAccounts = '*, categories(name, icon, color), bank_accounts(name, icon, color, account_type)';
+
+function applyExpenseFilters(query: any, page = 0, filters?: ExpenseFilters, sort: SortKey = 'date_desc') {
+  let q = query;
+  if (!filters?.fetchAll) {
+    const from = page * PAGE_SIZE;
+    const to = from + PAGE_SIZE - 1;
+    q = q.range(from, to);
+  }
+  if (filters?.fromDate) q = q.gte('date', filters.fromDate);
+  if (filters?.toDate) q = q.lte('date', filters.toDate);
+  if (filters?.categoryIds?.length) q = q.in('category_id', filters.categoryIds);
+  if (filters?.bankAccountId && filters.bankAccountId !== 'All') q = q.eq('bank_account_id', filters.bankAccountId);
+  if (filters?.minAmount !== undefined) q = q.gte('amount', filters.minAmount);
+  if (filters?.maxAmount !== undefined) q = q.lte('amount', filters.maxAmount);
+  if (filters?.paymentMethod && filters.paymentMethod !== 'All') q = q.eq('payment_method', filters.paymentMethod);
+  if (filters?.type && filters.type !== 'All') q = q.eq('type', filters.type);
+  if (filters?.search) q = q.or(`description.ilike.%${filters.search}%,notes.ilike.%${filters.search}%`);
+  if (sort === 'amount_asc' || sort === 'amount_desc') q = q.order('amount', { ascending: sort === 'amount_asc' });
+  else q = q.order('date', { ascending: sort === 'date_asc' }).order('created_at', { ascending: false });
+  return q;
+}
+
+function isUnsyncedLocalExpense(expense: Expense): boolean {
+  return expense.is_synced === false || expense.id.startsWith('offline-');
+}
+
+function matchesLocalFilters(expense: Expense, filters?: ExpenseFilters): boolean {
+  if (expense.deleted_at) return false;
+  if (filters?.fromDate && expense.date < filters.fromDate) return false;
+  if (filters?.toDate && expense.date > filters.toDate) return false;
+  if (filters?.categoryIds?.length && !filters.categoryIds.includes(expense.category_id)) return false;
+  if (filters?.bankAccountId && filters.bankAccountId !== 'All' && expense.bank_account_id !== filters.bankAccountId) return false;
+  if (filters?.minAmount !== undefined && Number(expense.amount) < filters.minAmount) return false;
+  if (filters?.maxAmount !== undefined && Number(expense.amount) > filters.maxAmount) return false;
+  if (filters?.paymentMethod && filters.paymentMethod !== 'All' && expense.payment_method !== filters.paymentMethod) return false;
+  if (filters?.type && filters.type !== 'All' && (expense.type || 'expense') !== filters.type) return false;
+  if (filters?.search) {
+    const search = filters.search.toLowerCase();
+    const text = `${expense.description || ''} ${expense.notes || ''}`.toLowerCase();
+    if (!text.includes(search)) return false;
+  }
+  return true;
+}
+
+function sortExpenses(items: Expense[], sort: SortKey): Expense[] {
+  return [...items].sort((a, b) => {
+    if (sort === 'amount_asc') return Number(a.amount) - Number(b.amount);
+    if (sort === 'amount_desc') return Number(b.amount) - Number(a.amount);
+    const dateCompare = a.date.localeCompare(b.date);
+    if (dateCompare !== 0) return sort === 'date_asc' ? dateCompare : -dateCompare;
+    return sort === 'date_asc'
+      ? a.created_at.localeCompare(b.created_at)
+      : b.created_at.localeCompare(a.created_at);
+  });
+}
+
+/**
+ * Applies the same filter + sort rules as the server query against locally
+ * cached rows. Used to paint cached data instantly (before the network
+ * response arrives) without showing entries the active filters exclude.
+ */
+export function filterAndSortCachedExpenses(items: Expense[], filters?: ExpenseFilters, sort: SortKey = 'date_desc'): Expense[] {
+  return sortExpenses(items.filter((expense) => matchesLocalFilters(expense, filters)), sort);
+}
 
 export async function listExpenses(userId: string, page = 0, filters?: ExpenseFilters, sort: SortKey = 'date_desc'): Promise<ExpensePage> {
-  const from = page * PAGE_SIZE;
-  const to = from + PAGE_SIZE - 1;
-  let query = supabase.from('expenses').select(selection).eq('user_id', userId).is('deleted_at', null).range(from, to);
-  if (filters?.fromDate) query = query.gte('date', filters.fromDate);
-  if (filters?.toDate) query = query.lte('date', filters.toDate);
-  if (filters?.categoryIds?.length) query = query.in('category_id', filters.categoryIds);
-  if (filters?.minAmount !== undefined) query = query.gte('amount', filters.minAmount);
-  if (filters?.maxAmount !== undefined) query = query.lte('amount', filters.maxAmount);
-  if (filters?.paymentMethod && filters.paymentMethod !== 'All') query = query.eq('payment_method', filters.paymentMethod);
-  if (filters?.search) query = query.or(`description.ilike.%${filters.search}%,notes.ilike.%${filters.search}%`);
-  if (sort === 'amount_asc' || sort === 'amount_desc') query = query.order('amount', { ascending: sort === 'amount_asc' });
-  else query = query.order('date', { ascending: sort === 'date_asc' }).order('created_at', { ascending: false });
-  const { data, error } = await query;
-  if (error) throw error;
-  const items = (data ?? []) as Expense[];
+  const useAccountsJoin = !!(filters?.bankAccountId && filters.bankAccountId !== 'All');
+  const selectionToUse = useAccountsJoin ? selectionWithAccounts : selection;
+
+  // Start the network request and the cache read in parallel — the request
+  // must never wait on disk. The cache read (started before the query below
+  // resolves) still sees the pre-write cache, which is what the offline merge
+  // at the bottom of this function depends on.
+  const queryPromise = Promise.resolve(
+    applyExpenseFilters(
+      supabase.from('expenses').select(selectionToUse).eq('user_id', userId).is('deleted_at', null),
+      page,
+      filters,
+      sort,
+    ),
+  );
+  const cachePromise: Promise<Expense[]> = page === 0 ? getCachedExpenses() : Promise.resolve([]);
+
+  let { data, error } = await queryPromise;
+  if (error) {
+    const fallbackQuery = applyExpenseFilters(
+      supabase.from('expenses').select(selection).eq('user_id', userId).is('deleted_at', null),
+      page,
+      filters,
+      sort,
+    );
+    const fallbackRes = await fallbackQuery;
+    if (fallbackRes.error) throw fallbackRes.error;
+    data = fallbackRes.data;
+  }
+  const cachedExpenses = await cachePromise;
+
+  const serverItems = ((data ?? []) as Expense[]).map((e) => ({
+    ...e,
+    type: e.type || 'expense',
+  }));
+
+  const localPendingItems = page === 0
+    ? cachedExpenses.filter((expense) => (
+      expense.user_id === userId
+      && isUnsyncedLocalExpense(expense)
+      && matchesLocalFilters(expense, filters)
+    ))
+    : [];
+  const serverIds = new Set(serverItems.map((expense) => expense.id));
+  const items = page === 0
+    ? sortExpenses([...localPendingItems.filter((expense) => !serverIds.has(expense.id)), ...serverItems], sort)
+    : serverItems;
+
   if (page === 0) await AsyncStorage.setItem(EXPENSE_CACHE_KEY, JSON.stringify(items));
-  return { items, hasMore: items.length === PAGE_SIZE };
+  return { items, hasMore: filters?.fetchAll ? false : serverItems.length === PAGE_SIZE };
 }
 
 export async function getCachedExpenses() {
   const raw = await AsyncStorage.getItem(EXPENSE_CACHE_KEY);
-  return raw ? (JSON.parse(raw) as Expense[]) : [];
+  if (!raw) return [];
+  const parsed = JSON.parse(raw) as Expense[];
+  return parsed.map((e) => ({
+    ...e,
+    type: e.type || 'expense',
+  }));
 }
 
 export async function getExpense(id: string) {
-  const { data, error } = await supabase.from('expenses').select(selection).eq('id', id).is('deleted_at', null).single();
-  if (error) throw error;
-  return data as Expense;
+  if (!isValidUUID(id)) {
+    throw new Error('This offline expense was removed because SpendFlow now requires an internet connection.');
+  }
+  let requestError: unknown = null;
+  try {
+    const { data, error } = await supabase.from('expenses').select(selection).eq('id', id).is('deleted_at', null).single();
+    if (!error && data) return data as Expense;
+    requestError = error;
+  } catch (error) {
+    requestError = error;
+  }
+
+  const cachedExpense = (await getCachedExpenses()).find((expense) => expense.id === id && !expense.deleted_at);
+  if (cachedExpense) return cachedExpense;
+  if (requestError) throw requestError;
+  throw new Error('This offline expense is no longer available on this device.');
 }
 
-export async function createExpense(userId: string, input: ExpenseInput) {
-  const { data, error } = await supabase
+function isValidUUID(str?: string | null): boolean {
+  if (!str) return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+}
+
+export async function createExpense(userId: string, input: ExpenseInput, clientSyncId?: string) {
+  const transactionType = input.type || 'expense';
+  const sanitizedBankAccountId = isValidUUID(input.bank_account_id) ? input.bank_account_id : null;
+  const sanitizedInput = {
+    ...input,
+    bank_account_id: sanitizedBankAccountId,
+  };
+  const { type, ...baseInput } = sanitizedInput;
+
+  const values = {
+    ...sanitizedInput,
+    type: transactionType,
+    user_id: userId,
+    is_synced: true,
+    ...(clientSyncId ? { client_sync_id: clientSyncId } : {}),
+  };
+  const query = clientSyncId
+    ? supabase.from('expenses').upsert(values, { onConflict: 'user_id,client_sync_id' })
+    : supabase.from('expenses').insert(values);
+  const result = await query.select(selection).single();
+
+  if (!result.error && result.data) return result.data as Expense;
+
+  // Keep compatibility with databases that have not yet received the transaction-type
+  // migration. Never retry arbitrary errors: a write may already have succeeded.
+  if (result.error?.code !== '42703') throw result.error;
+  const legacyResult = await supabase
     .from('expenses')
-    .insert({ ...input, user_id: userId, is_synced: true })
+    .insert({ ...baseInput, user_id: userId, is_synced: true })
     .select(selection)
     .single();
-  if (error) throw error;
-  return data as Expense;
+  if (legacyResult.error) throw legacyResult.error;
+  return { ...legacyResult.data, type: transactionType } as Expense;
 }
 
 export async function updateExpense(id: string, input: ExpenseInput) {
-  const { data, error } = await supabase
+  const transactionType = input.type || 'expense';
+  const sanitizedBankAccountId = isValidUUID(input.bank_account_id) ? input.bank_account_id : null;
+  const sanitizedInput = {
+    ...input,
+    bank_account_id: sanitizedBankAccountId,
+  };
+  const { type, ...baseInput } = sanitizedInput;
+
+  let updatedData: any = null;
+  const res1 = await supabase
     .from('expenses')
-    .update({ ...input, updated_at: new Date().toISOString(), is_synced: true })
+    .update({ ...sanitizedInput, type: transactionType, updated_at: new Date().toISOString(), is_synced: true })
     .eq('id', id)
     .select(selection)
     .single();
-  if (error) throw error;
-  return data as Expense;
+
+  if (!res1.error && res1.data) {
+    updatedData = res1.data;
+  } else {
+    const res2 = await supabase
+      .from('expenses')
+      .update({ ...baseInput, updated_at: new Date().toISOString(), is_synced: true })
+      .eq('id', id)
+      .select(selection)
+      .single();
+
+    if (res2.error) throw res2.error;
+    updatedData = { ...res2.data, type: transactionType };
+  }
+
+  return updatedData as Expense;
 }
 
 export async function softDeleteExpense(id: string) {

@@ -1,5 +1,5 @@
 import '@/utils/polyfills';
-import { Alert, Platform } from 'react-native';
+import { Platform } from 'react-native';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -77,7 +77,6 @@ async function saveOrShareFile(
             encoding: FileSystem.EncodingType.Base64,
           });
 
-          Alert.alert('Download Complete ✅', `Statement saved to your selected folder as:\n\n${fileName}`);
           return;
         }
       }

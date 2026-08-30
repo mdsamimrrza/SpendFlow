@@ -49,12 +49,16 @@ export function FinancialHealthScoreCard({
 
   // Compute 0-100 Score and Smart Insights
   const healthData = useMemo(() => {
-    if (expenses.length === 0) {
+    const expenseItems = expenses.filter((e) => e.type !== 'income');
+    const incomeItems = expenses.filter((e) => e.type === 'income');
+
+    if (expenseItems.length === 0 && incomeItems.length === 0) {
       return {
         score: 75,
         grade: 'B+',
         status: 'Neutral',
         color: '#38BDF8',
+        savingsRate: null as number | null,
         insights: [
           {
             type: 'info',
@@ -71,7 +75,12 @@ export function FinancialHealthScoreCard({
     const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
     const monthProgress = currentDay / daysInMonth;
 
-    const totalSpent = expenses.reduce(
+    const totalSpent = expenseItems.reduce(
+      (sum, e) => sum + convert(Number(e.amount), e.currency || 'NPR', currency),
+      0,
+    );
+
+    const totalIncome = incomeItems.reduce(
       (sum, e) => sum + convert(Number(e.amount), e.currency || 'NPR', currency),
       0,
     );
@@ -80,9 +89,45 @@ export function FinancialHealthScoreCard({
     let volatilityPoints = 20; // max 25
     let categoryPoints = 18; // max 20
     let weekendPoints = 16; // max 20
+    let savingsBonus = 0; // max 10
     const insights: { type: 'success' | 'warning' | 'info'; icon: any; title: string; desc: string }[] = [];
 
-    // 1. Budget Adherence Score (0-35 pts)
+    let computedSavingsRate: number | null = null;
+    let computedNetSavings = 0;
+
+    // 1. Savings Rate & Cash Flow Diagnostic
+    if (totalIncome > 0) {
+      computedNetSavings = totalIncome - totalSpent;
+      const rate = computedNetSavings / totalIncome;
+      computedSavingsRate = Math.round(rate * 100);
+
+      if (rate >= 0.20) {
+        savingsBonus = 10;
+        insights.push({
+          type: 'success',
+          icon: Sparkles,
+          title: 'Strong Savings Rate',
+          desc: `You are retaining ${computedSavingsRate}% of your total income after expenses.`,
+        });
+      } else if (rate > 0) {
+        savingsBonus = 5;
+        insights.push({
+          type: 'info',
+          icon: ShieldCheck,
+          title: 'Positive Cash Flow',
+          desc: `Net positive cash flow of +${formatMoney(computedNetSavings, currency)} maintained in this period.`,
+        });
+      } else {
+        insights.push({
+          type: 'warning',
+          icon: AlertTriangle,
+          title: 'Cash Flow Deficit',
+          desc: `Total outflow exceeds total earned income by ${formatMoney(Math.abs(computedNetSavings), currency)}.`,
+        });
+      }
+    }
+
+    // 2. Budget Adherence Score (0-35 pts)
     if (monthlyBudget > 0) {
       const budgetUsedRatio = totalSpent / monthlyBudget;
       const expectedRatio = monthProgress;
@@ -115,9 +160,9 @@ export function FinancialHealthScoreCard({
       }
     }
 
-    // 2. Spending Volatility & Spikes (0-25 pts)
+    // 3. Spending Volatility & Spikes (0-25 pts)
     const dailyMap = new Map<string, number>();
-    expenses.forEach((e) => {
+    expenseItems.forEach((e) => {
       const current = dailyMap.get(e.date) || 0;
       dailyMap.set(e.date, current + convert(Number(e.amount), e.currency || 'NPR', currency));
     });
@@ -150,8 +195,8 @@ export function FinancialHealthScoreCard({
       }
     }
 
-    // 3. Category Concentration & Diversity (0-20 pts)
-    const categoryGroups = groupByCategory(expenses, currency, rates);
+    // 4. Category Concentration & Diversity (0-20 pts)
+    const categoryGroups = groupByCategory(expenseItems, currency, rates);
     if (categoryGroups.length > 0) {
       const topCat = categoryGroups[0];
       const topRatio = topCat.total / Math.max(totalSpent, 1);
@@ -175,10 +220,10 @@ export function FinancialHealthScoreCard({
       }
     }
 
-    // 4. Weekend vs Weekday Surge Ratio (0-20 pts)
+    // 5. Weekend vs Weekday Surge Ratio (0-20 pts)
     let weekendSpend = 0;
     let weekdaySpend = 0;
-    expenses.forEach((e) => {
+    expenseItems.forEach((e) => {
       const day = new Date(e.date).getDay();
       const amt = convert(Number(e.amount), e.currency || 'NPR', currency);
       if (day === 0 || day === 6) {
@@ -189,7 +234,7 @@ export function FinancialHealthScoreCard({
     });
 
     const weekendRatio = weekendSpend / Math.max(totalSpent, 1);
-    if (weekendRatio > 0.55 && expenses.length >= 4) {
+    if (weekendRatio > 0.55 && expenseItems.length >= 4) {
       weekendPoints = 10;
       insights.push({
         type: 'warning',
@@ -202,9 +247,10 @@ export function FinancialHealthScoreCard({
     }
 
     // Total Score Calculation (0 - 100)
+    const baseScore = budgetPoints + volatilityPoints + categoryPoints + weekendPoints;
     const totalScore = Math.min(
       100,
-      Math.max(10, Math.round(budgetPoints + volatilityPoints + categoryPoints + weekendPoints)),
+      Math.max(10, Math.round(baseScore + savingsBonus)),
     );
 
     let grade = 'A+';
@@ -238,6 +284,7 @@ export function FinancialHealthScoreCard({
       grade,
       status,
       color,
+      savingsRate: computedSavingsRate,
       insights: insights.slice(0, 3),
     };
   }, [expenses, monthlyBudget, currency, convert, rates]);
@@ -391,6 +438,28 @@ export function FinancialHealthScoreCard({
             </View>
           </View>
 
+          {/* Savings Rate Badge Pill (If income exists in period) */}
+          {healthData.savingsRate !== null && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 2 }}>
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 4,
+                  paddingHorizontal: 7,
+                  paddingVertical: 2,
+                  borderRadius: 6,
+                  backgroundColor: healthData.savingsRate >= 20 ? 'rgba(16,185,129,0.15)' : 'rgba(245,158,11,0.15)',
+                }}
+              >
+                <Sparkles size={11} color={healthData.savingsRate >= 20 ? '#10B981' : '#F59E0B'} />
+                <Text style={{ fontSize: 11, fontWeight: '800', color: healthData.savingsRate >= 20 ? '#10B981' : '#F59E0B' }}>
+                  Savings Rate: {healthData.savingsRate}%
+                </Text>
+              </View>
+            </View>
+          )}
+
           <Text variant="caption" muted style={{ fontSize: 12, lineHeight: 16 }}>
             {healthData.score >= 75
               ? 'Your spending discipline is in top tier. Outflows match your planned pace.'
@@ -419,9 +488,10 @@ export function FinancialHealthScoreCard({
           const iconColor = isWarning ? '#F59E0B' : theme.colors.primary;
 
           return (
-            <View
+            <Pressable
               key={idx}
-              style={{
+              onPress={openInfoModal}
+              style={({ pressed }) => ({
                 flexDirection: 'row',
                 gap: 10,
                 alignItems: 'flex-start',
@@ -430,7 +500,8 @@ export function FinancialHealthScoreCard({
                 backgroundColor: theme.colors.surfaceElevated,
                 borderWidth: 1,
                 borderColor: theme.colors.border,
-              }}
+                opacity: pressed ? 0.8 : 1,
+              })}
             >
               <View
                 style={{
@@ -456,7 +527,7 @@ export function FinancialHealthScoreCard({
                   {insight.desc}
                 </Text>
               </View>
-            </View>
+            </Pressable>
           );
         })}
       </View>
@@ -468,26 +539,36 @@ export function FinancialHealthScoreCard({
         animationType="fade"
         onRequestClose={closeInfoModal}
       >
-        <Pressable
-          onPress={closeInfoModal}
+        <View
           style={{
             flex: 1,
             backgroundColor: 'rgba(0,0,0,0.72)',
             justifyContent: 'center',
             alignItems: 'center',
-            padding: 20,
+            padding: 16,
           }}
         >
+          {/* Backdrop Tap to Dismiss */}
           <Pressable
-            onPress={(e) => e.stopPropagation()}
+            onPress={closeInfoModal}
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+            }}
+          />
+
+          {/* Modal Card (View instead of Pressable so Android touch gestures are passed to ScrollView) */}
+          <View
             style={{
               width: '100%',
               maxWidth: 440,
               maxHeight: '85%',
               backgroundColor: theme.colors.surface,
               borderRadius: 24,
-              padding: 22,
-              gap: 16,
+              padding: 20,
               borderWidth: 1.2,
               borderColor: theme.colors.border,
               shadowColor: '#000000',
@@ -498,7 +579,7 @@ export function FinancialHealthScoreCard({
             }}
           >
             {/* Modal Header */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
                 <View
                   style={{
@@ -540,9 +621,15 @@ export function FinancialHealthScoreCard({
               </Pressable>
             </View>
 
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: 14 }}>
+            {/* Scrollable Content on all Android screen sizes */}
+            <ScrollView
+              nestedScrollEnabled
+              showsVerticalScrollIndicator
+              contentContainerStyle={{ gap: 14, paddingBottom: 10 }}
+              style={{ flexShrink: 1 }}
+            >
               <Text muted style={{ fontSize: 13, lineHeight: 18 }}>
-                The Financial Health Score is an automated 0–100 behavioral diagnostic evaluating your financial discipline across 4 core pillars:
+                The Financial Health Score is an automated 0–100 behavioral diagnostic evaluating your financial discipline across 5 core pillars:
               </Text>
 
               {/* Pillar 1: Budget Adherence */}
@@ -653,6 +740,33 @@ export function FinancialHealthScoreCard({
                 </Text>
               </View>
 
+              {/* Pillar 5: Savings Rate & Inflow Retention */}
+              <View
+                style={{
+                  padding: 12,
+                  borderRadius: 14,
+                  backgroundColor: theme.colors.surfaceElevated,
+                  borderWidth: 1,
+                  borderColor: theme.colors.border,
+                  gap: 6,
+                }}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Sparkles size={16} color="#10B981" />
+                    <Text style={{ fontWeight: '800', fontSize: 13.5, color: theme.colors.text }}>
+                      5. Savings Rate & Cash Flow
+                    </Text>
+                  </View>
+                  <Text style={{ fontWeight: '800', fontSize: 12, color: '#10B981' }}>
+                    +10 pts Bonus
+                  </Text>
+                </View>
+                <Text variant="caption" muted style={{ fontSize: 12, lineHeight: 16 }}>
+                  Measures the percentage of total income retained after all living expenses. Retaining ≥20% of your earnings grants full bonus points and protects your wealth trajectory.
+                </Text>
+              </View>
+
               {/* Rating Scale Legend */}
               <View style={{ gap: 8, marginTop: 4 }}>
                 <Text style={{ fontWeight: '800', fontSize: 13, color: theme.colors.text }}>
@@ -695,8 +809,8 @@ export function FinancialHealthScoreCard({
                 Got It
               </Text>
             </Pressable>
-          </Pressable>
-        </Pressable>
+          </View>
+        </View>
       </Modal>
     </Card>
   );

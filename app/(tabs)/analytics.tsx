@@ -8,6 +8,8 @@ import {
   ArrowUpRight,
   BarChart3,
   Calendar,
+  Check,
+  ChevronDown,
   Clock,
   Compass,
   CreditCard,
@@ -24,12 +26,12 @@ import {
   Zap,
 } from 'lucide-react-native';
 import { BudgetAnalyticsCard } from '@/components/expense/BudgetAnalyticsCard';
+import { IncomeExpenseBudgetCard } from '@/components/expense/IncomeExpenseBudgetCard';
 import { BudgetProgress } from '@/components/expense/BudgetProgress';
 import { CategoryBudgetFormModal } from '@/components/expense/CategoryBudgetFormModal';
 import { CategoryBreakdown } from '@/components/expense/Charts';
 import { FinancialHealthScoreCard } from '@/components/expense/FinancialHealthScoreCard';
 import { FinancialInsights } from '@/components/expense/FinancialInsights';
-import { StockTrendChart } from '@/components/expense/StockTrendChart';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { PrivacyEyeButton } from '@/components/ui/PrivacyEyeButton';
@@ -43,9 +45,10 @@ import { usePrivacy } from '@/hooks/usePrivacy';
 import { useTheme } from '@/hooks/useTheme';
 import { listCategories } from '@/services/categories';
 import { Category, PeriodKey } from '@/types';
-import { filterExpensesByPeriod, formatMoney, sumExpenses } from '@/utils/format';
+import { filterExpensesByPeriod, formatMoney, sumExpenses, sumIncome } from '@/utils/format';
 
 type AnalyticsSectionTab = 'overview' | 'categories' | 'habits' | 'all';
+type AnalyticsFlowType = 'expense' | 'income';
 type KpiMetricKey = 'total_spent' | 'daily_velocity' | 'peak_expense' | 'average_ticket';
 
 export default function AnalyticsScreen() {
@@ -58,10 +61,13 @@ export default function AnalyticsScreen() {
   const isCompact = width < 390;
   const [period, setPeriod] = useState<PeriodKey>('month');
   const [activeTab, setActiveTab] = useState<AnalyticsSectionTab>('overview');
+  const [periodModalOpen, setPeriodModalOpen] = useState(false);
+  const [sectionModalOpen, setSectionModalOpen] = useState(false);
   const [categories, setCategories] = useState<Category[]>([]);
   const [categoryModalVisible, setCategoryModalVisible] = useState(false);
   const [kpiModalMetric, setKpiModalMetric] = useState<KpiMetricKey | null>(null);
-  const expenses = useExpenses(profile?.id ?? session?.user?.id);
+  const [analyticsFlowType, setAnalyticsFlowType] = useState<AnalyticsFlowType>('expense');
+  const expenses = useExpenses(profile?.id ?? session?.user?.id, { fetchAll: true });
 
   const loadCategories = useCallback(() => {
     if (profile?.id) {
@@ -99,14 +105,26 @@ export default function AnalyticsScreen() {
     [expenses.items, period],
   );
 
-  const totalSpend = sumExpenses(filteredItems, preferredCurrency, rates);
+  const expenseItems = useMemo(
+    () => filteredItems.filter((e) => e.type !== 'income'),
+    [filteredItems],
+  );
+
+  const incomeItems = useMemo(
+    () => filteredItems.filter((e) => e.type === 'income'),
+    [filteredItems],
+  );
+
+  const totalSpend = sumExpenses(filteredItems, preferredCurrency, rates, 'expense');
+  const totalIncome = sumIncome(filteredItems, preferredCurrency, rates);
+  const netSavings = totalIncome - totalSpend;
 
   // Largest single expense item
   const peakItem = useMemo(() => {
-    if (filteredItems.length === 0) return null;
-    let highest = filteredItems[0];
+    if (expenseItems.length === 0) return null;
+    let highest = expenseItems[0];
     let maxVal = 0;
-    filteredItems.forEach((e) => {
+    expenseItems.forEach((e) => {
       const converted = convert(Number(e.amount), e.currency || 'NPR', preferredCurrency);
       if (converted > maxVal) {
         maxVal = converted;
@@ -114,11 +132,11 @@ export default function AnalyticsScreen() {
       }
     });
     return { expense: highest, amount: maxVal };
-  }, [filteredItems, preferredCurrency, convert]);
+  }, [expenseItems, preferredCurrency, convert]);
 
   // Daily average spend velocity in this period
   const dailyVelocity = useMemo(() => {
-    if (filteredItems.length === 0 || totalSpend === 0) return 0;
+    if (expenseItems.length === 0 || totalSpend === 0) return 0;
     const now = new Date();
     if (period === 'today') return totalSpend;
     if (period === 'week') return Math.round(totalSpend / 7);
@@ -128,15 +146,15 @@ export default function AnalyticsScreen() {
       return Math.round(totalSpend / Math.max(dayOfYear, 1));
     }
     return Math.round(totalSpend / 30);
-  }, [filteredItems, totalSpend, period]);
+  }, [expenseItems, totalSpend, period]);
 
   // Average ticket per transaction
-  const averageTicket = filteredItems.length > 0 ? Math.round(totalSpend / filteredItems.length) : 0;
+  const averageTicket = expenseItems.length > 0 ? Math.round(totalSpend / expenseItems.length) : 0;
 
   // Group by payment method
   const paymentMethodsBreakdown = useMemo(() => {
     const map: Record<string, { total: number; count: number }> = {};
-    filteredItems.forEach((e) => {
+    expenseItems.forEach((e) => {
       const pm = e.payment_method || 'Cash';
       const converted = convert(Number(e.amount), e.currency || 'NPR', preferredCurrency);
       if (!map[pm]) map[pm] = { total: 0, count: 0 };
@@ -149,7 +167,7 @@ export default function AnalyticsScreen() {
       count: data.count,
       pct: totalSpend > 0 ? Math.round((data.total / totalSpend) * 100) : 0,
     }));
-  }, [filteredItems, preferredCurrency, convert, totalSpend]);
+  }, [expenseItems, preferredCurrency, convert, totalSpend]);
 
   const showOverview = activeTab === 'overview' || activeTab === 'all';
   const showCategories = activeTab === 'categories' || activeTab === 'all';
@@ -168,7 +186,7 @@ export default function AnalyticsScreen() {
         <RefreshControl
           refreshing={expenses.refreshing}
           onRefresh={() => {
-            void expenses.refresh();
+            void expenses.refresh(true);
             loadCategories();
           }}
           colors={[theme.colors.primary]}
@@ -192,96 +210,245 @@ export default function AnalyticsScreen() {
         </View>
       </View>
 
-      {/* ── 2. PERIOD SELECTOR HORIZONTAL PILLS ── */}
-      <View style={{ gap: 6 }}>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ gap: 8, paddingVertical: 2 }}
-        >
-          {PERIOD_OPTIONS.map((opt) => {
-            const isActive = period === opt.value;
-            return (
-              <Pressable
-                key={opt.value}
-                onPress={() => setPeriod(opt.value)}
-                style={{
-                  paddingHorizontal: 16,
-                  paddingVertical: 7,
-                  borderRadius: theme.radius.full,
-                  backgroundColor: isActive ? theme.colors.primary : theme.colors.surfaceElevated,
-                  borderWidth: 1,
-                  borderColor: isActive ? theme.colors.primary : theme.colors.border,
-                }}
-              >
+      {/* ── 2. DUAL SIDE-BY-SIDE IN-PLACE FLOATING DROPDOWNS ── */}
+      <View style={{ zIndex: 1000, position: 'relative' }}>
+        {/* Invisible Click-Outside Dismiss Overlay */}
+        {(periodModalOpen || sectionModalOpen) && (
+          <Pressable
+            onPress={() => {
+              setPeriodModalOpen(false);
+              setSectionModalOpen(false);
+            }}
+            style={{
+              position: 'absolute',
+              top: -600,
+              left: -200,
+              right: -200,
+              bottom: -4000,
+              zIndex: 1001,
+            }}
+          />
+        )}
+
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, position: 'relative', zIndex: 1002 }}>
+          {/* Left Dropdown: Period Selector */}
+          <View style={{ flex: 1, position: 'relative', zIndex: 1002 }}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Select Analytics Period"
+              onPress={() => {
+                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+                setPeriodModalOpen((prev) => !prev);
+                setSectionModalOpen(false);
+              }}
+              style={({ pressed }) => ({
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                paddingHorizontal: 13,
+                paddingVertical: 10,
+                borderRadius: theme.radius.lg,
+                backgroundColor: theme.colors.surfaceElevated,
+                borderWidth: 1,
+                borderColor: periodModalOpen ? theme.colors.primary : theme.colors.border,
+                opacity: pressed ? 0.75 : 1,
+              })}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, flex: 1 }}>
+                <Calendar size={14} color={theme.colors.primary} />
                 <Text
                   style={{
                     fontSize: 13,
-                    fontWeight: isActive ? '800' : '600',
-                    color: isActive ? '#FFFFFF' : theme.colors.textMuted,
+                    fontWeight: '700',
+                    color: theme.colors.text,
                   }}
+                  numberOfLines={1}
                 >
-                  {opt.label}
+                  {PERIOD_OPTIONS.find((o) => o.value === period)?.label || 'Month'}
                 </Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-      </View>
+              </View>
+              <ChevronDown
+                size={13}
+                color={periodModalOpen ? theme.colors.primary : theme.colors.textMuted}
+                style={{ transform: [{ rotate: periodModalOpen ? '180deg' : '0deg' }] }}
+              />
+            </Pressable>
 
-      {/* ── 3. FOCUS SUB-TABS (Overview | Categories | Habits | All) ── */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={{
-          gap: 4,
-          padding: 4,
-          backgroundColor: theme.colors.surfaceElevated,
-          borderRadius: theme.radius.lg,
-          borderWidth: 1,
-          borderColor: theme.colors.border,
-        }}
-      >
-        {SECTION_TABS.map((tab) => {
-          const isActive = activeTab === tab.key;
-          const Icon = tab.icon;
-          return (
+            {/* In-place Floating Dropdown Menu */}
+            {periodModalOpen && (
+              <View
+                style={{
+                  position: 'absolute',
+                  top: 48,
+                  left: 0,
+                  right: 0,
+                  backgroundColor: theme.colors.surface,
+                  borderRadius: 16,
+                  borderWidth: 1.2,
+                  borderColor: theme.colors.border,
+                  padding: 5,
+                  gap: 3,
+                  zIndex: 2000,
+                  elevation: 12,
+                  shadowColor: '#000000',
+                  shadowOffset: { width: 0, height: 6 },
+                  shadowOpacity: 0.25,
+                  shadowRadius: 10,
+                }}
+              >
+                {PERIOD_OPTIONS.map((opt) => {
+                  const isSelected = period === opt.value;
+                  return (
+                    <Pressable
+                      key={opt.value}
+                      onPress={() => {
+                        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+                        setPeriod(opt.value);
+                        setPeriodModalOpen(false);
+                      }}
+                      style={({ pressed }) => ({
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        paddingHorizontal: 10,
+                        paddingVertical: 9,
+                        borderRadius: 10,
+                        backgroundColor: isSelected
+                          ? (theme.isDark ? 'rgba(217,119,6,0.15)' : '#FFFDF5')
+                          : 'transparent',
+                        opacity: pressed ? 0.75 : 1,
+                      })}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 12.5,
+                          fontWeight: isSelected ? '800' : '600',
+                          color: isSelected ? theme.colors.primary : theme.colors.text,
+                        }}
+                      >
+                        {opt.label}
+                      </Text>
+                      {isSelected && <Check size={14} color={theme.colors.primary} />}
+                    </Pressable>
+                  );
+                })}
+              </View>
+            )}
+          </View>
+
+          {/* Right Dropdown: Section Focus */}
+          <View style={{ flex: 1, position: 'relative', zIndex: 1002 }}>
             <Pressable
-              key={tab.key}
-              onPress={() => setActiveTab(tab.key)}
-              style={{
+              accessibilityRole="button"
+              accessibilityLabel="Select Analytics View Section"
+              onPress={() => {
+                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+                setSectionModalOpen((prev) => !prev);
+                setPeriodModalOpen(false);
+              }}
+              style={({ pressed }) => ({
                 flexDirection: 'row',
                 alignItems: 'center',
-                justifyContent: 'center',
-                gap: 5,
-                minWidth: isCompact ? 112 : 0,
-                paddingHorizontal: 10,
-                paddingVertical: 8,
-                borderRadius: theme.radius.md,
-                backgroundColor: isActive ? (theme.isDark ? '#1E293B' : '#FFFFFF') : 'transparent',
-                shadowColor: isActive ? '#000000' : 'transparent',
-                shadowOffset: { width: 0, height: 2 },
-                shadowOpacity: isActive ? 0.1 : 0,
-                shadowRadius: 4,
-                elevation: isActive ? 2 : 0,
-              }}
+                justifyContent: 'space-between',
+                paddingHorizontal: 13,
+                paddingVertical: 10,
+                borderRadius: theme.radius.lg,
+                backgroundColor: theme.colors.surfaceElevated,
+                borderWidth: 1,
+                borderColor: sectionModalOpen ? theme.colors.primary : theme.colors.border,
+                opacity: pressed ? 0.75 : 1,
+              })}
             >
-              <Icon size={14} color={isActive ? theme.colors.primary : theme.colors.textMuted} />
-              <Text
-                variant="caption"
-                style={{
-                  fontWeight: isActive ? '800' : '600',
-                  fontSize: 11,
-                  color: isActive ? theme.colors.primary : theme.colors.textMuted,
-                }}
-                numberOfLines={1}
-              >
-                {tab.label}
-              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, flex: 1 }}>
+                {React.createElement(
+                  SECTION_TABS.find((t) => t.key === activeTab)?.icon || LayoutGrid,
+                  { size: 14, color: theme.colors.primary }
+                )}
+                <Text
+                  style={{
+                    fontSize: 13,
+                    fontWeight: '700',
+                    color: theme.colors.text,
+                  }}
+                  numberOfLines={1}
+                >
+                  {SECTION_TABS.find((t) => t.key === activeTab)?.label || 'Overview'}
+                </Text>
+              </View>
+              <ChevronDown
+                size={13}
+                color={sectionModalOpen ? theme.colors.primary : theme.colors.textMuted}
+                style={{ transform: [{ rotate: sectionModalOpen ? '180deg' : '0deg' }] }}
+              />
             </Pressable>
-          );
-        })}
-      </ScrollView>
+
+            {/* In-place Floating Dropdown Menu */}
+            {sectionModalOpen && (
+              <View
+                style={{
+                  position: 'absolute',
+                  top: 48,
+                  left: 0,
+                  right: 0,
+                  backgroundColor: theme.colors.surface,
+                  borderRadius: 16,
+                  borderWidth: 1.2,
+                  borderColor: theme.colors.border,
+                  padding: 5,
+                  gap: 3,
+                  zIndex: 2000,
+                  elevation: 12,
+                  shadowColor: '#000000',
+                  shadowOffset: { width: 0, height: 6 },
+                  shadowOpacity: 0.25,
+                  shadowRadius: 10,
+                }}
+              >
+                {SECTION_TABS.map((tab) => {
+                  const isSelected = activeTab === tab.key;
+                  const Icon = tab.icon;
+                  return (
+                    <Pressable
+                      key={tab.key}
+                      onPress={() => {
+                        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+                        setActiveTab(tab.key);
+                        setSectionModalOpen(false);
+                      }}
+                      style={({ pressed }) => ({
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        paddingHorizontal: 10,
+                        paddingVertical: 9,
+                        borderRadius: 10,
+                        backgroundColor: isSelected
+                          ? (theme.isDark ? 'rgba(217,119,6,0.15)' : '#FFFDF5')
+                          : 'transparent',
+                        opacity: pressed ? 0.75 : 1,
+                      })}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
+                        <Icon size={13} color={isSelected ? theme.colors.primary : theme.colors.textMuted} />
+                        <Text
+                          style={{
+                            fontSize: 12.5,
+                            fontWeight: isSelected ? '800' : '600',
+                            color: isSelected ? theme.colors.primary : theme.colors.text,
+                          }}
+                        >
+                          {tab.label}
+                        </Text>
+                      </View>
+                      {isSelected && <Check size={14} color={theme.colors.primary} />}
+                    </Pressable>
+                  );
+                })}
+              </View>
+            )}
+          </View>
+        </View>
+      </View>
 
       {/* ═══════════════════════════════════════════════
           SECTION 1: OVERVIEW & PERFORMANCE
@@ -296,6 +463,13 @@ export default function AnalyticsScreen() {
               </Text>
             </View>
           )}
+
+          {/* 1. Income, Expense & Budget Analysis Card */}
+          <IncomeExpenseBudgetCard
+            expenses={filteredItems}
+            monthlyBudget={profile?.monthly_budget ? Number(profile.monthly_budget) : 0}
+            targetCurrency={preferredCurrency}
+          />
 
           {/* 4-Tile Executive KPI Cards (Tapping Icon or Card opens calculation explainer) */}
           <View style={{ gap: 10 }}>
@@ -330,7 +504,7 @@ export default function AnalyticsScreen() {
                     {formatMoney(totalSpend, preferredCurrency)}
                   </Text>
                   <Text variant="caption" muted style={{ fontSize: 11 }}>
-                    {filteredItems.length} transactions
+                    {expenseItems.length} expenses {incomeItems.length > 0 ? `· ${incomeItems.length} income` : ''}
                   </Text>
                 </Card>
               </Pressable>
@@ -447,12 +621,6 @@ export default function AnalyticsScreen() {
             expenses={filteredItems}
             targetCurrency={preferredCurrency}
           />
-
-          {/* Stock Wave Trend Graph (Full Multi-Period: Today, 7D, 4W, 6M, 1Y) */}
-          <StockTrendChart
-            expenses={expenses.items}
-            targetCurrency={preferredCurrency}
-          />
         </View>
       )}
 
@@ -559,12 +727,15 @@ export default function AnalyticsScreen() {
           <FinancialInsights
             expenses={expenses.items}
             targetCurrency={preferredCurrency}
+            flowType={analyticsFlowType}
+            onFlipFlowType={() => setAnalyticsFlowType((prev) => (prev === 'income' ? 'expense' : 'income'))}
           />
 
           {/* Budget Burn Velocity & Pacing Forecast */}
           <BudgetAnalyticsCard
             expenses={filteredItems}
             targetCurrency={preferredCurrency}
+            flowType={analyticsFlowType}
           />
         </View>
       )}

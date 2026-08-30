@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Dimensions,
   FlatList,
   Modal,
   Platform,
@@ -8,6 +9,7 @@ import {
   RefreshControl,
   ScrollView,
   SectionList,
+  StatusBar,
   TextInput,
   View,
 } from 'react-native';
@@ -15,6 +17,7 @@ import { useFocusEffect } from 'expo-router';
 import {
   ArrowDownRight,
   ArrowUpDown,
+  ArrowUpRight,
   Calendar,
   Check,
   ChevronDown,
@@ -48,6 +51,7 @@ import { BottomSheet } from '@/components/ui/BottomSheet';
 import { Button } from '@/components/ui/Button';
 import { CalendarModal, DateRange } from '@/components/ui/CalendarModal';
 import { Card } from '@/components/ui/Card';
+import { CategoryIcon } from '@/components/ui/CategoryIcon';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { PressableScale } from '@/components/ui/PressableScale';
@@ -76,8 +80,11 @@ export default function HistoryScreen() {
   const { isPrivacyMode } = usePrivacy();
   const theme = useTheme();
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [sort, setSort] = useState<SortKey>('date_desc');
-  const [period, setPeriod] = useState<HistoryPeriod>('all');
+  const [period, setPeriod] = useState<HistoryPeriod>('month');
+  const [typeFilter, setTypeFilter] = useState<'all' | 'expense' | 'income'>('all');
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [categoryModalOpen, setCategoryModalOpen] = useState(false);
   const [customRange, setCustomRange] = useState<DateRange>({
@@ -85,6 +92,7 @@ export default function HistoryScreen() {
     endDate: null,
   });
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [periodModalOpen, setPeriodModalOpen] = useState(false);
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [exporting, setExporting] = useState<string | null>(null);
@@ -94,8 +102,72 @@ export default function HistoryScreen() {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(15);
   const listRef = useRef<SectionList>(null);
+  const timeframeBtnRef = useRef<View>(null);
+  const categoryBtnRef = useRef<View>(null);
+  const sortBtnRef = useRef<View>(null);
+  const [timeframePos, setTimeframePos] = useState<{ top: number; left?: number; right?: number }>({ top: 240, left: 16 });
+  const [categoryPos, setCategoryPos] = useState<{ top: number; left?: number; right?: number }>({ top: 240, left: 60 });
+  const [sortPos, setSortPos] = useState<{ top: number; left?: number; right?: number }>({ top: 240, right: 16 });
+
+  const getModalTop = (y: number, h: number) => {
+    const statusBarHeight = Platform.OS === 'android' ? (StatusBar.currentHeight || 0) : 0;
+    return y - statusBarHeight + h + 6;
+  };
+
+  const updateTimeframePos = useCallback(() => {
+    timeframeBtnRef.current?.measureInWindow((x, y, w, h) => {
+      if (y > 0) {
+        // Right-align popover to its own button's right edge inside the mirror anchor box
+        const right = Math.max(0, Dimensions.get('window').width - theme.spacing.lg - (x + w));
+        setTimeframePos({ top: getModalTop(y, h), right });
+      }
+    });
+  }, [theme.spacing.lg]);
+
+  const updateCategoryPos = useCallback(() => {
+    categoryBtnRef.current?.measureInWindow((x, y, w, h) => {
+      if (y > 0) {
+        // Right-align popover to its own button's right edge inside the mirror anchor box
+        const right = Math.max(0, Dimensions.get('window').width - theme.spacing.lg - (x + w));
+        setCategoryPos({ top: getModalTop(y, h), right });
+      }
+    });
+  }, [theme.spacing.lg]);
+
+  const updateSortPos = useCallback(() => {
+    sortBtnRef.current?.measureInWindow((x, y, w, h) => {
+      if (y > 0) {
+        // Right-align popover to its own button's right edge inside the mirror anchor box
+        const right = Math.max(0, Dimensions.get('window').width - theme.spacing.lg - (x + w));
+        setSortPos({ top: getModalTop(y, h), right });
+      }
+    });
+  }, [theme.spacing.lg]);
+
+  const handleOpenPopover = useCallback((type: 'period' | 'category' | 'sort') => {
+    if (type === 'period') {
+      updateTimeframePos();
+      setCategoryModalOpen(false);
+      setFiltersOpen(false);
+      setPeriodModalOpen((prev) => !prev);
+    } else if (type === 'category') {
+      updateCategoryPos();
+      setFiltersOpen(false);
+      setPeriodModalOpen(false);
+      setCategoryModalOpen((prev) => !prev);
+    } else {
+      updateSortPos();
+      setCategoryModalOpen(false);
+      setPeriodModalOpen(false);
+      setFiltersOpen((prev) => !prev);
+    }
+  }, [updateTimeframePos, updateCategoryPos, updateSortPos]);
 
   const preferredCurrency = profile?.preferred_currency ?? 'NPR';
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, period, customRange, selectedCategoryId, sort, pageSize, typeFilter]);
 
   useEffect(() => {
     if (profile?.id) {
@@ -114,11 +186,12 @@ export default function HistoryScreen() {
   // Compute date range based on selected period
   const dateRange = useMemo(() => {
     const today = new Date();
-    const todayStr = format(today, 'yyyy-MM-dd');
-
     switch (period) {
       case 'today':
-        return { fromDate: todayStr, toDate: todayStr };
+        return {
+          fromDate: format(today, 'yyyy-MM-dd'),
+          toDate: format(today, 'yyyy-MM-dd'),
+        };
       case 'week':
         return {
           fromDate: format(startOfWeek(today, { weekStartsOn: 1 }), 'yyyy-MM-dd'),
@@ -142,11 +215,16 @@ export default function HistoryScreen() {
 
   const filters = useMemo(
     () => ({
-      search: search.trim() || undefined,
+      search: debouncedSearch.trim() || undefined,
       fromDate: dateRange.fromDate,
       toDate: dateRange.toDate,
+      // Load the FULL filtered set in one query: the summary card (Total
+      // Outflow/Inflow, Peak, entry count) and exports must reflect every
+      // matching transaction, not just the first server page. The list UI
+      // still paginates client-side via paginatedItems.
+      fetchAll: true,
     }),
-    [search, dateRange.fromDate, dateRange.toDate],
+    [debouncedSearch, dateRange.fromDate, dateRange.toDate],
   );
 
   const expenses = useExpenses(profile?.id ?? session?.user?.id, filters, sort);
@@ -160,16 +238,20 @@ export default function HistoryScreen() {
     }, [expenses.refresh, profile?.id]),
   );
 
-  // Filter by category in-memory if selected
+  // Filter by category and transaction type in-memory
   const filteredExpenses = useMemo(() => {
-    if (!selectedCategoryId) return expenses.items;
-    return expenses.items.filter((item) => item.category_id === selectedCategoryId);
-  }, [expenses.items, selectedCategoryId]);
+    return expenses.items.filter((item) => {
+      if (selectedCategoryId && item.category_id !== selectedCategoryId) return false;
+      if (typeFilter === 'expense' && item.type === 'income') return false;
+      if (typeFilter === 'income' && item.type !== 'income') return false;
+      return true;
+    });
+  }, [expenses.items, selectedCategoryId, typeFilter]);
 
   // Total summary of all matching expenses
   const totalAmount = useMemo(
-    () => sumExpenses(filteredExpenses, preferredCurrency),
-    [filteredExpenses, preferredCurrency],
+    () => sumExpenses(filteredExpenses, preferredCurrency, rates, typeFilter),
+    [filteredExpenses, preferredCurrency, rates, typeFilter],
   );
 
   // Highest single expense
@@ -182,9 +264,18 @@ export default function HistoryScreen() {
   const handleSearchChange = (text: string) => {
     setSearch(text);
     setCurrentPage(1);
+    // The input stays instant; the network filter updates 300ms after typing
+    // stops so every keystroke doesn't fire a fresh server query.
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    if (text === '') {
+      setDebouncedSearch('');
+      return;
+    }
+    searchDebounceRef.current = setTimeout(() => setDebouncedSearch(text), 300);
   };
 
   const handlePeriodChange = (nextPeriod: HistoryPeriod) => {
+    setPeriodModalOpen(false);
     if (nextPeriod === 'custom') {
       setPeriod('custom');
       setCalendarOpen(true);
@@ -298,381 +389,833 @@ export default function HistoryScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
+      {/* ── TOP HEADER & CONTROLS CONTAINER (ELEVATED Z-INDEX FOR IN-PLACE DROPDOWNS) ── */}
+      <View
+        style={{
+          paddingHorizontal: theme.spacing.lg,
+          paddingTop: theme.spacing.lg,
+          paddingBottom: 6,
+          gap: 10,
+          zIndex: 5000,
+          position: 'relative',
+          backgroundColor: theme.colors.background,
+        }}
+      >
+        {/* ── 1. TOP APP BAR ── */}
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginTop: 4 }}>
+          <View style={{ gap: 2, flex: 1, minWidth: 0 }}>
+            <Text
+              variant="caption"
+              style={{
+                fontWeight: '700',
+                textTransform: 'uppercase',
+                letterSpacing: 1.1,
+                fontSize: 11,
+                color: theme.colors.textMuted,
+              }}
+            >
+              All Transactions
+            </Text>
+            <Text
+              variant="h1"
+              style={{
+                fontWeight: '800',
+                fontSize: 28,
+                letterSpacing: -0.5,
+                color: theme.colors.text,
+              }}
+              numberOfLines={1}
+            >
+              {t('history_title') || 'History'}
+            </Text>
+          </View>
+
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+            {/* Export Shortcut Button (Prominent & Easy to Tap) */}
+            <Pressable
+              onPress={() => setExportModalOpen(true)}
+              hitSlop={8}
+              style={({ pressed }) => ({
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 5,
+                paddingHorizontal: 10,
+                paddingVertical: 7,
+                borderRadius: theme.radius.full,
+                backgroundColor: theme.isDark ? 'rgba(99, 102, 241, 0.22)' : 'rgba(79, 70, 229, 0.1)',
+                borderWidth: 1.5,
+                borderColor: theme.colors.primary,
+                opacity: pressed ? 0.8 : 1,
+              })}
+            >
+              <Download size={14} color={theme.colors.primary} />
+              <Text style={{ fontWeight: '800', color: theme.colors.primary, fontSize: 12 }}>
+                Export
+              </Text>
+            </Pressable>
+
+            <PrivacyEyeButton />
+            <ThemeToggle />
+          </View>
+        </View>
+
+        {/* ── 2. CONSOLIDATED VAULT & FLOW CARD ── */}
+        <Card
+          style={{
+            padding: 12,
+            gap: 10,
+            backgroundColor: theme.colors.surface,
+            borderColor: theme.isDark ? 'rgba(129, 140, 248, 0.35)' : theme.colors.border,
+            borderWidth: 1.5,
+            borderRadius: 18,
+            shadowColor: '#000000',
+            shadowOffset: { width: 0, height: 2 },
+            shadowOpacity: theme.isDark ? 0.2 : 0.05,
+          }}
+        >
+          {/* Row 1: Subtitle & Badges */}
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Wallet size={14} color={theme.colors.primary} />
+              <Text
+                variant="caption"
+                style={{
+                  color: theme.colors.primary,
+                  fontWeight: '700',
+                  textTransform: 'uppercase',
+                  letterSpacing: 0.8,
+                  fontSize: 11,
+                }}
+              >
+                {typeFilter === 'income'
+                  ? 'Total Inflow'
+                  : typeFilter === 'expense'
+                  ? 'Total Outflow'
+                  : 'Cash Flow'}{' '}
+                · {activeChipLabel(period)}
+              </Text>
+            </View>
+
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 4,
+                  paddingHorizontal: 7,
+                  paddingVertical: 2.5,
+                  borderRadius: theme.radius.full,
+                  backgroundColor: theme.colors.surfaceElevated,
+                  borderWidth: 1,
+                  borderColor: theme.colors.border,
+                }}
+              >
+                <Receipt size={10} color={theme.colors.primary} />
+                <Text style={{ fontSize: 10.5, fontWeight: '800', color: theme.colors.text }}>
+                  {totalItems} {totalItems === 1 ? 'entry' : 'entries'}
+                </Text>
+              </View>
+
+              {selectedCategoryId ? (
+                <Pressable
+                  onPress={() => setSelectedCategoryId(null)}
+                  style={{
+                    paddingHorizontal: 7,
+                    paddingVertical: 2.5,
+                    borderRadius: theme.radius.full,
+                    backgroundColor: theme.colors.primary,
+                  }}
+                >
+                  <Text style={{ color: '#FFFFFF', fontSize: 9.5, fontWeight: '800' }}>
+                    Filtered ✕
+                  </Text>
+                </Pressable>
+              ) : null}
+            </View>
+          </View>
+
+          {/* Row 2: Amount & Peak */}
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Text
+              style={{
+                fontSize: 26,
+                lineHeight: 30,
+                fontWeight: '900',
+                color:
+                  typeFilter === 'income'
+                    ? theme.colors.income
+                    : typeFilter === 'expense'
+                    ? (theme.isDark ? '#EF4444' : '#DC2626')
+                    : theme.colors.text,
+                fontVariant: ['tabular-nums'],
+                letterSpacing: -0.5,
+              }}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+            >
+              {formatMoney(totalAmount, preferredCurrency)}
+            </Text>
+
+            {highestSingleSpend > 0 ? (
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 4,
+                  paddingHorizontal: 8,
+                  paddingVertical: 3,
+                  borderRadius: theme.radius.full,
+                  backgroundColor: theme.isDark ? 'rgba(245, 158, 11, 0.12)' : '#FEF3C7',
+                  borderWidth: 1,
+                  borderColor: theme.isDark ? 'rgba(245, 158, 11, 0.3)' : 'rgba(245, 158, 11, 0.25)',
+                }}
+              >
+                <Sparkles size={11} color="#F59E0B" />
+                <Text style={{ fontSize: 10.5, fontWeight: '600', color: theme.colors.textMuted }}>
+                  Peak:{' '}
+                  <Text style={{ fontWeight: '800', color: theme.isDark ? '#FCD34D' : '#D97706' }}>
+                    {formatMoney(highestSingleSpend, preferredCurrency)}
+                  </Text>
+                </Text>
+              </View>
+            ) : null}
+          </View>
+
+          {/* Row 3: Integrated 3-Way Flow Switcher inside the card */}
+          <View
+            style={{
+              flexDirection: 'row',
+              backgroundColor: theme.colors.surfaceElevated,
+              padding: 2.5,
+              borderRadius: 10,
+              borderWidth: 1,
+              borderColor: theme.colors.border,
+              height: 38,
+              alignItems: 'center',
+            }}
+          >
+            <Pressable
+              onPress={() => setTypeFilter('all')}
+              style={{
+                flex: 1,
+                height: '100%',
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderRadius: 8,
+                backgroundColor: typeFilter === 'all' ? theme.colors.primary : 'transparent',
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 12,
+                  fontWeight: '800',
+                  color: typeFilter === 'all' ? '#FFFFFF' : theme.colors.textMuted,
+                }}
+              >
+                All Flow
+              </Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => setTypeFilter('expense')}
+              style={{
+                flex: 1,
+                height: '100%',
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 4,
+                borderRadius: 8,
+                backgroundColor:
+                  typeFilter === 'expense'
+                    ? (theme.isDark ? '#EF4444' : '#DC2626')
+                    : 'transparent',
+              }}
+            >
+              <ArrowDownRight
+                size={13}
+                color={typeFilter === 'expense' ? '#FFFFFF' : theme.colors.textMuted}
+                strokeWidth={2.5}
+              />
+              <Text
+                style={{
+                  fontSize: 12,
+                  fontWeight: '800',
+                  color: typeFilter === 'expense' ? '#FFFFFF' : theme.colors.textMuted,
+                }}
+              >
+                Expenses
+              </Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => setTypeFilter('income')}
+              style={{
+                flex: 1,
+                height: '100%',
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 4,
+                borderRadius: 8,
+                backgroundColor:
+                  typeFilter === 'income' ? theme.colors.income : 'transparent',
+              }}
+            >
+              <ArrowUpRight
+                size={13}
+                color={typeFilter === 'income' ? '#FFFFFF' : theme.colors.textMuted}
+                strokeWidth={2.5}
+              />
+              <Text
+                style={{
+                  fontSize: 12,
+                  fontWeight: '800',
+                  color: typeFilter === 'income' ? '#FFFFFF' : theme.colors.textMuted,
+                }}
+              >
+                Income
+              </Text>
+            </Pressable>
+          </View>
+        </Card>
+
+        {/* ── 3. SEARCH & FILTERS TOOLBAR (WITH IN-PLACE FLOATING DROPDOWNS) ── */}
+        <View style={{ zIndex: 6000, position: 'relative' }}>
+          <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center', position: 'relative', zIndex: 6002 }}>
+            {/* Search Box */}
+            <View
+              style={{
+                flex: 1,
+                flexDirection: 'row',
+                alignItems: 'center',
+                backgroundColor: theme.colors.surfaceElevated,
+                borderRadius: theme.radius.md,
+                paddingHorizontal: 10,
+                borderWidth: 1,
+                borderColor: theme.colors.border,
+                height: 40,
+              }}
+            >
+              <Search size={14} color={theme.colors.textMuted} style={{ marginRight: 6 }} />
+              <TextInput
+                value={search}
+                onChangeText={handleSearchChange}
+                placeholder={t('history_search_placeholder') || 'Search...'}
+                placeholderTextColor={theme.colors.textMuted}
+                style={{
+                  flex: 1,
+                  fontSize: 13,
+                  color: theme.colors.text,
+                  paddingVertical: 0,
+                }}
+              />
+              {search ? (
+                <Pressable
+                  onPress={() => handleSearchChange('')}
+                  hitSlop={8}
+                  style={{
+                    width: 18,
+                    height: 18,
+                    borderRadius: 9,
+                    backgroundColor: theme.colors.textMuted,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <X size={11} color="#FFFFFF" />
+                </Pressable>
+              ) : null}
+            </View>
+
+            {/* 1. Timeframe Icon Button */}
+            {(() => {
+              const isPeriodActive = period !== 'all';
+              return (
+                <View ref={timeframeBtnRef} collapsable={false} onLayout={updateTimeframePos} style={{ position: 'relative' }}>
+                  <PressableScale
+                    onPress={() => handleOpenPopover('period')}
+                    activeScale={0.92}
+                    style={{
+                      width: 40,
+                      height: 40,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      borderRadius: theme.radius.md,
+                      backgroundColor: isPeriodActive || periodModalOpen
+                        ? theme.isDark ? 'rgba(99, 102, 241, 0.22)' : 'rgba(79, 70, 229, 0.12)'
+                        : theme.colors.surfaceElevated,
+                      borderWidth: 1.5,
+                      borderColor: isPeriodActive || periodModalOpen ? theme.colors.primary : theme.colors.border,
+                      position: 'relative',
+                    }}
+                  >
+                    <Calendar size={16} color={isPeriodActive || periodModalOpen ? theme.colors.primary : theme.colors.textMuted} />
+                    {isPeriodActive && !periodModalOpen ? (
+                      <View
+                        style={{
+                          position: 'absolute',
+                          top: 5,
+                          right: 5,
+                          width: 6,
+                          height: 6,
+                          borderRadius: 3,
+                          backgroundColor: theme.colors.primary,
+                        }}
+                      />
+                    ) : null}
+                  </PressableScale>
+                </View>
+              );
+            })()}
+
+            {/* 2. Category Icon Button */}
+            {(() => {
+              const selectedCat = categories.find((c) => c.id === selectedCategoryId);
+              return (
+                <View ref={categoryBtnRef} collapsable={false} onLayout={updateCategoryPos} style={{ position: 'relative' }}>
+                  {selectedCat ? (
+                    <PressableScale
+                      onPress={() => handleOpenPopover('category')}
+                      activeScale={0.92}
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 5,
+                        paddingHorizontal: 10,
+                        height: 40,
+                        borderRadius: theme.radius.md,
+                        backgroundColor: theme.isDark ? 'rgba(99, 102, 241, 0.22)' : 'rgba(79, 70, 229, 0.12)',
+                        borderWidth: 1.5,
+                        borderColor: theme.colors.primary,
+                      }}
+                    >
+                      <CategoryIcon name={selectedCat.icon} size={15} color={theme.colors.primary} />
+                      <Text
+                        style={{
+                          fontSize: 12,
+                          fontWeight: '800',
+                          color: theme.colors.primary,
+                          maxWidth: 75,
+                        }}
+                        numberOfLines={1}
+                      >
+                        {selectedCat.name}
+                      </Text>
+                      <Pressable
+                        onPress={(e) => {
+                          e.stopPropagation();
+                          handleCategorySelect(null);
+                        }}
+                        hitSlop={8}
+                        style={{
+                          width: 16,
+                          height: 16,
+                          borderRadius: 8,
+                          backgroundColor: theme.colors.primary,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                      >
+                        <X size={10} color="#FFFFFF" />
+                      </Pressable>
+                    </PressableScale>
+                  ) : (
+                    <PressableScale
+                      onPress={() => handleOpenPopover('category')}
+                      activeScale={0.92}
+                      style={{
+                        width: 40,
+                        height: 40,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        borderRadius: theme.radius.md,
+                        backgroundColor: categoryModalOpen
+                          ? theme.isDark ? 'rgba(99, 102, 241, 0.22)' : 'rgba(79, 70, 229, 0.12)'
+                          : theme.colors.surfaceElevated,
+                        borderWidth: 1.5,
+                        borderColor: categoryModalOpen ? theme.colors.primary : theme.colors.border,
+                      }}
+                    >
+                      <Tag size={16} color={categoryModalOpen ? theme.colors.primary : theme.colors.textMuted} />
+                    </PressableScale>
+                  )}
+                </View>
+              );
+            })()}
+
+            {/* 3. Sort Icon Button */}
+            {(() => {
+              const isSortActive = sort !== 'date_desc';
+              return (
+                <View ref={sortBtnRef} collapsable={false} onLayout={updateSortPos} style={{ position: 'relative' }}>
+                  <PressableScale
+                    onPress={() => handleOpenPopover('sort')}
+                    activeScale={0.92}
+                    style={{
+                      width: 40,
+                      height: 40,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      borderRadius: theme.radius.md,
+                      backgroundColor: isSortActive || filtersOpen
+                        ? theme.isDark ? 'rgba(99, 102, 241, 0.22)' : 'rgba(79, 70, 229, 0.12)'
+                        : theme.colors.surfaceElevated,
+                      borderWidth: 1.5,
+                      borderColor: isSortActive || filtersOpen ? theme.colors.primary : theme.colors.border,
+                      position: 'relative',
+                    }}
+                  >
+                    <ArrowUpDown size={16} color={isSortActive || filtersOpen ? theme.colors.primary : theme.colors.textMuted} />
+                    {isSortActive && !filtersOpen ? (
+                      <View
+                        style={{
+                          position: 'absolute',
+                          top: 5,
+                          right: 5,
+                          width: 6,
+                          height: 6,
+                          borderRadius: 3,
+                          backgroundColor: theme.colors.primary,
+                        }}
+                      />
+                    ) : null}
+                  </PressableScale>
+                </View>
+              );
+            })()}
+          </View>
+        </View>
+
+        {/* ── FLOATING IN-PLACE POPOVER MENUS (LAYOUT MIRROR CONTAINER FOR EXACT ANDROID & WEB POSITIONING) ── */}
+        <Modal
+          visible={categoryModalOpen || periodModalOpen || filtersOpen}
+          transparent
+          animationType="none"
+          onRequestClose={() => {
+            setCategoryModalOpen(false);
+            setPeriodModalOpen(false);
+            setFiltersOpen(false);
+          }}
+        >
+          <Pressable
+            onPress={() => {
+              setCategoryModalOpen(false);
+              setPeriodModalOpen(false);
+              setFiltersOpen(false);
+            }}
+            style={{ flex: 1, backgroundColor: 'transparent' }}
+          >
+            <View
+              pointerEvents="box-none"
+              style={{
+                paddingHorizontal: theme.spacing.lg,
+                paddingTop: theme.spacing.lg,
+                paddingBottom: 6,
+                gap: 10,
+              }}
+            >
+              {/* Top Header Bar Spacer */}
+              <View pointerEvents="none" style={{ height: 44, marginTop: 4 }} />
+
+              {/* Vault & Flow Card Spacer */}
+              <Card
+                pointerEvents="none"
+                style={{
+                  padding: 12,
+                  gap: 10,
+                  opacity: 0,
+                }}
+              >
+                <View style={{ height: 120 }} />
+              </Card>
+
+              {/* Toolbar Anchor Box */}
+              <View pointerEvents="box-none" style={{ height: 40, position: 'relative' }}>
+                {/* Timeframe Popover */}
+                {periodModalOpen && (
+                  <Pressable
+                    onPress={(e) => e.stopPropagation()}
+                    style={{
+                      position: 'absolute',
+                      top: 50,
+                      right: timeframePos.right ?? 0,
+                      width: 190,
+                      backgroundColor: theme.colors.surface,
+                      borderRadius: 16,
+                      borderWidth: 1.2,
+                      borderColor: theme.colors.border,
+                      padding: 6,
+                      gap: 2,
+                      elevation: 25,
+                      shadowColor: '#000000',
+                      shadowOffset: { width: 0, height: 6 },
+                      shadowOpacity: 0.25,
+                      shadowRadius: 10,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 10.5,
+                        fontWeight: '800',
+                        textTransform: 'uppercase',
+                        letterSpacing: 0.6,
+                        color: theme.colors.textMuted,
+                        paddingHorizontal: 8,
+                        paddingVertical: 4,
+                      }}
+                    >
+                      Timeframe
+                    </Text>
+                    {PERIOD_CHIPS.map((chip) => {
+                      const isSelected = period === chip.value;
+                      return (
+                        <Pressable
+                          key={chip.value}
+                          onPress={() => {
+                            handlePeriodChange(chip.value);
+                            if (chip.value !== 'custom') setPeriodModalOpen(false);
+                          }}
+                          style={({ pressed }) => ({
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            paddingHorizontal: 10,
+                            paddingVertical: 7,
+                            borderRadius: 9,
+                            backgroundColor: isSelected
+                              ? theme.isDark ? 'rgba(99, 102, 241, 0.15)' : 'rgba(79, 70, 229, 0.08)'
+                              : 'transparent',
+                            opacity: pressed ? 0.75 : 1,
+                          })}
+                        >
+                          <Text
+                            style={{
+                              fontSize: 12.5,
+                              fontWeight: isSelected ? '800' : '600',
+                              color: isSelected ? theme.colors.primary : theme.colors.text,
+                            }}
+                          >
+                            {chip.value === 'custom' && customRange.startDate ? formattedCustomLabel : chip.label}
+                          </Text>
+                          {isSelected && <Check size={14} color={theme.colors.primary} />}
+                        </Pressable>
+                      );
+                    })}
+                  </Pressable>
+                )}
+
+                {/* Category Popover (Scrollable on Android & iOS) */}
+                {categoryModalOpen && (
+                  <Pressable
+                    onPress={(e) => e.stopPropagation()}
+                    style={{
+                      position: 'absolute',
+                      top: 50,
+                      right: categoryPos.right ?? 0,
+                      width: 220,
+                      maxHeight: 280,
+                      backgroundColor: theme.colors.surface,
+                      borderRadius: 16,
+                      borderWidth: 1.2,
+                      borderColor: theme.colors.border,
+                      padding: 6,
+                      elevation: 25,
+                      shadowColor: '#000000',
+                      shadowOffset: { width: 0, height: 6 },
+                      shadowOpacity: 0.25,
+                      shadowRadius: 10,
+                    }}
+                  >
+                    <ScrollView
+                      showsVerticalScrollIndicator={true}
+                      keyboardShouldPersistTaps="handled"
+                      bounces={true}
+                      style={{ maxHeight: 260 }}
+                      contentContainerStyle={{ gap: 3, paddingVertical: 2 }}
+                    >
+                      {/* All Categories Option */}
+                      <Pressable
+                        onPress={() => {
+                          handleCategorySelect(null);
+                          setCategoryModalOpen(false);
+                        }}
+                        style={({ pressed }) => ({
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          paddingHorizontal: 10,
+                          paddingVertical: 8,
+                          borderRadius: 10,
+                          backgroundColor: !selectedCategoryId
+                            ? theme.isDark ? 'rgba(99, 102, 241, 0.15)' : 'rgba(79, 70, 229, 0.08)'
+                            : 'transparent',
+                          opacity: pressed ? 0.75 : 1,
+                        })}
+                      >
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                          <Tag size={14} color={!selectedCategoryId ? theme.colors.primary : theme.colors.textMuted} />
+                          <Text
+                            style={{
+                              fontSize: 12.5,
+                              fontWeight: !selectedCategoryId ? '800' : '600',
+                              color: !selectedCategoryId ? theme.colors.primary : theme.colors.text,
+                            }}
+                          >
+                            All Categories
+                          </Text>
+                        </View>
+                        {!selectedCategoryId && <Check size={14} color={theme.colors.primary} />}
+                      </Pressable>
+
+                      {/* Category Items */}
+                      {categories.map((cat) => {
+                        const isSelected = selectedCategoryId === cat.id;
+                        return (
+                          <Pressable
+                            key={cat.id}
+                            onPress={() => {
+                              handleCategorySelect(cat.id);
+                              setCategoryModalOpen(false);
+                            }}
+                            style={({ pressed }) => ({
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              paddingHorizontal: 10,
+                              paddingVertical: 8,
+                              borderRadius: 10,
+                              backgroundColor: isSelected
+                                ? theme.isDark ? 'rgba(99, 102, 241, 0.15)' : 'rgba(79, 70, 229, 0.08)'
+                                : 'transparent',
+                              opacity: pressed ? 0.75 : 1,
+                            })}
+                          >
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                              <CategoryIcon
+                                name={cat.icon}
+                                size={14}
+                                color={isSelected ? theme.colors.primary : theme.colors.text}
+                              />
+                              <Text
+                                style={{
+                                  fontSize: 12.5,
+                                  fontWeight: isSelected ? '800' : '600',
+                                  color: isSelected ? theme.colors.primary : theme.colors.text,
+                                }}
+                                numberOfLines={1}
+                              >
+                                {cat.name}
+                              </Text>
+                            </View>
+                            {isSelected && <Check size={14} color={theme.colors.primary} />}
+                          </Pressable>
+                        );
+                      })}
+                    </ScrollView>
+                  </Pressable>
+                )}
+
+                {/* Sort Popover */}
+                {filtersOpen && (
+                  <Pressable
+                    onPress={(e) => e.stopPropagation()}
+                    style={{
+                      position: 'absolute',
+                      top: 50,
+                      right: sortPos.right ?? 0,
+                      width: 200,
+                      backgroundColor: theme.colors.surface,
+                      borderRadius: 16,
+                      borderWidth: 1.2,
+                      borderColor: theme.colors.border,
+                      padding: 6,
+                      gap: 2,
+                      elevation: 25,
+                      shadowColor: '#000000',
+                      shadowOffset: { width: 0, height: 6 },
+                      shadowOpacity: 0.25,
+                      shadowRadius: 10,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 10.5,
+                        fontWeight: '800',
+                        textTransform: 'uppercase',
+                        letterSpacing: 0.6,
+                        color: theme.colors.textMuted,
+                        paddingHorizontal: 8,
+                        paddingVertical: 4,
+                      }}
+                    >
+                      Sort Order
+                    </Text>
+
+                    {SORT_OPTIONS.map((opt) => {
+                      const isSelected = sort === opt.value;
+                      return (
+                        <Pressable
+                          key={opt.value}
+                          onPress={() => {
+                            setSort(opt.value as SortKey);
+                            setCurrentPage(1);
+                            setFiltersOpen(false);
+                          }}
+                          style={({ pressed }) => ({
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            paddingHorizontal: 10,
+                            paddingVertical: 7,
+                            borderRadius: 9,
+                            backgroundColor: isSelected
+                              ? theme.isDark ? 'rgba(99, 102, 241, 0.15)' : 'rgba(79, 70, 229, 0.08)'
+                              : 'transparent',
+                            opacity: pressed ? 0.75 : 1,
+                          })}
+                        >
+                          <Text
+                            style={{
+                              fontSize: 12.5,
+                              fontWeight: isSelected ? '800' : '600',
+                              color: isSelected ? theme.colors.primary : theme.colors.text,
+                            }}
+                          >
+                            {opt.label}
+                          </Text>
+                          {isSelected && <Check size={14} color={theme.colors.primary} />}
+                        </Pressable>
+                      );
+                    })}
+                  </Pressable>
+                )}
+              </View>
+            </View>
+          </Pressable>
+        </Modal>
+      </View>
+
+      {/* ── TRANSACTIONS LIST ── */}
       <SectionList
         ref={listRef}
+        scrollEnabled={!categoryModalOpen && !filtersOpen && !periodModalOpen}
         sections={groupedSections}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={{ padding: theme.spacing.lg, gap: theme.spacing.md, paddingBottom: 130 }}
+        contentContainerStyle={{ paddingHorizontal: theme.spacing.lg, paddingBottom: 130 }}
         refreshControl={
           <RefreshControl
             refreshing={expenses.refreshing}
             onRefresh={() => {
               void refreshProfile();
-              void expenses.refresh();
+              void expenses.refresh(true);
             }}
             colors={[theme.colors.primary]}
             tintColor={theme.colors.primary}
           />
         }
         stickySectionHeadersEnabled={false}
-        ListHeaderComponent={
-          <View style={{ gap: theme.spacing.md }}>
-            {/* ── 1. TOP APP BAR ── */}
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginTop: 4 }}>
-              <View style={{ gap: 2, flex: 1, minWidth: 0 }}>
-                <Text
-                  variant="caption"
-                  style={{
-                    fontWeight: '700',
-                    textTransform: 'uppercase',
-                    letterSpacing: 1.1,
-                    fontSize: 11,
-                    color: theme.colors.textMuted,
-                  }}
-                >
-                  All Transactions
-                </Text>
-                <Text
-                  variant="h1"
-                  style={{
-                    fontWeight: '800',
-                    fontSize: 28,
-                    letterSpacing: -0.5,
-                    color: theme.colors.text,
-                  }}
-                  numberOfLines={1}
-                >
-                  {t('history_title') || 'History'}
-                </Text>
-              </View>
-
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-                {/* Export Shortcut Button (Prominent & Easy to Tap) */}
-                <Pressable
-                  onPress={() => setExportModalOpen(true)}
-                  hitSlop={8}
-                  style={({ pressed }) => ({
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    gap: 5,
-                    paddingHorizontal: 10,
-                    paddingVertical: 7,
-                    borderRadius: theme.radius.full,
-                    backgroundColor: theme.isDark ? 'rgba(99, 102, 241, 0.22)' : 'rgba(79, 70, 229, 0.1)',
-                    borderWidth: 1.5,
-                    borderColor: theme.colors.primary,
-                    opacity: pressed ? 0.8 : 1,
-                  })}
-                >
-                  <Download size={14} color={theme.colors.primary} />
-                  <Text style={{ fontWeight: '800', color: theme.colors.primary, fontSize: 12 }}>
-                    Export
-                  </Text>
-                </Pressable>
-
-                <PrivacyEyeButton />
-                <ThemeToggle />
-              </View>
-            </View>
-
-            {/* ── 2. TOTAL OUTFLOW VAULT SUMMARY CARD (CLEAN & COMPACT) ── */}
-            <Card
-              style={{
-                paddingHorizontal: 14,
-                paddingVertical: 9,
-                gap: 4,
-                backgroundColor: theme.colors.surface,
-                borderColor: theme.isDark ? 'rgba(129, 140, 248, 0.35)' : theme.colors.border,
-                borderWidth: 1.5,
-                borderRadius: 16,
-                shadowColor: '#000000',
-                shadowOffset: { width: 0, height: 2 },
-                shadowOpacity: theme.isDark ? 0.2 : 0.05,
-              }}
-            >
-              {/* Row 1: Header Label on Left + Entries Badge on Right */}
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <Wallet size={15} color={theme.isDark ? '#34D399' : '#064E3B'} />
-                  <Text
-                    variant="caption"
-                    style={{
-                      color: theme.isDark ? '#34D399' : '#064E3B',
-                      fontWeight: '600',
-                      textTransform: 'uppercase',
-                      letterSpacing: 0.8,
-                      fontSize: 11,
-                    }}
-                  >
-                    {t('history_total_outflow') || 'Total Outflow'} · {activeChipLabel(period)}
-                  </Text>
-                </View>
-
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  {/* Entries Pill Badge */}
-                  <View
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      gap: 4,
-                      paddingHorizontal: 8,
-                      paddingVertical: 3,
-                      borderRadius: theme.radius.full,
-                      backgroundColor: theme.colors.surfaceElevated,
-                      borderWidth: 1,
-                      borderColor: theme.colors.border,
-                    }}
-                  >
-                    <Receipt size={10} color={theme.colors.primary} />
-                    <Text
-                      style={{
-                        fontSize: 10.5,
-                        fontWeight: '800',
-                        color: theme.colors.text,
-                      }}
-                    >
-                      {totalItems} {totalItems === 1 ? 'entry' : 'entries'}
-                    </Text>
-                  </View>
-
-                  {selectedCategoryId ? (
-                    <Pressable
-                      onPress={() => setSelectedCategoryId(null)}
-                      style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        gap: 3,
-                        paddingHorizontal: 8,
-                        paddingVertical: 3,
-                        borderRadius: theme.radius.full,
-                        backgroundColor: theme.colors.primary,
-                      }}
-                    >
-                      <Text style={{ color: '#FFFFFF', fontSize: 9.5, fontWeight: '800' }}>
-                        Filtered ✕
-                      </Text>
-                    </Pressable>
-                  ) : null}
-                </View>
-              </View>
-
-              {/* Row 2: Outflow Amount on Left + Peak Expense Badge on Right */}
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                <View style={{ flex: 1, paddingRight: 8 }}>
-                  <Text
-                    style={{
-                      fontSize: 28,
-                      lineHeight: 34,
-                      fontWeight: '900',
-                      color: theme.colors.text,
-                      fontVariant: ['tabular-nums'],
-                      letterSpacing: -0.5,
-                    }}
-                    numberOfLines={1}
-                    adjustsFontSizeToFit
-                  >
-                    {formatMoney(totalAmount, preferredCurrency)}
-                  </Text>
-                </View>
-
-                {highestSingleSpend > 0 ? (
-                  <View
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      gap: 4,
-                      paddingHorizontal: 8,
-                      paddingVertical: 3,
-                      borderRadius: theme.radius.full,
-                      backgroundColor: theme.isDark ? 'rgba(245, 158, 11, 0.12)' : '#FEF3C7',
-                      borderWidth: 1,
-                      borderColor: theme.isDark ? 'rgba(245, 158, 11, 0.3)' : 'rgba(245, 158, 11, 0.25)',
-                    }}
-                  >
-                    <Sparkles size={11} color="#F59E0B" />
-                    <Text
-                      style={{
-                        fontSize: 10.5,
-                        fontWeight: '600',
-                        color: theme.colors.textMuted,
-                      }}
-                    >
-                      Peak:{' '}
-                      <Text style={{ fontWeight: '800', color: theme.isDark ? '#FCD34D' : '#D97706' }}>
-                        {formatMoney(highestSingleSpend, preferredCurrency)}
-                      </Text>
-                    </Text>
-                  </View>
-                ) : null}
-              </View>
-            </Card>
-
-            {/* ── 3. HORIZONTAL TIMELINE PERIOD CHIPS ── */}
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{ gap: 6, paddingVertical: 2 }}
-            >
-              {PERIOD_CHIPS.map((chip) => {
-                const active = period === chip.value;
-                return (
-                  <Pressable
-                    key={chip.value}
-                    onPress={() => handlePeriodChange(chip.value)}
-                    style={{
-                      paddingHorizontal: 13,
-                      paddingVertical: 7,
-                      borderRadius: theme.radius.full,
-                      backgroundColor: active ? theme.colors.primary : theme.colors.surfaceElevated,
-                      borderWidth: 1.5,
-                      borderColor: active ? theme.colors.primary : theme.colors.border,
-                    }}
-                  >
-                    <Text
-                      style={{
-                        color: active ? '#FFFFFF' : theme.colors.text,
-                        fontWeight: active ? '800' : '600',
-                        fontSize: 12,
-                      }}
-                    >
-                      {chip.value === 'custom' && customRange.startDate ? formattedCustomLabel : chip.label}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </ScrollView>
-
-            {/* ── 4. SEARCH, CATEGORY & SORT ROW ── */}
-            <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-              {/* Search Box */}
-              <View
-                style={{
-                  flex: 1,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  backgroundColor: theme.colors.surfaceElevated,
-                  borderRadius: theme.radius.md,
-                  paddingHorizontal: 12,
-                  borderWidth: 1,
-                  borderColor: theme.colors.border,
-                }}
-              >
-                <Search size={15} color={theme.colors.textMuted} style={{ marginRight: 6 }} />
-                <TextInput
-                  value={search}
-                  onChangeText={(text) => {
-                    setSearch(text);
-                    setCurrentPage(1);
-                  }}
-                  placeholder={t('history_search_placeholder') || 'Search notes, merchant...'}
-                  placeholderTextColor={theme.colors.textMuted}
-                  style={{
-                    flex: 1,
-                    fontSize: 13,
-                    color: theme.colors.text,
-                    paddingVertical: 10,
-                  }}
-                />
-                {search ? (
-                  <Pressable
-                    onPress={() => handleSearchChange('')}
-                    hitSlop={8}
-                    style={{
-                      width: 20,
-                      height: 20,
-                      borderRadius: 10,
-                      backgroundColor: theme.colors.textMuted,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                  >
-                    <X size={12} color="#FFFFFF" />
-                  </Pressable>
-                ) : null}
-              </View>
-
-              {/* Category Dropdown Pill */}
-              {(() => {
-                const selectedCat = categories.find((c) => c.id === selectedCategoryId);
-                return (
-                  <PressableScale
-                    onPress={() => setCategoryModalOpen(true)}
-                    activeScale={0.92}
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      gap: 5,
-                      paddingHorizontal: 11,
-                      paddingVertical: 10,
-                      borderRadius: theme.radius.md,
-                      backgroundColor: selectedCategoryId
-                        ? (theme.isDark ? 'rgba(99, 102, 241, 0.22)' : 'rgba(79, 70, 229, 0.12)')
-                        : theme.colors.surfaceElevated,
-                      borderWidth: 1.5,
-                      borderColor: selectedCategoryId ? theme.colors.primary : theme.colors.border,
-                    }}
-                  >
-                    {selectedCat ? (
-                      <>
-                        <Text style={{ fontSize: 14 }}>{selectedCat.icon}</Text>
-                        <Text
-                          style={{
-                            fontSize: 12,
-                            fontWeight: '800',
-                            color: theme.colors.primary,
-                            maxWidth: 75,
-                          }}
-                          numberOfLines={1}
-                        >
-                          {selectedCat.name}
-                        </Text>
-                        <Pressable
-                          onPress={(e) => {
-                            e.stopPropagation();
-                            handleCategorySelect(null);
-                          }}
-                          hitSlop={8}
-                        >
-                          <X size={13} color={theme.colors.primary} />
-                        </Pressable>
-                      </>
-                    ) : (
-                      <>
-                        <Tag size={14} color={theme.colors.textMuted} />
-                        <Text style={{ fontSize: 12, fontWeight: '700', color: theme.colors.text }}>
-                          Category
-                        </Text>
-                        <ChevronDown size={14} color={theme.colors.textMuted} />
-                      </>
-                    )}
-                  </PressableScale>
-                );
-              })()}
-
-              {/* Sort Trigger */}
-              <PressableScale
-                onPress={() => setFiltersOpen(true)}
-                activeScale={0.92}
-                style={{
-                  paddingHorizontal: 11,
-                  paddingVertical: 10,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 5,
-                  borderRadius: theme.radius.md,
-                  backgroundColor: theme.colors.surfaceElevated,
-                  borderWidth: 1,
-                  borderColor: theme.colors.border,
-                }}
-              >
-                <ArrowUpDown size={15} color={theme.colors.primary} />
-                <Text variant="caption" style={{ fontWeight: '800', color: theme.colors.text }}>
-                  Sort
-                </Text>
-              </PressableScale>
-            </View>
-          </View>
-        }
         renderSectionHeader={({ section: { title, total } }) => (
           <View
             style={{
@@ -849,30 +1392,17 @@ export default function HistoryScreen() {
         }
       />
 
-      {/* ── SORT / FILTER BOTTOM SHEET ── */}
-      <BottomSheet visible={filtersOpen} onClose={() => setFiltersOpen(false)}>
-        <View style={{ gap: theme.spacing.lg }}>
-          <Select
-            label={t('history_sort_date_new') || 'Sort Transactions By'}
-            value={sort}
-            options={SORT_OPTIONS}
-            onChange={(nextSort) => {
-              setSort(nextSort as SortKey);
-              setFiltersOpen(false);
-              setCurrentPage(1);
-            }}
-          />
-          <Button title={t('common_done') || 'Apply Sort'} onPress={() => setFiltersOpen(false)} />
-        </View>
-      </BottomSheet>
-
       {/* ── CUSTOM DATE RANGE CALENDAR MODAL ── */}
       <CalendarModal
         visible={calendarOpen}
-        onClose={() => setCalendarOpen(false)}
+        onClose={() => {
+          setCalendarOpen(false);
+          setPeriodModalOpen(false);
+        }}
         onApply={(range) => {
           setCustomRange(range);
           setCalendarOpen(false);
+          setPeriodModalOpen(false);
           setCurrentPage(1);
         }}
         initialRange={customRange}
@@ -1115,232 +1645,6 @@ export default function HistoryScreen() {
                 )}
               </PressableScale>
             </View>
-          </Pressable>
-        </Pressable>
-      </Modal>
-      {/* ── LUXURY CATEGORY FILTER MODAL ── */}
-      <Modal
-        visible={categoryModalOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setCategoryModalOpen(false)}
-      >
-        <Pressable
-          onPress={() => setCategoryModalOpen(false)}
-          style={{
-            flex: 1,
-            backgroundColor: 'rgba(0,0,0,0.65)',
-            justifyContent: 'center',
-            alignItems: 'center',
-            padding: 20,
-          }}
-        >
-          <Pressable
-            onPress={(e) => e.stopPropagation()}
-            style={{
-              width: '100%',
-              maxWidth: 380,
-              maxHeight: '80%',
-              backgroundColor: theme.colors.surface,
-              borderRadius: theme.radius.lg,
-              padding: 20,
-              gap: 16,
-              borderWidth: 1.5,
-              borderColor: theme.colors.border,
-              shadowColor: '#000',
-              shadowOffset: { width: 0, height: 12 },
-              shadowOpacity: 0.35,
-              shadowRadius: 24,
-              elevation: 20,
-            }}
-          >
-            {/* Modal Header */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                <View
-                  style={{
-                    width: 36,
-                    height: 36,
-                    borderRadius: 10,
-                    backgroundColor: theme.isDark ? 'rgba(99, 102, 241, 0.2)' : 'rgba(79, 70, 229, 0.1)',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                >
-                  <Tag size={18} color={theme.colors.primary} />
-                </View>
-                <View>
-                  <Text variant="h3" style={{ fontWeight: '800', fontSize: 16 }}>
-                    Filter by Category
-                  </Text>
-                  <Text variant="caption" muted style={{ fontSize: 11 }}>
-                    Isolate transactions by spending bucket
-                  </Text>
-                </View>
-              </View>
-
-              <Pressable
-                onPress={() => setCategoryModalOpen(false)}
-                hitSlop={10}
-                style={{
-                  width: 30,
-                  height: 30,
-                  borderRadius: 15,
-                  backgroundColor: theme.colors.surfaceElevated,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  borderWidth: 1,
-                  borderColor: theme.colors.border,
-                }}
-              >
-                <X size={16} color={theme.colors.text} />
-              </Pressable>
-            </View>
-
-            {/* Category Options List */}
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-              {/* All Categories Option */}
-              <PressableScale
-                onPress={() => {
-                  handleCategorySelect(null);
-                  setCategoryModalOpen(false);
-                }}
-                activeScale={0.96}
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  padding: 12,
-                  borderRadius: theme.radius.md,
-                  borderWidth: 1.5,
-                  borderColor: !selectedCategoryId ? theme.colors.primary : theme.colors.border,
-                  backgroundColor: !selectedCategoryId
-                    ? (theme.isDark ? 'rgba(99, 102, 241, 0.2)' : 'rgba(79, 70, 229, 0.08)')
-                    : theme.colors.surfaceElevated,
-                }}
-              >
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                  <View
-                    style={{
-                      width: 36,
-                      height: 36,
-                      borderRadius: 18,
-                      backgroundColor: theme.colors.surface,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      borderWidth: 1,
-                      borderColor: theme.colors.border,
-                    }}
-                  >
-                    <Layers size={16} color={theme.colors.text} />
-                  </View>
-                  <View>
-                    <Text style={{ fontWeight: '800', fontSize: 14, color: !selectedCategoryId ? theme.colors.primary : theme.colors.text }}>
-                      All Categories
-                    </Text>
-                    <Text variant="caption" muted style={{ fontSize: 11 }}>
-                      Show all {expenses.items.length} transactions
-                    </Text>
-                  </View>
-                </View>
-
-                {!selectedCategoryId ? (
-                  <View
-                    style={{
-                      width: 22,
-                      height: 22,
-                      borderRadius: 11,
-                      backgroundColor: theme.colors.primary,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                  >
-                    <Check size={13} color="#FFFFFF" />
-                  </View>
-                ) : null}
-              </PressableScale>
-
-              {/* Individual Categories */}
-              {categories.map((cat) => {
-                const isSelected = selectedCategoryId === cat.id;
-                const count = expenses.items.filter((e) => e.category_id === cat.id).length;
-                const total = sumExpenses(
-                  expenses.items.filter((e) => e.category_id === cat.id),
-                  preferredCurrency,
-                  rates,
-                );
-
-                return (
-                  <PressableScale
-                    key={cat.id}
-                    onPress={() => {
-                      handleCategorySelect(cat.id);
-                      setCategoryModalOpen(false);
-                    }}
-                    activeScale={0.96}
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: 12,
-                      borderRadius: theme.radius.md,
-                      borderWidth: 1.5,
-                      borderColor: isSelected ? theme.colors.primary : theme.colors.border,
-                      backgroundColor: isSelected
-                        ? (theme.isDark ? 'rgba(99, 102, 241, 0.2)' : 'rgba(79, 70, 229, 0.08)')
-                        : theme.colors.surfaceElevated,
-                    }}
-                  >
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
-                      <View
-                        style={{
-                          width: 36,
-                          height: 36,
-                          borderRadius: 18,
-                          backgroundColor: cat.color ?? theme.colors.surface,
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          borderWidth: 1,
-                          borderColor: theme.colors.border,
-                        }}
-                      >
-                        <Text style={{ fontSize: 18 }}>{cat.icon}</Text>
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text
-                          style={{
-                            fontWeight: '800',
-                            fontSize: 14,
-                            color: isSelected ? theme.colors.primary : theme.colors.text,
-                          }}
-                          numberOfLines={1}
-                        >
-                          {cat.name}
-                        </Text>
-                        <Text variant="caption" muted style={{ fontSize: 11 }}>
-                          {count} {count === 1 ? 'transaction' : 'transactions'} {count > 0 ? `· ${formatMoney(total, preferredCurrency)}` : ''}
-                        </Text>
-                      </View>
-                    </View>
-
-                    {isSelected ? (
-                      <View
-                        style={{
-                          width: 22,
-                          height: 22,
-                          borderRadius: 11,
-                          backgroundColor: theme.colors.primary,
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                        }}
-                      >
-                        <Check size={13} color="#FFFFFF" />
-                      </View>
-                    ) : null}
-                  </PressableScale>
-                );
-              })}
-            </ScrollView>
           </Pressable>
         </Pressable>
       </Modal>

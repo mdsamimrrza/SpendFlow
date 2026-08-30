@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Image, Modal, Pressable, ScrollView, View } from 'react-native';
+import { Animated, Image, Modal, Pressable, ScrollView, View } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
-import { Calendar, ChevronLeft, ChevronRight, CreditCard, FileText, Image as ImageIcon, Tag, X } from 'lucide-react-native';
+import { Calendar, ChevronLeft, ChevronRight, CreditCard, FileText, Image as ImageIcon, RefreshCw, Tag, X } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -12,6 +12,7 @@ import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
 import { useTheme } from '@/hooks/useTheme';
+import { CategoryIcon } from '@/components/ui/CategoryIcon';
 import { Expense } from '@/types';
 import { formatMoney, formatTime12, groupByCategory } from '@/utils/format';
 
@@ -33,6 +34,7 @@ function ExpenseDetailModal({
 
   if (!expense) return null;
 
+  const isIncome = (expense.type || 'expense') === 'income';
   const isDifferentCurrency = expense.currency && expense.currency !== currency;
   const convertedAmount = isDifferentCurrency
     ? convert(Number(expense.amount), expense.currency, currency)
@@ -94,11 +96,11 @@ function ExpenseDetailModal({
                       justifyContent: 'center',
                     }}
                   >
-                    <Text style={{ fontSize: 20 }}>{expense.categories?.icon || '💳'}</Text>
+                    <CategoryIcon name={expense.categories?.icon} size={20} color={theme.colors.primary} />
                   </View>
                   <View>
                     <Text variant="h3" style={{ fontWeight: '800', fontSize: 17 }}>
-                      {t('expense_detail_title') || 'Expense Details'}
+                      {isIncome ? 'Income Details' : (t('expense_detail_title') || 'Expense Details')}
                     </Text>
                     <Text variant="caption" muted style={{ fontSize: 11 }}>
                       {expense.categories?.name || 'Uncategorized'} · {expense.date}
@@ -154,7 +156,12 @@ function ExpenseDetailModal({
                     numberOfLines={1}
                     adjustsFontSizeToFit
                     minimumFontScale={0.72}
-                    style={{ fontSize: 32, fontWeight: '800', color: theme.colors.primary, maxWidth: '100%' }}
+                    style={{
+                      fontSize: 32,
+                      fontWeight: '800',
+                      color: isIncome ? '#10B981' : (theme.isDark ? '#EF4444' : '#DC2626'),
+                      maxWidth: '100%',
+                    }}
                   >
                   {formatMoney(convertedAmount, currency)}
                 </Text>
@@ -173,9 +180,12 @@ function ExpenseDetailModal({
                     <Tag size={15} color={theme.colors.textMuted} />
                     <Text variant="caption" muted>{t('expense_category')}</Text>
                   </View>
-                  <Text variant="label" style={{ flexShrink: 1, textAlign: 'right', fontWeight: '700' }}>
-                    {expense.categories?.icon} {expense.categories?.name || 'Uncategorized'}
-                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, flexShrink: 1 }}>
+                    <CategoryIcon name={expense.categories?.icon} size={14} color={theme.colors.text} />
+                    <Text variant="label" style={{ flexShrink: 1, textAlign: 'right', fontWeight: '700' }}>
+                      {expense.categories?.name || 'Uncategorized'}
+                    </Text>
+                  </View>
                 </View>
 
                 <View style={{ height: 1, backgroundColor: theme.colors.border }} />
@@ -288,7 +298,7 @@ function ExpenseDetailModal({
                   }}
                 />
                 <Button
-                  title={`✏️ ${t('expense_edit_btn')}`}
+                  title={isIncome ? '✏️ Edit Income' : `✏️ ${t('expense_edit_btn')}`}
                   onPress={() => {
                     const id = expense.id;
                     onClose();
@@ -326,7 +336,7 @@ const VIBRANT_PALETTE = [
   '#EF4444', // 7. Red
 ];
 
-/* ── 📊 LUXURY INTERACTIVE SEGMENTED DONUT CATEGORY BREAKDOWN ── */
+/* ── 📊 INTERACTIVE SEGMENTED DONUT CATEGORY BREAKDOWN ── */
 export function CategoryBreakdown({ expenses, targetCurrency }: { expenses: Expense[]; targetCurrency?: string }) {
   const theme = useTheme();
   const { profile } = useAuth();
@@ -335,58 +345,117 @@ export function CategoryBreakdown({ expenses, targetCurrency }: { expenses: Expe
   const { isPrivacyMode } = usePrivacy();
   const currency = targetCurrency ?? profile?.preferred_currency ?? 'NPR';
 
+  const [isFlipped, setIsFlipped] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [inspectingExpense, setInspectingExpense] = useState<Expense | null>(null);
+  // Measured heights of both faces so the wrapper resizes to the ACTIVE face
+  // (prevents a blank gap below the card / pushed-down Recent Activity after flipping)
+  const [frontHeight, setFrontHeight] = useState<number | null>(null);
+  const [backHeight, setBackHeight] = useState<number | null>(null);
 
-  const data = useMemo(() => {
-    const raw = groupByCategory(expenses, currency, rates).slice(0, 6);
-    return raw.map((item, idx) => ({
-      ...item,
-      color: VIBRANT_PALETTE[idx % VIBRANT_PALETTE.length],
-    }));
-  }, [expenses, currency, rates]);
+  const hasIncome = useMemo(() => expenses.some((e) => e.type === 'income'), [expenses]);
 
-  const total = useMemo(() => data.reduce((sum, item) => sum + item.total, 0), [data]);
+  // ── Flip Animation ──
+  const flipAnim = useRef(new Animated.Value(0)).current;
 
-  // Filtered transactions for selected category
-  const filteredCategoryExpenses = useMemo(() => {
-    if (!selectedCategory) return [];
-    return expenses.filter(
-      (e) => (e.categories?.name ?? 'Other') === selectedCategory,
-    );
-  }, [expenses, selectedCategory]);
+  const handleFlip = () => {
+    const toValue = isFlipped ? 0 : 1;
+    setIsFlipped(!isFlipped);
+    setSelectedCategory(null);
+    Animated.spring(flipAnim, {
+      toValue,
+      friction: 8,
+      tension: 60,
+      useNativeDriver: true,
+    }).start();
+  };
 
-  const selectedCategoryItem = data.find((d) => d.label === selectedCategory);
-
-  // Donut geometry calculations: exact percentage balance
-  const donutRadius = 44;
-  const donutCircumference = 2 * Math.PI * donutRadius;
-
-  // Calculate contiguous segment offsets (100% full circle divided accurately)
-  let accumulatedOffset = 0;
-  const segments = data.map((item) => {
-    const ratio = total > 0 ? item.total / total : 0;
-    const rawLength = ratio * donutCircumference;
-    const segmentLength = Math.max(rawLength, item.total > 0 ? 6 : 0);
-    const offset = accumulatedOffset;
-    accumulatedOffset += rawLength;
-    return {
-      ...item,
-      ratio,
-      segmentLength,
-      offset,
-    };
+  const frontRotateY = flipAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '180deg'],
   });
 
-  return (
-    <Card style={{ gap: 10, padding: 14 }}>
+  const backRotateY = flipAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['180deg', '360deg'],
+  });
+
+  const frontOpacity = flipAnim.interpolate({
+    inputRange: [0, 0.5, 0.5, 1],
+    outputRange: [1, 1, 0, 0],
+  });
+
+  const backOpacity = flipAnim.interpolate({
+    inputRange: [0, 0.5, 0.5, 1],
+    outputRange: [0, 0, 1, 1],
+  });
+
+  // Pre-compute breakdown data for BOTH flow types so each card face renders independently
+  const dataByType = useMemo(() => {
+    const build = (ft: 'expense' | 'income') =>
+      groupByCategory(expenses, currency, rates, ft)
+        .slice(0, 6)
+        .map((item, idx) => ({
+          ...item,
+          color: VIBRANT_PALETTE[idx % VIBRANT_PALETTE.length],
+        }));
+    return { expense: build('expense'), income: build('income') };
+  }, [expenses, currency, rates]);
+
+  // Filtered transactions for selected category, per flow type
+  const filteredByType = useMemo(() => {
+    const build = (ft: 'expense' | 'income') =>
+      !selectedCategory
+        ? []
+        : expenses.filter(
+            (e) => (e.type || 'expense') === ft && (e.categories?.name ?? 'Other') === selectedCategory,
+          );
+    return { expense: build('expense'), income: build('income') };
+  }, [expenses, selectedCategory]);
+
+  const renderBody = (type: 'expense' | 'income') => {
+    const data = dataByType[type];
+    const total = data.reduce((sum, item) => sum + item.total, 0);
+    const filteredCategoryExpenses = filteredByType[type];
+    const selectedCategoryItem = data.find((d) => d.label === selectedCategory);
+
+    return (
+      <>
       {/* ── CARD HEADER ── */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 6 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           <Text variant="label" style={{ fontWeight: '800', fontSize: 14 }}>
-            {t('charts_category_breakdown') || 'Category Breakdown'}
+            {type === 'income' ? 'Income Streams Breakdown' : t('charts_category_breakdown') || 'Category Breakdown'}
           </Text>
         </View>
+
+        {/* Flip Button — red = Expense side, green = Income side */}
+        {hasIncome && (
+          <Pressable
+            onPress={handleFlip}
+            hitSlop={10}
+            style={({ pressed }) => ({
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 4,
+              paddingHorizontal: 8,
+              paddingVertical: 4,
+              borderRadius: 12,
+              backgroundColor:
+                type === 'income'
+                  ? (theme.isDark ? 'rgba(52, 211, 153, 0.18)' : '#DCE9E3')
+                  : (theme.isDark ? 'rgba(239, 68, 68, 0.18)' : '#F1DCD3'),
+              borderWidth: 1.2,
+              borderColor: type === 'income' ? '#059669' : theme.colors.danger,
+              opacity: pressed ? 0.75 : 1,
+            })}
+          >
+            <RefreshCw size={12} color={type === 'income' ? '#059669' : theme.colors.danger} />
+            <Text style={{ fontSize: 11, fontWeight: '800', color: type === 'income' ? '#059669' : theme.colors.danger }}>
+              {type === 'income' ? 'Income' : 'Expenses'}
+            </Text>
+          </Pressable>
+        )}
 
         {selectedCategory && (
           <Pressable
@@ -440,8 +509,9 @@ export function CategoryBreakdown({ expenses, targetCurrency }: { expenses: Expe
                   <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
                       <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: item.color }} />
+                      <CategoryIcon name={item.icon} size={14} color={item.color} />
                       <Text style={{ fontSize: 12.5, fontWeight: isSelected ? '800' : '600', color: theme.colors.text }} numberOfLines={1}>
-                        {item.icon} {item.label}
+                        {item.label}
                       </Text>
                     </View>
                     
@@ -501,9 +571,12 @@ export function CategoryBreakdown({ expenses, targetCurrency }: { expenses: Expe
               {/* Category Header */}
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                 <View style={{ gap: 2 }}>
-                  <Text variant="label" style={{ fontWeight: '800', fontSize: 14 }}>
-                    {selectedCategoryItem.icon} {selectedCategoryItem.label}
-                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <CategoryIcon name={selectedCategoryItem.icon} size={16} color={selectedCategoryItem.color} />
+                    <Text variant="label" style={{ fontWeight: '800', fontSize: 14 }}>
+                      {selectedCategoryItem.label}
+                    </Text>
+                  </View>
                   <Text variant="caption" muted style={{ fontSize: 11 }}>
                     {filteredCategoryExpenses.length} {filteredCategoryExpenses.length === 1 ? 'transaction' : 'transactions'} · {Math.round((selectedCategoryItem.total / total) * 100)}% of total
                   </Text>
@@ -572,6 +645,55 @@ export function CategoryBreakdown({ expenses, targetCurrency }: { expenses: Expe
           )}
         </>
       )}
+      </>
+
+    );
+  };
+
+  return (
+    <View>
+      <View
+        style={{
+          transform: [{ perspective: 1200 }],
+          height: isFlipped ? (backHeight ?? undefined) : (frontHeight ?? undefined),
+        }}
+      >
+        {/* ═══════════ FRONT FACE: EXPENSE BREAKDOWN ═══════════ */}
+        <Animated.View
+          pointerEvents={isFlipped ? 'none' : 'auto'}
+          onLayout={(e) => {
+            const h = e.nativeEvent.layout.height;
+            if (h > 0) setFrontHeight(Math.round(h));
+          }}
+          style={{
+            backfaceVisibility: 'hidden',
+            transform: [{ rotateY: frontRotateY }],
+            opacity: frontOpacity,
+          }}
+        >
+          <Card style={{ gap: 10, padding: 14 }}>{renderBody('expense')}</Card>
+        </Animated.View>
+
+        {/* ═══════════ BACK FACE: INCOME BREAKDOWN ═══════════ */}
+        <Animated.View
+          pointerEvents={isFlipped ? 'auto' : 'none'}
+          onLayout={(e) => {
+            const h = e.nativeEvent.layout.height;
+            if (h > 0) setBackHeight(Math.round(h));
+          }}
+          style={{
+            backfaceVisibility: 'hidden',
+            transform: [{ rotateY: backRotateY }],
+            opacity: backOpacity,
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+          }}
+        >
+          <Card style={{ gap: 10, padding: 14 }}>{renderBody('income')}</Card>
+        </Animated.View>
+      </View>
 
       {/* Expense Detail Modal */}
       <ExpenseDetailModal
@@ -579,7 +701,7 @@ export function CategoryBreakdown({ expenses, targetCurrency }: { expenses: Expe
         currency={currency}
         onClose={() => setInspectingExpense(null)}
       />
-    </Card>
+    </View>
   );
 }
 

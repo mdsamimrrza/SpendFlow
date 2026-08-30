@@ -11,6 +11,8 @@ import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import { Edit3, Trash2 } from 'lucide-react-native';
 import { ExpenseDetailModal } from '@/components/expense/ExpenseDetailModal';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { CategoryIcon } from '@/components/ui/CategoryIcon';
 import { Text } from '@/components/ui/Text';
 import { useAuth } from '@/hooks/useAuth';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
@@ -33,6 +35,7 @@ export function ExpenseItem({ expense, onDelete, onPress }: ExpenseItemProps) {
   const router = useRouter();
 
   const [detailModalOpen, setDetailModalOpen] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const translateX = useRef(new Animated.Value(0)).current;
   const isSwipedRef = useRef(false);
 
@@ -106,17 +109,7 @@ export function ExpenseItem({ expense, onDelete, onPress }: ExpenseItemProps) {
 
   function handleDeletePress() {
     closeSwipe();
-    Alert.alert('Delete Expense?', 'This transaction will be permanently removed from your history.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: () => {
-          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
-          onDelete?.(expense);
-        },
-      },
-    ]);
+    setDeleteConfirmOpen(true);
   }
 
   function handleEditPress() {
@@ -201,20 +194,24 @@ export function ExpenseItem({ expense, onDelete, onPress }: ExpenseItemProps) {
                 width: 44,
                 height: 44,
                 borderRadius: theme.radius.full,
-                backgroundColor: expense.categories?.color ?? theme.colors.surfaceElevated,
+                backgroundColor: theme.colors.surfaceElevated,
                 alignItems: 'center',
                 justifyContent: 'center',
                 borderWidth: 1,
                 borderColor: theme.colors.border,
               }}
             >
-              <Text style={{ fontSize: 20 }}>{expense.categories?.icon ?? '📌'}</Text>
+              <CategoryIcon
+                name={expense.categories?.icon}
+                size={20}
+                color={expense.type === 'income' ? theme.colors.income : theme.colors.primary}
+              />
             </View>
 
             {/* Description & Metadata */}
             <View style={{ flex: 1, gap: 2 }}>
               <Text variant="label" numberOfLines={1} style={{ fontWeight: '700', fontSize: 14 }}>
-                {expense.description || expense.categories?.name || 'Expense'}
+                {expense.description || expense.categories?.name || (expense.type === 'income' ? 'Income' : 'Expense')}
               </Text>
               <Text variant="caption" muted style={{ fontSize: 11 }}>
                 {expense.date} {expense.time ? `· ${formatTime12(expense.time)}` : ''} · {expense.payment_method}
@@ -229,21 +226,21 @@ export function ExpenseItem({ expense, onDelete, onPress }: ExpenseItemProps) {
                   fontVariant: ['tabular-nums'],
                   fontSize: 16,
                   fontWeight: '900',
-                  color: theme.colors.text,
+                  color: expense.type === 'income' ? theme.colors.income : theme.colors.text,
                 }}
               >
-                {formatMoney(convertedAmount, preferredCurrency)}
+                {expense.type === 'income' ? '+' : '-'} {formatMoney(convertedAmount, preferredCurrency)}
               </Text>
               {isDifferentCurrency ? (
                 <Text
                   style={{
                     fontSize: 11,
                     fontWeight: '600',
-                    color: theme.colors.textMuted,
+                    color: expense.type === 'income' ? theme.colors.income : theme.colors.textMuted,
                     fontVariant: ['tabular-nums'],
                   }}
                 >
-                  ({formatMoney(Number(expense.amount), expense.currency)})
+                  ({expense.type === 'income' ? '+' : '-'}{formatMoney(Number(expense.amount), expense.currency)})
                 </Text>
               ) : null}
             </View>
@@ -257,6 +254,17 @@ export function ExpenseItem({ expense, onDelete, onPress }: ExpenseItemProps) {
         visible={detailModalOpen}
         onClose={() => setDetailModalOpen(false)}
         onDelete={onDelete}
+      />
+      <ConfirmDialog
+        visible={deleteConfirmOpen}
+        title="Delete Expense?"
+        message="This transaction will be permanently removed from your history."
+        onCancel={() => setDeleteConfirmOpen(false)}
+        onConfirm={() => {
+          setDeleteConfirmOpen(false);
+          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
+          onDelete?.(expense);
+        }}
       />
     </>
   );

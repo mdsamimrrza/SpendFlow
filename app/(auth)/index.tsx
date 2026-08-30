@@ -262,7 +262,7 @@ export default function AuthScreen() {
     });
   }
 
-  // Theme-aware styles matching luxury ledger design
+  // Theme-aware styles matching ledger design
   const inputBgColor = theme.isDark ? '#111827' : '#FFFFFF';
   const cardBgColor = theme.isDark ? '#161F30' : '#FAF8F3';
   const cardBorderColor = theme.isDark ? '#233044' : '#E6E1D3';

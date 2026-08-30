@@ -3,6 +3,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, PropsWithChildren, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as Linking from 'expo-linking';
 import { ensureProfile, signOut as signOutService } from '@/services/auth';
+import { setNotificationUserId } from '@/services/notifications';
+import { unregisterPushToken } from '@/services/pushNotifications';
 import { generateDueRecurringExpenses } from '@/services/recurring';
 import { UserProfile } from '@/types';
 import { supabase } from '@/utils/supabase';
@@ -66,6 +68,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
     try {
       const nextProfile = await ensureProfile();
       setProfile(nextProfile);
+      setNotificationUserId(nextProfile.id);
     } catch {
       const { data: sessionData } = await supabase.auth.getSession().catch(() => ({ data: { session: null } }));
       if (!sessionData?.session) {
@@ -86,13 +89,18 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
   const signOut = useCallback(async () => {
     try {
+      const uid = session?.user?.id;
+      if (uid) {
+        void unregisterPushToken(uid).catch(() => {});
+      }
       await signOutService();
     } finally {
       lastLoadedUserIdRef.current = null;
       setSession(null);
       setProfile(null);
+      setNotificationUserId(null);
     }
-  }, []);
+  }, [session]);
 
   // 1. Initial mount: listener for deep links and Supabase auth state change
   useEffect(() => {
@@ -154,23 +162,24 @@ export function AuthProvider({ children }: PropsWithChildren) {
     lastLoadedUserIdRef.current = userId;
     let mounted = true;
 
-    void refreshProfile()
-      .then(() => generateDueRecurringExpenses(userId))
-      .catch(() => {
-        if (mounted && session?.user) {
-          setProfile({
-            id: session.user.id,
-            email: session.user.email ?? '',
-            display_name: (session.user.user_metadata?.display_name as string) ?? null,
-            avatar_url: (session.user.user_metadata?.avatar_url as string) ?? null,
-            preferred_currency: (session.user.user_metadata?.preferred_currency as string) ?? 'NPR',
-            theme_preference: (session.user.user_metadata?.theme_preference as any) ?? 'system',
-            monthly_budget: session.user.user_metadata?.monthly_budget ? Number(session.user.user_metadata.monthly_budget) : null,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          });
-        }
-      });
+    // Profile fetch and recurring materialization run in parallel so neither
+    // delays the first screenful of data.
+    void refreshProfile().catch(() => {
+      if (mounted && session?.user) {
+        setProfile({
+          id: session.user.id,
+          email: session.user.email ?? '',
+          display_name: (session.user.user_metadata?.display_name as string) ?? null,
+          avatar_url: (session.user.user_metadata?.avatar_url as string) ?? null,
+          preferred_currency: (session.user.user_metadata?.preferred_currency as string) ?? 'NPR',
+          theme_preference: (session.user.user_metadata?.theme_preference as any) ?? 'system',
+          monthly_budget: session.user.user_metadata?.monthly_budget ? Number(session.user.user_metadata.monthly_budget) : null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+      }
+    });
+    void generateDueRecurringExpenses(userId).catch(() => undefined);
 
     return () => {
       mounted = false;

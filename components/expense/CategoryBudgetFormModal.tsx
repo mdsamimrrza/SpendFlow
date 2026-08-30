@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Alert,
   Modal,
   Pressable,
   ScrollView,
@@ -8,6 +7,7 @@ import {
   View,
 } from 'react-native';
 import {
+  Bell,
   Check,
   Sliders,
   Sparkles,
@@ -16,8 +16,10 @@ import {
   Wallet,
   X,
 } from 'lucide-react-native';
+import { AlertModal } from '@/components/ui/AlertModal';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { CategoryIcon } from '@/components/ui/CategoryIcon';
 import { PressableScale } from '@/components/ui/PressableScale';
 import { Text } from '@/components/ui/Text';
 import { useAuth } from '@/hooks/useAuth';
@@ -46,6 +48,7 @@ export function CategoryBudgetFormModal({
   const [amountInput, setAmountInput] = useState('');
   const [saving, setSaving] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
+  const [alert, setAlert] = useState<{ title: string; message: string } | null>(null);
 
   const currency = profile?.preferred_currency ?? 'NPR';
   const monthlyOverall = profile?.monthly_budget ? Number(profile.monthly_budget) : 0;
@@ -94,7 +97,7 @@ export function CategoryBudgetFormModal({
       onSaved?.();
       setTimeout(() => setSuccessMsg(''), 3000);
     } catch (err) {
-      Alert.alert('Error', err instanceof Error ? err.message : 'Failed to save category limit');
+      setAlert({ title: 'Error', message: err instanceof Error ? err.message : 'Failed to save category limit' });
     } finally {
       setSaving(false);
     }
@@ -111,7 +114,7 @@ export function CategoryBudgetFormModal({
       }
       onSaved?.();
     } catch (err) {
-      Alert.alert('Error', 'Failed to clear category limit');
+      setAlert({ title: 'Error', message: 'Failed to clear category limit' });
     }
   }
 
@@ -130,6 +133,7 @@ export function CategoryBudgetFormModal({
   const isOverAllocated = monthlyOverall > 0 && previewAllocated > monthlyOverall;
 
   return (
+    <>
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View
         style={{
@@ -187,11 +191,8 @@ export function CategoryBudgetFormModal({
                   <Target size={20} color={theme.colors.primary} />
                 </View>
                 <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text variant="h3" numberOfLines={2} style={{ fontWeight: '800', fontSize: 17 }}>
+                  <Text variant="h3" numberOfLines={1} style={{ fontWeight: '800', fontSize: 17 }}>
                     {t('category_budget_studio_title') || 'Category Budget Studio'}
-                  </Text>
-                  <Text variant="caption" muted numberOfLines={2} style={{ fontSize: 11 }}>
-                    {t('category_budget_studio_sub') || 'Allocate custom allowances per category'}
                   </Text>
                 </View>
               </View>
@@ -333,9 +334,9 @@ export function CategoryBudgetFormModal({
                     >
                       <View
                         style={{
-                          width: 30,
-                          height: 30,
-                          borderRadius: 15,
+                          width: 32,
+                          height: 32,
+                          borderRadius: 16,
                           backgroundColor: isSelected
                             ? (theme.isDark ? 'rgba(99, 102, 241, 0.35)' : 'rgba(79, 70, 229, 0.18)')
                             : (theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'),
@@ -343,7 +344,11 @@ export function CategoryBudgetFormModal({
                           justifyContent: 'center',
                         }}
                       >
-                        <Text style={{ fontSize: 17 }}>{cat.icon}</Text>
+                        <CategoryIcon
+                          name={cat.icon}
+                          size={16}
+                          color={isSelected ? theme.colors.primary : theme.colors.text}
+                        />
                       </View>
 
                       <Text
@@ -404,9 +409,15 @@ export function CategoryBudgetFormModal({
             {/* ── 3. STEP 2: AMOUNT INPUT & PRESETS ── */}
             {selectedCategory ? (
               <View style={{ gap: 10 }}>
-                <Text variant="label" style={{ fontWeight: '800', fontSize: 13 }}>
-                  2. Set Limit for {selectedCategory.icon} {selectedCategory.name}
-                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Text variant="label" style={{ fontWeight: '800', fontSize: 13 }}>
+                    2. Set Limit for
+                  </Text>
+                  <CategoryIcon name={selectedCategory.icon} size={15} color={theme.colors.primary} />
+                  <Text variant="label" style={{ fontWeight: '800', fontSize: 13, color: theme.colors.primary }}>
+                    {selectedCategory.name}
+                  </Text>
+                </View>
 
                 {/* Hero Input Box & Right-Side Save Button */}
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
@@ -490,25 +501,7 @@ export function CategoryBudgetFormModal({
                   ))}
                 </View>
 
-                {/* Smart Alert Threshold Indicator */}
-                <View
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    gap: 6,
-                    paddingHorizontal: 12,
-                    paddingVertical: 8,
-                    borderRadius: theme.radius.sm,
-                    backgroundColor: theme.isDark ? 'rgba(245, 158, 11, 0.12)' : '#FEF3C7',
-                    borderWidth: 1,
-                    borderColor: theme.isDark ? 'rgba(245, 158, 11, 0.3)' : '#FDE68A',
-                  }}
-                >
-                  <Text style={{ fontSize: 13 }}>🔔</Text>
-                  <Text style={{ fontSize: 11.5, fontWeight: '600', color: theme.isDark ? '#FCD34D' : '#92400E', flex: 1 }}>
-                    Smart alerts trigger at <Text style={{ fontWeight: '800' }}>90%</Text> & <Text style={{ fontWeight: '800' }}>100%+</Text> for this category.
-                  </Text>
-                </View>
+                {/* Presets Row */}
 
                 {successMsg ? (
                   <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
@@ -576,13 +569,12 @@ export function CategoryBudgetFormModal({
                             <View style={{ flex: 1, gap: 2 }}>
                               {/* Line 1: Icon + Name */}
                               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                                <Text style={{ fontSize: 18 }}>{c.icon}</Text>
+                                <CategoryIcon name={c.icon} size={16} color={theme.colors.primary} />
                                 <Text
                                   style={{
-                                    fontWeight: '800',
                                     fontSize: 13,
+                                    fontWeight: '800',
                                     color: theme.colors.text,
-                                    flex: 1,
                                   }}
                                   numberOfLines={1}
                                 >
@@ -638,5 +630,14 @@ export function CategoryBudgetFormModal({
         </View>
       </View>
     </Modal>
+
+    <AlertModal
+      visible={!!alert}
+      title={alert?.title ?? ''}
+      message={alert?.message ?? ''}
+      variant="error"
+      onClose={() => setAlert(null)}
+    />
+    </>
   );
 }

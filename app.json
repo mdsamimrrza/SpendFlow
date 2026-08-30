@@ -2,6 +2,7 @@
   "expo": {
     "name": "SpendFlow",
     "slug": "spendflow",
+    "owner": "samimrrza",
     "version": "2.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -16,7 +17,7 @@
       "versionCode": 2,
       "softwareKeyboardLayoutMode": "pan",
       "adaptiveIcon": {
-        "backgroundColor": "#0B0F19",
+        "backgroundColor": "#F2EFE9",
         "foregroundImage": "./assets/android-icon-foreground.png"
       },
       "predictiveBackGestureEnabled": false
@@ -48,6 +49,9 @@
       "eas": {
         "projectId": "db912006-55b7-4be4-9a0a-42f8935bbf17"
       }
+    },
+    "runtimeVersion": {
+      "policy": "sdkVersion"
     }
   }
 }

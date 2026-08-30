@@ -8,7 +8,7 @@ export const DEFAULT_RATES: Record<string, number> = {
   USD: 1.0,
   NPR: 133.5,
   INR: 83.5,
-  EUR: 0.92,
+  QAR: 3.64,
   GBP: 0.79,
 };
 
@@ -69,7 +69,7 @@ export async function fetchExchangeRates(): Promise<Record<string, number>> {
         USD: 1.0,
         NPR: Number(data.rates.NPR) || DEFAULT_RATES.NPR,
         INR: Number(data.rates.INR) || DEFAULT_RATES.INR,
-        EUR: Number(data.rates.EUR) || DEFAULT_RATES.EUR,
+        QAR: Number(data.rates.QAR) || DEFAULT_RATES.QAR,
         GBP: Number(data.rates.GBP) || DEFAULT_RATES.GBP,
       };
 

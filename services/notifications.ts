@@ -3,9 +3,41 @@ import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { formatMoney } from '@/utils/format';
+import { supabase } from '@/utils/supabase';
 
 // Detect if running inside Expo Go (where remote push is unsupported since SDK 53)
 const isExpoGo = Constants.executionEnvironment === 'storeClient';
+
+// ── Persist a notification record to Supabase ──────────────────────────────
+// userId is optional — if not available (e.g. on web) we skip the DB write.
+async function saveNotification(
+  userId: string | null | undefined,
+  type: string,
+  title: string,
+  body: string,
+  data?: Record<string, unknown>,
+): Promise<void> {
+  if (!userId) return;
+  try {
+    await supabase.from('notifications').insert({
+      user_id: userId,
+      type,
+      title,
+      body,
+      data: data ?? null,
+      is_read: false,
+    });
+  } catch {
+    // Best-effort — never block the notification from firing
+  }
+}
+
+// In-memory userId store — set once on app start via setNotificationUserId()
+let _currentUserId: string | null = null;
+export function setNotificationUserId(userId: string | null) {
+  _currentUserId = userId;
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 // Configure notification behavior — only register handler outside Expo Go
 // to avoid the SDK 53 "push removed from Expo Go" warning
@@ -145,6 +177,7 @@ export async function checkAndNotifyBudgetThreshold(
       },
       trigger: null, // Send immediately
     });
+    void saveNotification(_currentUserId, 'budget_threshold', currentBracket.title, bodyMsg, { percent: currentBracket.percent });
   }
 }
 
@@ -219,6 +252,7 @@ export async function checkAndNotifyCategoryBudgetThreshold(
       },
       trigger: null, // Send immediately
     });
+    void saveNotification(_currentUserId, 'category_budget_threshold', title, bodyMsg, { categoryId, percent: currentBracket.percent });
   }
 }
 
@@ -246,10 +280,12 @@ export async function notifyRecurringBillDue(
   const hasPermission = await requestNotificationPermissions();
   if (hasPermission) {
     const formattedAmount = formatMoney(amount, currency);
+    const recurringTitle = '🔔 Recurring Bill Reminder';
+    const recurringBody = `Reminder: Your recurring payment "${description}" (${formattedAmount}) is due on ${dueDate}.`;
     await Notifications.scheduleNotificationAsync({
       content: {
-        title: '🔔 Recurring Bill Reminder',
-        body: `Reminder: Your recurring payment "${description}" (${formattedAmount}) is due on ${dueDate}.`,
+        title: recurringTitle,
+        body: recurringBody,
         data: { type: 'recurring_bill_due' },
         sound: true,
         // @ts-expect-error channelId is supported on Android
@@ -257,8 +293,18 @@ export async function notifyRecurringBillDue(
       },
       trigger: null, // Send immediately
     });
+    void saveNotification(_currentUserId, 'recurring_bill_due', recurringTitle, recurringBody, { description, amount, dueDate });
   }
 }
+
+// Per-currency large-purchase thresholds so the alert is meaningful regardless of currency
+const LARGE_EXPENSE_THRESHOLDS: Record<string, number> = {
+  NPR: 5000,
+  INR: 5000,
+  USD: 100,
+  QAR: 365,
+  GBP: 80,
+};
 
 // 4. Large Single Purchase Notification
 export async function notifyLargeExpense(
@@ -266,18 +312,21 @@ export async function notifyLargeExpense(
   categoryName?: string | null,
   currency = 'NPR',
 ): Promise<void> {
-  if (Platform.OS === 'web' || !amount || amount < 5000) return;
+  const threshold = LARGE_EXPENSE_THRESHOLDS[currency.toUpperCase()] ?? 5000;
+  if (Platform.OS === 'web' || !amount || amount < threshold) return;
 
   const hasPermission = await requestNotificationPermissions();
   if (hasPermission) {
     const formattedAmount = formatMoney(amount, currency);
     const category = cleanCategoryLabel(categoryName);
     const inCategoryText = category ? ` in ${category}` : '';
+    const largeTitle = '💸 Large Purchase Recorded';
+    const largeBody = `Recorded purchase of ${formattedAmount}${inCategoryText}.`;
 
     await Notifications.scheduleNotificationAsync({
       content: {
-        title: '💸 Large Purchase Recorded',
-        body: `Recorded purchase of ${formattedAmount}${inCategoryText}.`,
+        title: largeTitle,
+        body: largeBody,
         data: { type: 'large_expense' },
         sound: true,
         // @ts-expect-error channelId is supported on Android
@@ -285,6 +334,7 @@ export async function notifyLargeExpense(
       },
       trigger: null, // Send immediately
     });
+    void saveNotification(_currentUserId, 'large_expense', largeTitle, largeBody, { amount, currency });
   }
 }
 
@@ -325,5 +375,6 @@ export async function notifyExpenseAdded(
       },
       trigger: null, // Send immediately
     });
+    void saveNotification(_currentUserId, 'expense_added', '✅ Expense Recorded', body, { amount, currency });
   }
 }

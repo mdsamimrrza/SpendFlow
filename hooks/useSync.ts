@@ -1,8 +1,10 @@
 import NetInfo from '@react-native-community/netinfo';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState } from 'react-native';
-import { createExpense, softDeleteExpense, updateExpense } from '@/services/expenses';
-import { getOfflineQueue, setOfflineQueue } from '@/utils/offlineQueue';
+import { getOfflineQueue, clearOfflineQueue } from '@/utils/offlineQueue';
+import { notifyExpensesChanged, removeOfflineEntries } from '@/hooks/useExpenses';
+import { EXPENSE_CACHE_KEY } from '@/constants/app';
 
 export function useSync(userId?: string) {
   const [isOnline, setIsOnline] = useState(true);
@@ -21,33 +23,46 @@ export function useSync(userId?: string) {
     }
   }, []);
 
+  const clearQueue = useCallback(async () => {
+    const queue = await getOfflineQueue();
+    const localIds = queue.map((op) => op.localId).filter(Boolean) as string[];
+    await clearOfflineQueue();
+    setPendingCount(0);
+    if (localIds.length > 0) {
+      await removeOfflineEntries(localIds);
+      notifyExpensesChanged();
+    }
+  }, []);
+
+  const clearAllLocalData = useCallback(async () => {
+    // Nuclear option: wipe ALL local expense data and queue
+    await Promise.all([
+      clearOfflineQueue(),
+      AsyncStorage.removeItem(EXPENSE_CACHE_KEY),
+      AsyncStorage.removeItem('@spendflow_cached_profile'),
+    ]);
+    setPendingCount(0);
+    notifyExpensesChanged();
+  }, []);
+
   const processQueue = useCallback(async () => {
-    if (!userId || syncingRef.current) return;
+    if (syncingRef.current) return;
     const queue = await getOfflineQueue();
     if (!queue.length) {
       setPendingCount(0);
       return;
     }
 
+    // Offline transaction creation has been retired. Remove old pending entries
+    // so temporary offline IDs can never be sent to Supabase as UUIDs.
     syncingRef.current = true;
     setSyncing(true);
-
-    const remaining = [...queue];
     try {
-      while (remaining.length) {
-        const operation = remaining[0];
-        try {
-          if (operation.type === 'create') await createExpense(userId, operation.payload);
-          if (operation.type === 'update' && operation.payload.id) await updateExpense(operation.payload.id, operation.payload);
-          if (operation.type === 'delete' && operation.payload.id) await softDeleteExpense(operation.payload.id);
-        } catch (opErr) {
-          console.warn('[Sync] Offline op failed:', opErr);
-        }
-        remaining.shift();
-        await setOfflineQueue(remaining);
-        setPendingCount(remaining.length);
-      }
+      const localIds = queue.map((operation) => operation.localId).filter(Boolean) as string[];
+      await clearOfflineQueue();
+      if (localIds.length > 0) await removeOfflineEntries(localIds);
       setPendingCount(0);
+      notifyExpensesChanged();
     } finally {
       syncingRef.current = false;
       setSyncing(false);
@@ -84,7 +99,7 @@ export function useSync(userId?: string) {
   }, [processQueue, refreshCount, userId]);
 
   return useMemo(
-    () => ({ isOnline, pendingCount, syncing, refreshCount, processQueue }),
-    [isOnline, pendingCount, processQueue, refreshCount, syncing],
+    () => ({ isOnline, pendingCount, syncing, refreshCount, processQueue, clearQueue, clearAllLocalData }),
+    [isOnline, pendingCount, processQueue, refreshCount, syncing, clearQueue, clearAllLocalData],
   );
 }

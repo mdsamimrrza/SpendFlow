@@ -34,6 +34,7 @@ export const lightColors = {
   primaryLight: '#DCE9E3',    // Teal tint (light backgrounds for teal chips/icons)
   accent: '#A8791F',          // Brass (highlights, badge percentages)
   success: '#0F5C4D',         // Teal / Green
+  income: '#047857',          // Deep emerald — income amounts (dark enough for parchment bg)
   warning: '#A8791F',         // Brass
   danger: '#A5442B',          // Rust ("up" spending chip, alerts)
   info: '#2A6F86',            // Deep Aqua / Slate
@@ -60,6 +61,7 @@ export const darkColors = {
   primaryLight: 'rgba(129, 140, 248, 0.18)',
   accent: '#8B5CF6',
   success: '#10B981',
+  income: '#10B981',          // Income amounts (bright emerald reads well on dark)
   warning: '#F59E0B',
   danger: '#EF4444',
   info: '#0EA5E9',

@@ -1,19 +1,35 @@
-import NetInfo from '@react-native-community/netinfo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { listCategories } from '@/services/categories';
-import { createExpense, getCachedExpenses, listExpenses, softDeleteExpense, updateExpense } from '@/services/expenses';
+import { createExpense, filterAndSortCachedExpenses, getCachedExpenses, listExpenses, softDeleteExpense, updateExpense } from '@/services/expenses';
 import { checkAndNotifyBudgetThreshold, checkAndNotifyCategoryBudgetThreshold, notifyExpenseAdded, notifyLargeExpense } from '@/services/notifications';
 import { EXPENSE_CACHE_KEY } from '@/constants/app';
 import { Expense, ExpenseFilters, ExpenseInput, SortKey } from '@/types';
 import { currentMonthRange, sumExpenses } from '@/utils/format';
-import { enqueueOfflineOperation } from '@/utils/offlineQueue';
+import { notifyOtherDevices } from '@/services/pushNotifications';
 
 type ExpenseChangeListener = () => void;
 const listeners = new Set<ExpenseChangeListener>();
 
-function notifyExpensesChanged() {
+export function notifyExpensesChanged() {
   listeners.forEach((listener) => listener());
+}
+
+/**
+ * Synchronously removes offline entries from AsyncStorage cache
+ * Returns a promise that resolves when cleanup is complete
+ */
+export async function removeOfflineEntries(localIds: string[]): Promise<void> {
+  if (localIds.length === 0) return;
+  try {
+    const raw = await AsyncStorage.getItem(EXPENSE_CACHE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw) as Expense[];
+    const cleaned = parsed.filter((e) => !localIds.includes(e.id));
+    await AsyncStorage.setItem(EXPENSE_CACHE_KEY, JSON.stringify(cleaned));
+  } catch {
+    // Ignore cache cleanup errors
+  }
 }
 
 async function getEffectiveMonthlyBudget(userId?: string): Promise<number> {
@@ -54,12 +70,10 @@ async function triggerExpenseNotifications(
     const monthTotal = sumExpenses(monthItems, currency);
     const monthlyBudget = await getEffectiveMonthlyBudget(userId);
 
-    // 1. Global Monthly Budget alerts
     if (monthlyBudget > 0) {
       void checkAndNotifyBudgetThreshold(monthTotal + amount, monthlyBudget, currency);
     }
 
-    // 2. Category Budget alerts (Strictly 90% and 100% only)
     if (userId && categoryId) {
       const categories = await listCategories(userId);
       const targetCat = categories.find((c) => c.id === categoryId);
@@ -91,6 +105,7 @@ export function useExpenses(userId?: string, filters?: ExpenseFilters, sort: Sor
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const loadingPage = useRef(false);
+  const lastLoadedAt = useRef(0);
 
   const loadPage = useCallback(
     async (pageToLoad = 0, replace = false) => {
@@ -104,14 +119,37 @@ export function useExpenses(userId?: string, filters?: ExpenseFilters, sort: Sor
       else if (pageToLoad > 0) setLoadingMore(true);
       else setLoading(true);
 
+      // Paint instantly from the local cache on first load so the UI never
+      // stares at an empty screen while the network round trip completes.
+      if (pageToLoad === 0) {
+        try {
+          const cached = await getCachedExpenses();
+          const cachedForUser = cached.filter((e) => e.user_id === userId && !e.deleted_at);
+          // Apply the active filters/sort locally so the instant paint matches
+          // what the server response will show (no flash of unfiltered data).
+          const painted = filterAndSortCachedExpenses(cachedForUser, filters, sort);
+          if (painted.length) {
+            setItems((current) => (current.length > 0 ? current : painted));
+            setLoading(false);
+          }
+        } catch {
+          // Best-effort hydration; the network fetch below still runs
+        }
+      }
+
       try {
         const pageData = await listExpenses(userId, pageToLoad, filters, sort);
+        // Always replace on page 0 (fresh fetch), append on subsequent pages
         setItems((current) => (replace || pageToLoad === 0 ? pageData.items : [...current, ...pageData.items]));
         setHasMore(pageData.hasMore);
         setPage(pageToLoad);
+        if (pageToLoad === 0) lastLoadedAt.current = Date.now();
       } catch (err) {
-        const cached = await getCachedExpenses();
-        if (cached.length && pageToLoad === 0) setItems(cached);
+        // Only fall back to cache on initial load (page 0)
+        if (pageToLoad === 0) {
+          const cached = await getCachedExpenses();
+          if (cached.length) setItems(cached);
+        }
         setError(err instanceof Error ? err.message : 'Could not load expenses.');
       } finally {
         loadingPage.current = false;
@@ -137,8 +175,11 @@ export function useExpenses(userId?: string, filters?: ExpenseFilters, sort: Sor
     };
   }, [loadPage]);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (force = false) => {
     if (loadingPage.current) return;
+    // Tab-focus refreshes reuse data fetched moments ago so switching tabs is
+    // instant; pull-to-refresh and explicit callers pass force = true.
+    if (!force && Date.now() - lastLoadedAt.current < 30_000) return;
     setRefreshing(true);
     await loadPage(0, true);
   }, [loadPage]);
@@ -148,72 +189,27 @@ export function useExpenses(userId?: string, filters?: ExpenseFilters, sort: Sor
     await loadPage(page + 1);
   }, [hasMore, loadPage, loading, loadingMore, page]);
 
-  const save = async (input: ExpenseInput, id?: string) => {
+  const save = useCallback(async (input: ExpenseInput, id?: string) => {
     if (!userId) throw new Error('No user found.');
-    const state = await NetInfo.fetch();
-    const online = Boolean(state.isConnected && state.isInternetReachable !== false);
-
-    const saveLocally = async () => {
-      await enqueueOfflineOperation({ type: id ? 'update' : 'create', payload: { ...input, id } });
-      const localId = id || `offline-${Date.now()}`;
-      const localExpense: Expense = {
-        id: localId,
-        user_id: userId,
-        amount: Number(input.amount),
-        currency: input.currency,
-        date: input.date,
-        time: input.time || '12:00:00',
-        payment_method: input.payment_method,
-        description: input.description || null,
-        notes: input.notes || null,
-        receipt_image_url: input.receipt_image_url || null,
-        category_id: input.category_id,
-        is_recurring: false,
-        recurring_rule_id: null,
-        is_synced: false,
-        deleted_at: null,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-
-      setItems((current) => {
-        const next = id ? current.map((item) => (item.id === id ? localExpense : item)) : [localExpense, ...current];
-        void AsyncStorage.setItem(EXPENSE_CACHE_KEY, JSON.stringify(next)).catch(() => {});
-        return next;
+    if (id) await updateExpense(id, input);
+    else {
+      await createExpense(userId, input);
+      // Fire-and-forget: alert the user's OTHER signed-in devices about this new entry
+      const isIncomeEntry = (input.type || 'expense') === 'income';
+      void notifyOtherDevices({
+        userId,
+        title: isIncomeEntry ? '💰 New Income Added' : '💸 New Expense Added',
+        body: `${input.currency} ${Number(input.amount).toLocaleString()}${input.description ? ` · ${input.description}` : ''}`,
+        data: { kind: 'transaction', type: input.type ?? 'expense', amount: Number(input.amount) },
       });
-
-      notifyExpensesChanged();
-      void triggerExpenseNotifications(userId, Number(input.amount), input.category_id, input.description, input.currency, items);
-    };
-
-    if (!online) {
-      await saveLocally();
-      return;
     }
-
-    try {
-      if (id) await updateExpense(id, input);
-      else await createExpense(userId, input);
-      notifyExpensesChanged();
+    notifyExpensesChanged();
+    if ((input.type || 'expense') === 'expense') {
       void triggerExpenseNotifications(userId, Number(input.amount), input.category_id, input.description, input.currency, items);
-    } catch (err) {
-      // Cloud insert failed -> fallback seamlessly to local storage
-      await saveLocally();
     }
-  };
+  }, [userId, items, loadPage]);
 
   const remove = useCallback(async (id: string) => {
-    const state = await NetInfo.fetch();
-    const online = Boolean(state.isConnected && state.isInternetReachable !== false);
-    if (!online) {
-      await enqueueOfflineOperation({
-        type: 'delete',
-        payload: { id, amount: 1, category_id: '', currency: 'NPR', date: new Date().toISOString().slice(0, 10), payment_method: 'Cash' },
-      });
-      setItems((current) => current.filter((item) => item.id !== id));
-      notifyExpensesChanged();
-      return;
-    }
     await softDeleteExpense(id);
     setItems((current) => current.filter((item) => item.id !== id));
     notifyExpensesChanged();

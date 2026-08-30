@@ -220,6 +220,14 @@ export default function BullionScreen() {
     }
   }, [prices?.fixingLabel, prices?.isMarketClosed, rawRates?.updatedAt]);
 
+  const handleBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/(tabs)/settings' as any);
+    }
+  };
+
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
       <ScrollView
@@ -234,7 +242,7 @@ export default function BullionScreen() {
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
             <Pressable
-              onPress={() => router.back()}
+              onPress={handleBack}
               hitSlop={8}
               style={{
                 width: 38,

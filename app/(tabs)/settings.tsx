@@ -17,6 +17,7 @@ import {
   Bell,
   Check,
   ChevronRight,
+  Coins,
   DollarSign,
   Download,
   Edit2,
@@ -25,6 +26,7 @@ import {
   HelpCircle,
   Info,
   KeyRound,
+  Landmark,
   Layers,
   LayoutGrid,
   Lock,
@@ -36,6 +38,8 @@ import {
   ShieldCheck,
   Sparkles,
   Sun,
+  Tag,
+  Target,
   Trash2,
   Upload,
   User,
@@ -116,7 +120,7 @@ export default function SettingsScreen() {
     { code: 'INR', label: 'Indian Rupee', symbol: '₹', flag: '🇮🇳' },
     { code: 'NPR', label: 'Nepalese Rupee', symbol: 'Rs.', flag: '🇳🇵' },
     { code: 'USD', label: 'US Dollar', symbol: '$', flag: '🇺🇸' },
-    { code: 'EUR', label: 'Euro', symbol: '€', flag: '🇪🇺' },
+    { code: 'QAR', label: 'Qatari Riyal', symbol: '﷼', flag: '🇶🇦' },
     { code: 'GBP', label: 'British Pound', symbol: '£', flag: '🇬🇧' },
   ];
 
@@ -243,7 +247,7 @@ export default function SettingsScreen() {
           </View>
         </View>
 
-        {/* ── 2. PREVIOUS LUXURY USER PROFILE HERO CARD ── */}
+        {/* ── 2. USER PROFILE HERO CARD ── */}
         <View
           style={{
             flexDirection: 'row',
@@ -379,8 +383,9 @@ export default function SettingsScreen() {
             </View>
 
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text style={{ fontSize: 20 }}>{currentCurrencyObj.flag}</Text>
               <Text style={{ fontSize: 14, color: theme.colors.textMuted, fontWeight: '500' }}>
-                {currentCurrencyObj.code} ({currentCurrencyObj.symbol})
+                {currentCurrencyObj.label} ({currentCurrencyObj.symbol})
               </Text>
               <ChevronRight size={16} color={theme.colors.textMuted} />
             </View>
@@ -432,6 +437,89 @@ export default function SettingsScreen() {
           {/* Dotted Divider */}
           <View style={{ height: 1, backgroundColor: theme.colors.border, marginHorizontal: 16, opacity: 0.6 }} />
 
+          {/* Item 2.5: Categories & Budgets */}
+          <Pressable
+            onPress={() => router.push('/categories' as any)}
+            style={({ pressed }) => ({
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              paddingHorizontal: 16,
+              paddingVertical: 14,
+              backgroundColor: pressed
+                ? (theme.isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)')
+                : 'transparent',
+            })}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+              <View
+                style={{
+                  width: 38,
+                  height: 38,
+                  borderRadius: 10,
+                  backgroundColor: theme.isDark ? 'rgba(16, 185, 129, 0.15)' : '#D1FAE5',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Tag size={19} color={theme.colors.primary} />
+              </View>
+              <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
+                Categories & Budgets
+              </Text>
+            </View>
+
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text style={{ fontSize: 14, color: theme.colors.textMuted, fontWeight: '500' }}>
+                {categories.length}
+              </Text>
+              <ChevronRight size={16} color={theme.colors.textMuted} />
+            </View>
+          </Pressable>
+
+          {/* Dotted Divider */}
+          <View style={{ height: 1, backgroundColor: theme.colors.border, marginHorizontal: 16, opacity: 0.6 }} />
+
+          {/* Item 2.6: Bank Accounts & Wallets */}
+          <Pressable
+            onPress={() => router.push('/accounts' as any)}
+            style={({ pressed }) => ({
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              paddingHorizontal: 16,
+              paddingVertical: 14,
+              backgroundColor: pressed
+                ? (theme.isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)')
+                : 'transparent',
+            })}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+              <View
+                style={{
+                  width: 38,
+                  height: 38,
+                  borderRadius: 10,
+                  backgroundColor: theme.isDark ? 'rgba(59, 130, 246, 0.15)' : '#DBEAFE',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Landmark size={19} color="#3B82F6" />
+              </View>
+              <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
+                Bank Accounts & Wallets
+              </Text>
+            </View>
+
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <ChevronRight size={16} color={theme.colors.textMuted} />
+            </View>
+          </Pressable>
+
+          {/* Dotted Divider */}
+          <View style={{ height: 1, backgroundColor: theme.colors.border, marginHorizontal: 16, opacity: 0.6 }} />
+
           {/* Item 3: Gold & Silver Bullion Rates (Dedicated Screen) */}
           <Pressable
             onPress={() => router.push('/bullion' as any)}
@@ -459,16 +547,11 @@ export default function SettingsScreen() {
                   borderColor: theme.isDark ? 'rgba(245, 158, 11, 0.35)' : '#FDE68A',
                 }}
               >
-                <Text style={{ fontSize: 19 }}>🪙</Text>
+                <Coins size={19} color="#F59E0B" />
               </View>
-              <View>
-                <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
-                  Gold & Silver Rates
-                </Text>
-                <Text variant="caption" muted style={{ fontSize: 11 }}>
-                  Live 24K, 22K & Silver spot prices
-                </Text>
-              </View>
+              <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
+                Gold & Silver Rates
+              </Text>
             </View>
 
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -522,14 +605,9 @@ export default function SettingsScreen() {
               >
                 <Fingerprint size={19} color={theme.colors.primary} />
               </View>
-              <View>
-                <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
-                  App Lock & Security
-                </Text>
-                <Text variant="caption" muted style={{ fontSize: 11 }}>
-                  {biometricTypeName || 'Fingerprint / Face ID'}
-                </Text>
-              </View>
+              <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
+                App Lock & Security
+              </Text>
             </View>
 
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -731,48 +809,6 @@ export default function SettingsScreen() {
             </View>
           </Pressable>
 
-          {/* Dotted Divider */}
-          <View style={{ height: 1, backgroundColor: theme.colors.border, marginHorizontal: 16, opacity: 0.6 }} />
-
-          {/* Item 6: Manage Categories */}
-          <Pressable
-            onPress={() => setShowCategoryBudgets(true)}
-            style={({ pressed }) => ({
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              paddingHorizontal: 16,
-              paddingVertical: 14,
-              backgroundColor: pressed
-                ? (theme.isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)')
-                : 'transparent',
-            })}
-          >
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
-              <View
-                style={{
-                  width: 38,
-                  height: 38,
-                  borderRadius: 10,
-                  backgroundColor: theme.isDark ? 'rgba(129, 140, 248, 0.15)' : '#DCE9E3',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
-                <LayoutGrid size={19} color={theme.colors.primary} />
-              </View>
-              <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
-                Manage categories
-              </Text>
-            </View>
-
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Text style={{ fontSize: 14, color: theme.colors.textMuted, fontWeight: '500' }}>
-                {categories.length}
-              </Text>
-              <ChevronRight size={16} color={theme.colors.textMuted} />
-            </View>
-          </Pressable>
         </View>
 
         {/* ── 4. SIGN OUT BUTTON (RUST ACCENT) ── */}

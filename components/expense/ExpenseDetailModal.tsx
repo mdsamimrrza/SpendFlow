@@ -9,14 +9,19 @@ import {
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import {
+  ArrowDownRight,
+  ArrowUpRight,
   Calendar,
   CreditCard,
   Edit3,
   Image as ImageIcon,
+  Landmark,
   Tag,
   Trash2,
+  Wallet,
   X,
 } from 'lucide-react-native';
+import { CategoryIcon } from '@/components/ui/CategoryIcon';
 import { ImageViewerModal } from '@/components/ui/ImageViewerModal';
 import { Text } from '@/components/ui/Text';
 import { useAuth } from '@/hooks/useAuth';
@@ -51,15 +56,15 @@ export function ExpenseDetailModal({
 
   if (!expense) return null;
 
+  const isIncome = expense.type === 'income';
   const preferredCurrency = profile?.preferred_currency ?? 'NPR';
   const isDifferentCurrency = expense.currency && expense.currency !== preferredCurrency;
   const convertedAmount = isDifferentCurrency
     ? convert(Number(expense.amount), expense.currency, preferredCurrency)
     : Number(expense.amount);
 
-  const categoryName = expense.categories?.name || 'Expense';
-  const categoryIcon = expense.categories?.icon || '📌';
-  const categoryColor = expense.categories?.color || theme.colors.primary;
+  const categoryName = expense.categories?.name || (isIncome ? 'Income Source' : 'Expense');
+  const categoryIcon = expense.categories?.icon || (isIncome ? 'trending-up' : 'tag');
 
   function handleEdit() {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
@@ -69,6 +74,18 @@ export function ExpenseDetailModal({
       router.push(`/expense/${id}` as any);
     }
   }
+
+  function handleDelete() {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
+    if (expense && onDelete) {
+      onDelete(expense);
+      onClose();
+    }
+  }
+
+  const formattedAmount = isPrivacyMode
+    ? '••••••'
+    : `${isIncome ? '+' : '-'}${formatMoney(convertedAmount, preferredCurrency)}`;
 
   return (
     <>
@@ -112,7 +129,7 @@ export function ExpenseDetailModal({
               showsVerticalScrollIndicator={false}
               contentContainerStyle={{ gap: 16 }}
             >
-              {/* ── 1. HEADER (Category Pill + Close Button) ── */}
+              {/* ── 1. HEADER (Category Pill + Type Badge + Close Button) ── */}
               <View
                 style={{
                   flexDirection: 'row',
@@ -120,35 +137,77 @@ export function ExpenseDetailModal({
                   justifyContent: 'space-between',
                 }}
               >
-                {/* Category Pill */}
-                <View
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    gap: 8,
-                    paddingHorizontal: 12,
-                    paddingVertical: 6,
-                    borderRadius: theme.radius.full,
-                    backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
-                    borderWidth: 1,
-                    borderColor: theme.colors.border,
-                  }}
-                >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, flexWrap: 'wrap' }}>
+                  {/* Category Pill */}
                   <View
                     style={{
-                      width: 24,
-                      height: 24,
-                      borderRadius: 12,
-                      backgroundColor: categoryColor,
+                      flexDirection: 'row',
                       alignItems: 'center',
-                      justifyContent: 'center',
+                      gap: 8,
+                      paddingHorizontal: 12,
+                      paddingVertical: 6,
+                      borderRadius: theme.radius.full,
+                      backgroundColor: theme.colors.surfaceElevated,
+                      borderWidth: 1,
+                      borderColor: theme.colors.border,
                     }}
                   >
-                    <Text style={{ fontSize: 13 }}>{categoryIcon}</Text>
+                    <View
+                      style={{
+                        width: 24,
+                        height: 24,
+                        borderRadius: 12,
+                        backgroundColor: theme.colors.background,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      <CategoryIcon
+                        name={categoryIcon}
+                        size={14}
+                        color={isIncome ? theme.colors.income : theme.colors.primary}
+                      />
+                    </View>
+                    <Text style={{ fontWeight: '800', fontSize: 13, color: theme.colors.text }}>
+                      {categoryName}
+                    </Text>
                   </View>
-                  <Text style={{ fontWeight: '700', fontSize: 13, color: theme.colors.text }}>
-                    {categoryName}
-                  </Text>
+
+                  {/* Transaction Type Badge */}
+                  <View
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 4,
+                      paddingHorizontal: 9,
+                      paddingVertical: 5,
+                      borderRadius: theme.radius.full,
+                      backgroundColor: isIncome
+                        ? (theme.isDark ? 'rgba(16, 185, 129, 0.15)' : '#D1FAE5')
+                        : (theme.isDark ? 'rgba(239, 68, 68, 0.15)' : '#FEE2E2'),
+                      borderWidth: 1,
+                      borderColor: isIncome
+                        ? (theme.isDark ? 'rgba(16, 185, 129, 0.35)' : '#A7F3D0')
+                        : (theme.isDark ? 'rgba(239, 68, 68, 0.35)' : '#FECACA'),
+                    }}
+                  >
+                    {isIncome ? (
+                      <ArrowUpRight size={13} color={theme.colors.income} strokeWidth={2.5} />
+                    ) : (
+                      <ArrowDownRight size={13} color={theme.isDark ? '#F87171' : '#DC2626'} strokeWidth={2.5} />
+                    )}
+                    <Text
+                      style={{
+                        fontSize: 11,
+                        fontWeight: '800',
+                        color: isIncome
+                          ? theme.colors.income
+                          : (theme.isDark ? '#F87171' : '#DC2626'),
+                      }}
+                    >
+                      {isIncome ? 'Income' : 'Expense'}
+                    </Text>
+                  </View>
                 </View>
 
                 {/* Close Button */}
@@ -177,26 +236,48 @@ export function ExpenseDetailModal({
                   paddingVertical: 14,
                   paddingHorizontal: 16,
                   borderRadius: 18,
-                  backgroundColor: theme.isDark ? 'rgba(99, 102, 241, 0.08)' : '#EEF2FF',
+                  backgroundColor: isIncome
+                    ? (theme.isDark ? 'rgba(16, 185, 129, 0.1)' : '#ECFDF5')
+                    : (theme.isDark ? 'rgba(239, 68, 68, 0.08)' : '#FEF2F2'),
                   borderWidth: 1,
-                  borderColor: theme.isDark ? 'rgba(99, 102, 241, 0.25)' : '#C7D2FE',
-                  gap: 4,
+                  borderColor: isIncome
+                    ? (theme.isDark ? 'rgba(16, 185, 129, 0.25)' : '#A7F3D0')
+                    : (theme.isDark ? 'rgba(239, 68, 68, 0.2)' : '#FECACA'),
+                  gap: 3,
                 }}
               >
-                <Text variant="caption" muted style={{ fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8, fontSize: 11 }}>
-                  {t('expense_amount') || 'Expense Amount'}
+                <Text
+                  variant="caption"
+                  muted
+                  style={{
+                    fontWeight: '800',
+                    textTransform: 'uppercase',
+                    letterSpacing: 0.8,
+                    fontSize: 11,
+                    color: isIncome ? theme.colors.income : theme.colors.textMuted,
+                  }}
+                >
+                  {isIncome ? 'Income Received (Inflow)' : 'Expense Spent (Outflow)'}
                 </Text>
 
                 <Text
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.7}
                   style={{
-                    fontSize: 34,
+                    fontSize: 32,
+                    lineHeight: 38,
                     fontWeight: '900',
-                    color: theme.colors.primary,
+                    color: isIncome
+                      ? theme.colors.income
+                      : (theme.isDark ? '#EF4444' : '#DC2626'),
                     letterSpacing: -0.5,
                     fontVariant: ['tabular-nums'],
+                    textAlign: 'center',
+                    includeFontPadding: false,
                   }}
                 >
-                  {isPrivacyMode ? '••••••' : formatMoney(convertedAmount, preferredCurrency)}
+                  {formattedAmount}
                 </Text>
 
                 {isDifferentCurrency && !isPrivacyMode ? (
@@ -215,7 +296,7 @@ export function ExpenseDetailModal({
                     }}
                   >
                     <Text style={{ fontSize: 11.5, fontWeight: '700', color: theme.colors.textMuted }}>
-                      Original: {formatMoney(Number(expense.amount), expense.currency)}
+                      Original: {isIncome ? '+' : '-'}{formatMoney(Number(expense.amount), expense.currency)}
                     </Text>
                   </View>
                 ) : null}
@@ -263,12 +344,12 @@ export function ExpenseDetailModal({
 
                 <View style={{ height: 1, backgroundColor: theme.colors.border, opacity: 0.6 }} />
 
-                {/* Payment Method Row */}
+                {/* Payment Method / Account Row */}
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                     <CreditCard size={16} color={theme.colors.textMuted} />
                     <Text variant="caption" muted style={{ fontSize: 12 }}>
-                      {t('expense_payment_method') || 'Payment Method'}
+                      {isIncome ? 'Received To' : 'Paid From'}
                     </Text>
                   </View>
                   <View
@@ -276,11 +357,15 @@ export function ExpenseDetailModal({
                       paddingHorizontal: 8,
                       paddingVertical: 3,
                       borderRadius: 6,
-                      backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+                      backgroundColor: theme.colors.surface,
+                      borderWidth: 1,
+                      borderColor: theme.colors.border,
                     }}
                   >
                     <Text style={{ fontSize: 12.5, fontWeight: '700', color: theme.colors.text }}>
-                      💳 {expense.payment_method}
+                      {expense.bank_accounts?.name
+                        ? expense.bank_accounts.name
+                        : expense.payment_method}
                     </Text>
                   </View>
                 </View>
@@ -361,20 +446,20 @@ export function ExpenseDetailModal({
                   </Text>
                 </Pressable>
 
-                {/* Edit Button */}
+                {/* Edit Button with dynamic Income/Expense text & styling */}
                 <Pressable
                   onPress={handleEdit}
                   style={({ pressed }) => ({
-                    flex: 1.3,
+                    flex: 1.4,
                     height: 48,
                     borderRadius: theme.radius.md,
-                    backgroundColor: theme.colors.primary,
+                    backgroundColor: isIncome ? theme.colors.income : theme.colors.primary,
                     alignItems: 'center',
                     justifyContent: 'center',
                     flexDirection: 'row',
                     gap: 8,
                     opacity: pressed ? 0.8 : 1,
-                    shadowColor: theme.colors.primary,
+                    shadowColor: isIncome ? theme.colors.income : theme.colors.primary,
                     shadowOffset: { width: 0, height: 4 },
                     shadowOpacity: 0.3,
                     shadowRadius: 8,
@@ -383,7 +468,7 @@ export function ExpenseDetailModal({
                 >
                   <Edit3 size={17} color="#FFFFFF" />
                   <Text style={{ fontWeight: '800', fontSize: 14, color: '#FFFFFF' }}>
-                    {t('expense_edit_btn') || 'Edit Expense'}
+                    {isIncome ? 'Edit Income' : 'Edit Expense'}
                   </Text>
                 </Pressable>
               </View>
@@ -401,4 +486,3 @@ export function ExpenseDetailModal({
     </>
   );
 }
-

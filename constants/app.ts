@@ -4,7 +4,14 @@ export const PAGE_SIZE = 20;
 export const OFFLINE_QUEUE_KEY = 'spendflow_offline_queue';
 export const EXPENSE_CACHE_KEY = 'spendflow_expense_cache';
 
-export const CURRENCIES = ['NPR', 'USD', 'INR', 'EUR', 'GBP'] as const;
+export const CURRENCIES = ['NPR', 'USD', 'INR', 'QAR', 'GBP'] as const;
+export const CURRENCY_DETAILS: Record<(typeof CURRENCIES)[number], { flag: string; label: string }> = {
+  INR: { flag: '🇮🇳', label: 'Indian Rupee' },
+  NPR: { flag: '🇳🇵', label: 'Nepalese Rupee' },
+  USD: { flag: '🇺🇸', label: 'US Dollar' },
+  QAR: { flag: '🇶🇦', label: 'Qatari Riyal' },
+  GBP: { flag: '🇬🇧', label: 'British Pound' },
+};
 export const PAYMENT_METHODS: PaymentMethod[] = ['Cash', 'Card', 'UPI', 'Other'];
 
 export const SORT_OPTIONS: { label: string; value: SortKey }[] = [

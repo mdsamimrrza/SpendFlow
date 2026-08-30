@@ -6,22 +6,26 @@ import { useTheme } from '@/hooks/useTheme';
 
 interface PrivacyEyeButtonProps {
   style?: ViewStyle;
+  size?: number;
+  iconSize?: number;
 }
 
-export function PrivacyEyeButton({ style }: PrivacyEyeButtonProps) {
+export function PrivacyEyeButton({ style, size = 40, iconSize }: PrivacyEyeButtonProps) {
   const theme = useTheme();
   const { isPrivacyMode, togglePrivacy } = usePrivacy();
+  const resolvedIconSize = iconSize ?? (size <= 24 ? 18 : size <= 32 ? 20 : Math.round(size * 0.60));
 
   return (
     <Pressable
       onPress={() => void togglePrivacy()}
       accessibilityRole="button"
       accessibilityLabel={isPrivacyMode ? 'Show balances' : 'Hide balances'}
+      hitSlop={8}
       style={({ pressed }) => [
         {
-          width: 40,
-          height: 40,
-          borderRadius: theme.radius.full,
+          width: size,
+          height: size,
+          borderRadius: size / 2,
           alignItems: 'center',
           justifyContent: 'center',
           backgroundColor: theme.colors.surface,
@@ -33,9 +37,9 @@ export function PrivacyEyeButton({ style }: PrivacyEyeButtonProps) {
       ]}
     >
       {isPrivacyMode ? (
-        <EyeOff size={19} color={theme.colors.primary} />
+        <EyeOff size={resolvedIconSize} color={theme.colors.primary} />
       ) : (
-        <Eye size={19} color={theme.colors.textMuted} />
+        <Eye size={resolvedIconSize} color={theme.colors.textMuted} />
       )}
     </Pressable>
   );

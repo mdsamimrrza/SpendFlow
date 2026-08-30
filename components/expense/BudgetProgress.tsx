@@ -178,7 +178,7 @@ export function BudgetProgress({
           </Pressable>
         </View>
       ) : (
-        /* ── LUXURY CATEGORY BUDGET CARDS MATRIX (ROLL / EXPANDABLE) ── */
+        /* ── CATEGORY BUDGET CARDS MATRIX (ROLL / EXPANDABLE) ── */
         <View style={{ gap: 10 }}>
           {visibleCategories.map((category) => {
             const budget = Number(category.budget_monthly);
@@ -310,7 +310,7 @@ export function BudgetProgress({
                   </Text>
                 </View>
 
-                {/* 3. Luxury Progress Bar */}
+                {/* 3. Progress Bar */}
                 <View
                   style={{
                     height: 7,

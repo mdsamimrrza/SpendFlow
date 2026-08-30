@@ -49,6 +49,9 @@ export function Button({
       accessibilityRole="button"
       disabled={disabled || loading}
       activeScale={0.96}
+      // PressableScale adds an Animated.View wrapper. Give it the same layout
+      // constraints so flex buttons stay inside dialogs and compact Android bars.
+      containerStyle={style}
       style={[
         styles.base,
         {

@@ -114,7 +114,7 @@ export default function ExportScreen() {
       const csv = await fetch(result.assets[0].uri).then((response) => response.text());
       const count = await importExpensesFromCsv(profile.id, csv);
       Alert.alert('Import Complete', `${count} transactions were successfully imported.`);
-      await expenses.refresh();
+      await expenses.refresh(true);
     } catch (error) {
       Alert.alert('Import Failed', error instanceof Error ? error.message : 'Could not import CSV.');
     }
@@ -127,7 +127,7 @@ export default function ExportScreen() {
       refreshControl={
         <RefreshControl
           refreshing={expenses.refreshing}
-          onRefresh={expenses.refresh}
+          onRefresh={() => void expenses.refresh(true)}
           colors={[theme.colors.primary]}
           tintColor={theme.colors.primary}
         />
@@ -280,7 +280,7 @@ export default function ExportScreen() {
             <View style={{ gap: 2 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                 <Text style={{ color: '#FFFFFF', fontWeight: '800', fontSize: 16 }}>
-                  Luxury PDF Statement
+                  PDF Statement
                 </Text>
                 <View style={{ backgroundColor: '#FFFFFF', paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4 }}>
                   <Text style={{ color: theme.colors.primary, fontWeight: '800', fontSize: 10 }}>RECOMMENDED</Text>

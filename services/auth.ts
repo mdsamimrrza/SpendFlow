@@ -130,6 +130,20 @@ export async function ensureProfile(): Promise<UserProfile> {
     throw new Error('No authenticated user found.');
   }
 
+  // When the device is offline the users table cannot be read. Preserve the last
+  // locally selected profile values (especially currency) instead of falling back
+  // to NPR and visually converting every INR transaction.
+  let cachedProfile: UserProfile | null = null;
+  const cachedProfileRaw = await AsyncStorage.getItem('@spendflow_cached_profile').catch(() => null);
+  if (cachedProfileRaw) {
+    try {
+      const parsed = JSON.parse(cachedProfileRaw) as UserProfile;
+      if (parsed.id === user.id) cachedProfile = parsed;
+    } catch {
+      // Ignore invalid cached profile data.
+    }
+  }
+
   let dbProfile: UserProfile | null = null;
   try {
     const { data: existing } = await supabase
@@ -162,6 +176,11 @@ export async function ensureProfile(): Promise<UserProfile> {
 
   await seedDefaultCategories(user.id).catch(() => []);
 
+  // ── Device-local currency (per-device, never synced to Supabase) ──────────
+  const localCurrencyKey = `@spendflow_currency_${user.id}`;
+  const localCurrency = await AsyncStorage.getItem(localCurrencyKey).catch(() => null);
+  // ─────────────────────────────────────────────────────────────────────────
+
   // 1. Check user_metadata (Supabase Auth cloud metadata synced on every device)
   const metaBudgetRaw = user.user_metadata?.monthly_budget;
   const metaBudget = metaBudgetRaw !== undefined && metaBudgetRaw !== null && Number(metaBudgetRaw) > 0
@@ -186,10 +205,10 @@ export async function ensureProfile(): Promise<UserProfile> {
   const result: UserProfile = {
     id: user.id,
     email: user.email,
-    display_name: dbProfile?.display_name ?? (user.user_metadata.display_name as string | undefined) ?? (user.user_metadata.full_name as string | undefined) ?? null,
-    avatar_url: dbProfile?.avatar_url ?? (user.user_metadata.avatar_url as string | undefined) ?? null,
-    preferred_currency: dbProfile?.preferred_currency ?? (user.user_metadata?.preferred_currency as string | undefined) ?? 'NPR',
-    theme_preference: dbProfile?.theme_preference ?? (user.user_metadata?.theme_preference as any) ?? 'system',
+    display_name: dbProfile?.display_name ?? cachedProfile?.display_name ?? (user.user_metadata.display_name as string | undefined) ?? (user.user_metadata.full_name as string | undefined) ?? null,
+    avatar_url: dbProfile?.avatar_url ?? cachedProfile?.avatar_url ?? (user.user_metadata.avatar_url as string | undefined) ?? null,
+    preferred_currency: localCurrency ?? cachedProfile?.preferred_currency ?? dbProfile?.preferred_currency ?? (user.user_metadata?.preferred_currency as string | undefined) ?? 'NPR',
+    theme_preference: dbProfile?.theme_preference ?? cachedProfile?.theme_preference ?? (user.user_metadata?.theme_preference as any) ?? 'system',
     monthly_budget: finalBudget,
     created_at: dbProfile?.created_at ?? new Date().toISOString(),
     updated_at: dbProfile?.updated_at ?? new Date().toISOString(),
@@ -215,11 +234,23 @@ export async function updateProfile(input: Partial<Pick<UserProfile, 'display_na
     }
   }
 
+  // ── Currency is device-local — save to local key, never sync to Supabase ──
+  const localCurrencyKey = `@spendflow_currency_${user.id}`;
+  if (input.preferred_currency !== undefined) {
+    await AsyncStorage.setItem(localCurrencyKey, input.preferred_currency).catch(() => {});
+  }
+  const resolvedCurrency = input.preferred_currency
+    ?? (await AsyncStorage.getItem(localCurrencyKey).catch(() => null))
+    ?? 'NPR';
+
+  // Strip preferred_currency from the Supabase update — it's device-only
+  const { preferred_currency: _stripCurrency, ...supabaseInput } = input;
+
   let dbProfile: UserProfile | null = null;
   try {
     const { data, error } = await supabase
       .from('users')
-      .update({ ...input, updated_at: new Date().toISOString() })
+      .update({ ...supabaseInput, updated_at: new Date().toISOString() })
       .eq('id', user.id)
       .select('*')
       .single();
@@ -236,7 +267,7 @@ export async function updateProfile(input: Partial<Pick<UserProfile, 'display_na
     email: user.email ?? '',
     display_name: dbProfile?.display_name ?? input.display_name ?? null,
     avatar_url: dbProfile?.avatar_url ?? null,
-    preferred_currency: dbProfile?.preferred_currency ?? input.preferred_currency ?? 'NPR',
+    preferred_currency: resolvedCurrency,
     theme_preference: dbProfile?.theme_preference ?? input.theme_preference ?? 'system',
     monthly_budget: dbProfile?.monthly_budget ?? input.monthly_budget ?? localBudget,
     created_at: dbProfile?.created_at ?? new Date().toISOString(),

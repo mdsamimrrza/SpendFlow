@@ -19,9 +19,9 @@ import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { useExpenses } from '@/hooks/useExpenses';
 import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
-import { useSync } from '@/hooks/useSync';
 import { useTheme } from '@/hooks/useTheme';
 import { currentMonthRange, isoDate, sumExpenses } from '@/utils/format';
+import { CURRENCY_DETAILS } from '@/constants/app';
 
 export default function HomeScreen() {
   const { profile, session, refreshProfile } = useAuth();
@@ -30,37 +30,53 @@ export default function HomeScreen() {
   const theme = useTheme();
   const router = useRouter();
   const { rates } = useExchangeRates();
-  const expenses = useExpenses(profile?.id ?? session?.user?.id);
-  const sync = useSync(profile?.id);
-  const [profileCardOpen, setProfileCardOpen] = useState(false);
   const month = currentMonthRange();
+  const expenses = useExpenses(profile?.id ?? session?.user?.id, {
+    fromDate: month.previousFrom,
+    toDate: month.to,
+    fetchAll: true,
+  });
+  const [profileCardOpen, setProfileCardOpen] = useState(false);
 
   const refreshProfileRef = useRef(refreshProfile);
   refreshProfileRef.current = refreshProfile;
   const refreshExpensesRef = useRef(expenses.refresh);
   refreshExpensesRef.current = expenses.refresh;
-  const refreshSyncRef = useRef(sync.refreshCount);
-  refreshSyncRef.current = sync.refreshCount;
 
   useFocusEffect(
     useCallback(() => {
       void refreshProfileRef.current?.();
       void refreshExpensesRef.current?.();
-      void refreshSyncRef.current?.();
     }, []),
   );
 
   const preferredCurrency = profile?.preferred_currency ?? 'NPR';
+  const currentMonthItems = expenses.items.filter((expense) => expense.date >= month.from && expense.date <= month.to);
   const monthTotal = sumExpenses(
-    expenses.items.filter((expense) => expense.date >= month.from && expense.date <= month.to),
+    currentMonthItems,
     preferredCurrency,
     rates,
+    'expense',
+  );
+  const monthIncome = sumExpenses(
+    currentMonthItems,
+    preferredCurrency,
+    rates,
+    'income',
   );
 
+  const prevMonthItems = expenses.items.filter((expense) => expense.date >= month.previousFrom && expense.date <= month.previousTo);
   const prevMonthTotal = sumExpenses(
-    expenses.items.filter((expense) => expense.date >= month.previousFrom && expense.date <= month.previousTo),
+    prevMonthItems,
     preferredCurrency,
     rates,
+    'expense',
+  );
+  const prevMonthIncome = sumExpenses(
+    prevMonthItems,
+    preferredCurrency,
+    rates,
+    'income',
   );
 
   const todayIso = isoDate(new Date());
@@ -152,15 +168,7 @@ export default function HomeScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
-      {/* Offline Sync Banner */}
-      {sync.pendingCount ? (
-        <View style={{ backgroundColor: theme.colors.warning, paddingVertical: theme.spacing.xs, paddingHorizontal: theme.spacing.md }}>
-          <Text variant="caption" style={{ color: '#FFFFFF', textAlign: 'center', fontWeight: '600' }}>
-            ⚡ {sync.pendingCount} {t('home_offline_sync') || 'offline changes queued for cloud sync'}
-          </Text>
-        </View>
-      ) : null}
-
+      {/* Offline Sync Banner — tap to retry sync, long-press to clear the queue */}
       <FlatList
         data={latestExpenses}
         keyExtractor={(item) => item.id}
@@ -170,8 +178,7 @@ export default function HomeScreen() {
             refreshing={expenses.refreshing}
             onRefresh={() => {
               void refreshProfile();
-              void expenses.refresh();
-              void sync.processQueue();
+              void expenses.refresh(true);
             }}
             tintColor={theme.colors.primary}
             colors={[theme.colors.primary]}
@@ -185,7 +192,9 @@ export default function HomeScreen() {
                 <Text variant="caption" muted style={{ fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.6, fontSize: 11 }}>
                   {greeting}, {displayName} 👋
                 </Text>
-                <Text variant="h2" style={{ fontWeight: '800', letterSpacing: -0.3 }}>SpendFlow</Text>
+                <Text variant="h2" style={{ fontWeight: '800', letterSpacing: -0.3 }}>
+                  SpendFlow {(CURRENCY_DETAILS as Record<string, { flag: string; label: string }>)[preferredCurrency]?.flag ?? ''}
+                </Text>
               </View>
 
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.spacing.sm }}>
@@ -224,6 +233,8 @@ export default function HomeScreen() {
               fullMonthName={fullMonthName}
               todayTotal={todayTotal}
               prevMonthTotal={prevMonthTotal}
+              monthIncome={monthIncome}
+              prevMonthIncome={prevMonthIncome}
             />
 
             {/* 3. STOCK-STYLE FINANCIAL TREND WAVE GRAPH (1D / 7D / 4W / 6M / 1Y) */}

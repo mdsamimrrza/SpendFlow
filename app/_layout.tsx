@@ -17,9 +17,10 @@ import { AnimatedSplashScreen } from '@/components/ui/AnimatedSplashScreen';
 import { isSupabaseConfigured } from '@/utils/supabase';
 
 import { SecurityProvider } from '@/store/SecurityContext';
+import { PrivacyProvider } from '@/store/PrivacyContext';
 import { BiometricLockOverlay } from '@/components/security/BiometricLockOverlay';
-
 import { initNotifications } from '@/services/notifications';
+import { registerPushToken } from '@/services/pushNotifications';
 
 function RootNavigator() {
   const { session, loading } = useAuth();
@@ -35,9 +36,14 @@ function RootNavigator() {
   const topPadding = Platform.OS === 'web' ? 0 : insets.top;
 
   useEffect(() => {
-    void deactivateKeepAwake().catch(() => {});
     void initNotifications().catch(() => {});
   }, []);
+
+  // Register this device's push token so OTHER devices of the same account can notify it
+  useEffect(() => {
+    const uid = session?.user?.id;
+    if (uid) void registerPushToken(uid).catch(() => {});
+  }, [session?.user?.id]);
 
   useEffect(() => {
     if (isLoading || !isSupabaseConfigured) return;
@@ -86,8 +92,6 @@ function RootNavigator() {
     </View>
   );
 }
-
-import { PrivacyProvider } from '@/store/PrivacyContext';
 
 export default function Layout() {
   return (

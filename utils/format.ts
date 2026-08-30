@@ -22,8 +22,8 @@ export function formatMoney(amount: number, currency = 'NPR', isPrivate?: boolea
         ? '₹'
         : currency === 'USD'
         ? '$'
-        : currency === 'EUR'
-        ? '€'
+        : currency === 'QAR'
+        ? '﷼'
         : currency === 'GBP'
         ? '£'
         : currency;
@@ -132,12 +132,43 @@ export function sumExpenses(
   expenses: Expense[],
   targetCurrency = 'NPR',
   rates?: Record<string, number>,
+  typeFilter: 'all' | 'expense' | 'income' = 'expense',
 ) {
   return expenses.reduce((total, expense) => {
+    const isIncome = expense.type === 'income';
+    if (typeFilter === 'expense' && isIncome) return total;
+    if (typeFilter === 'income' && !isIncome) return total;
+
     const amount = Number(expense.amount) || 0;
     const converted = convertCurrency(amount, expense.currency || 'NPR', targetCurrency, rates);
     return total + converted;
   }, 0);
+}
+
+export function sumIncome(
+  expenses: Expense[],
+  targetCurrency = 'NPR',
+  rates?: Record<string, number>,
+) {
+  return sumExpenses(expenses, targetCurrency, rates, 'income');
+}
+
+export function calculateCashFlow(
+  expenses: Expense[],
+  targetCurrency = 'NPR',
+  rates?: Record<string, number>,
+) {
+  const totalIncome = sumIncome(expenses, targetCurrency, rates);
+  const totalExpense = sumExpenses(expenses, targetCurrency, rates, 'expense');
+  const netSavings = totalIncome - totalExpense;
+  const savingsRate = totalIncome > 0 ? Math.max(0, Math.round((netSavings / totalIncome) * 100)) : 0;
+
+  return {
+    totalIncome,
+    totalExpense,
+    netSavings,
+    savingsRate,
+  };
 }
 
 export function formatBudgetPercent(spent: number, budget: number): string {
@@ -159,9 +190,14 @@ export function groupByCategory(
   expenses: Expense[],
   targetCurrency = 'NPR',
   rates?: Record<string, number>,
+  typeFilter: 'all' | 'expense' | 'income' = 'expense',
 ) {
   const map = new Map<string, { label: string; icon: string; color: string; total: number }>();
   expenses.forEach((expense) => {
+    const isIncome = (expense.type || 'expense') === 'income';
+    if (typeFilter === 'expense' && isIncome) return;
+    if (typeFilter === 'income' && !isIncome) return;
+
     const amount = Number(expense.amount) || 0;
     const converted = convertCurrency(amount, expense.currency || 'NPR', targetCurrency, rates);
     const categoryName = expense.categories?.name ?? 'Other';

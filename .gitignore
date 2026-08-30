@@ -1,49 +1,66 @@
 # Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
 
-# dependencies
+# ── Dependencies ──────────────────────────────────────────────────────────────
 node_modules/
-.env.local
-.env
 
-# Expo
+# ── Environment & Secrets ─────────────────────────────────────────────────────
+.env
+.env.local
+.env*.local
+*.pem
+*.key
+*.p8
+*.p12
+*.jks
+*.mobileprovision
+
+# ── Expo ──────────────────────────────────────────────────────────────────────
 .expo/
 dist/
 web-build/
 expo-env.d.ts
+.expo-web-export-check/
 
-# Native
-.kotlin/
-*.orig.*
-*.jks
-*.p8
-*.p12
-*.key
-*.mobileprovision
+# ── Build Artifacts ───────────────────────────────────────────────────────────
+*.apk
+*.aab
+*.ipa
 
-# Metro
-.metro-health-check*
-
-# debug
-npm-debug.*
-yarn-debug.*
-yarn-error.*
-
-# macOS
-.DS_Store
-*.pem
-
-# local env files
-.env*.local
-
-# typescript
-*.tsbuildinfo
-
-# generated native folders
+# ── Native (generated — do not commit, regenerate with npx expo prebuild) ─────
 /ios
 /android
 
-# temp
+# ── Metro bundler ─────────────────────────────────────────────────────────────
+.metro-health-check*
+
+# ── TypeScript ────────────────────────────────────────────────────────────────
+*.tsbuildinfo
+
+# ── Debug & Logs ──────────────────────────────────────────────────────────────
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+*.log
+.expo/dev/logs/
+
+# ── Firebase (keep google-services.json out of source control) ────────────────
+android/app/google-services.json
+ios/GoogleService-Info.plist
+
+# ── macOS ─────────────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+
+# ── Editor & IDE ──────────────────────────────────────────────────────────────
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# ── Temp ──────────────────────────────────────────────────────────────────────
 .temp/
 *.temp
-.expo-web-export-check/
-
+.kotlin/
+*.orig.*

@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from 'react';
-import { Modal, Pressable, ScrollView, View } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Animated, Modal, Pressable, ScrollView, View } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import {
   Calendar,
@@ -8,6 +8,7 @@ import {
   Clock,
   Flame,
   Moon,
+  RefreshCw,
   Sun,
   Sunrise,
   Sunset,
@@ -24,15 +25,20 @@ import { formatMoney } from '@/utils/format';
 interface FinancialInsightsProps {
   expenses: Expense[];
   targetCurrency: string;
+  flowType: 'expense' | 'income';
+  onFlipFlowType: () => void;
 }
 
-export function FinancialInsights({ expenses, targetCurrency }: FinancialInsightsProps) {
+export function FinancialInsights({ expenses, targetCurrency, flowType, onFlipFlowType }: FinancialInsightsProps) {
   const theme = useTheme();
   const { t, language } = useLanguage();
   const { convert } = useExchangeRates();
   const { isPrivacyMode } = usePrivacy();
   const [weekOffset, setWeekOffset] = useState<number>(0);
   const [selectedDay, setSelectedDay] = useState<{ name: string; full: string; total: number; expenses: Expense[] } | null>(null);
+  const flowFlipAnim = useRef(new Animated.Value(1)).current;
+
+  const hasIncome = useMemo(() => expenses.some((e) => e.type === 'income'), [expenses]);
 
   // 1. Calculate Week Boundaries & Formatted Labels based on weekOffset
   const { weekStart, weekEnd, weekLabel, isCurrentWeek, startIso, endIso, daysWithDates } = useMemo(() => {
@@ -83,14 +89,29 @@ export function FinancialInsights({ expenses, targetCurrency }: FinancialInsight
     };
   }, [weekOffset, language]);
 
-  // 2. Filter expenses to the navigated active week using ISO string comparison (robust across Hermes & Web)
-  const activeWeekExpenses = useMemo(() => {
+  // 2. Filter expenses & income to the navigated active week using ISO string comparison
+  const activeWeekItems = useMemo(() => {
     return expenses.filter((e) => {
       if (!e.date) return false;
       const cleanDate = e.date.slice(0, 10);
       return cleanDate >= startIso && cleanDate <= endIso;
     });
   }, [expenses, startIso, endIso]);
+
+  const activeWeekExpenses = useMemo(
+    () => activeWeekItems.filter((e) => e.type !== 'income'),
+    [activeWeekItems],
+  );
+
+  const activeWeekIncome = useMemo(
+    () => activeWeekItems.filter((e) => e.type === 'income'),
+    [activeWeekItems],
+  );
+
+  const activeTargetItems = useMemo(
+    () => (flowType === 'income' ? activeWeekIncome : activeWeekExpenses),
+    [flowType, activeWeekIncome, activeWeekExpenses],
+  );
 
   const getAmount = (e: Expense) =>
     convert(Number(e.amount), e.currency || 'NPR', targetCurrency);
@@ -99,6 +120,13 @@ export function FinancialInsights({ expenses, targetCurrency }: FinancialInsight
     () => activeWeekExpenses.reduce((sum, e) => sum + getAmount(e), 0),
     [activeWeekExpenses, targetCurrency, convert],
   );
+
+  const totalIncome = useMemo(
+    () => activeWeekIncome.reduce((sum, e) => sum + getAmount(e), 0),
+    [activeWeekIncome, targetCurrency, convert],
+  );
+
+  const activeTotal = flowType === 'income' ? totalIncome : totalSpent;
 
   // 3. Day of Week Distribution (Mon -> Sun) for the active week
   const dayOfWeekStats = useMemo(() => {
@@ -109,7 +137,7 @@ export function FinancialInsights({ expenses, targetCurrency }: FinancialInsight
       expenses: [] as Expense[],
     }));
 
-    activeWeekExpenses.forEach((e) => {
+    activeTargetItems.forEach((e) => {
       if (!e.date) return;
       const cleanDate = e.date.slice(0, 10);
       const dayObj = days.find((d) => d.dateStr === cleanDate);
@@ -128,11 +156,11 @@ export function FinancialInsights({ expenses, targetCurrency }: FinancialInsight
       days,
       maxDaySpend,
       peakDay: peakDay?.total > 0 ? peakDay : null,
-      peakDayPct: peakDay?.total > 0 && totalSpent > 0 ? Math.round((peakDay.total / totalSpent) * 100) : 0,
+      peakDayPct: peakDay?.total > 0 && activeTotal > 0 ? Math.round((peakDay.total / activeTotal) * 100) : 0,
     };
-  }, [daysWithDates, activeWeekExpenses, targetCurrency, convert, totalSpent]);
+  }, [daysWithDates, activeTargetItems, targetCurrency, convert, activeTotal]);
 
-  // 4. Time of Day Spending Quadrants (Morning, Afternoon, Evening, Night) for active week
+  // 4. Time of Day Spending/Income Quadrants (Morning, Afternoon, Evening, Night) for active week
   const timeOfDayStats = useMemo(() => {
     const quadrants = [
       { key: 'morning', label: 'Morning', hours: '6 AM – 12 PM', icon: Sunrise, total: 0, count: 0, color: '#F59E0B' },
@@ -141,7 +169,7 @@ export function FinancialInsights({ expenses, targetCurrency }: FinancialInsight
       { key: 'night', label: 'Night', hours: '9 PM – 6 AM', icon: Moon, total: 0, count: 0, color: '#C084FC' },
     ];
 
-    activeWeekExpenses.forEach((e) => {
+    activeTargetItems.forEach((e) => {
       const amt = getAmount(e);
       let hour = 12; // fallback noon if time not set
       if (e.time) {
@@ -169,27 +197,64 @@ export function FinancialInsights({ expenses, targetCurrency }: FinancialInsight
     return {
       quadrants: quadrants.map((q) => ({
         ...q,
-        pct: totalSpent > 0 ? Math.round((q.total / totalSpent) * 100) : 0,
+        pct: activeTotal > 0 ? Math.round((q.total / activeTotal) * 100) : 0,
       })),
       peakQuadrant: peakQuadrant?.total > 0 ? peakQuadrant : null,
     };
-  }, [activeWeekExpenses, targetCurrency, convert, totalSpent]);
+  }, [activeTargetItems, targetCurrency, convert, activeTotal]);
 
   function changeWeek(delta: number) {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
     setWeekOffset((prev) => prev + delta);
   }
 
+  function flipFlowType() {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+    onFlipFlowType();
+    setSelectedDay(null);
+  }
+
+  const chartColor = flowType === 'income' ? theme.colors.income : theme.colors.primary;
+  const flowFlipStyle = {
+    opacity: flowFlipAnim,
+    transform: [
+      { perspective: 900 },
+      {
+        rotateY: flowFlipAnim.interpolate({
+          inputRange: [0, 1],
+          outputRange: ['90deg', '0deg'],
+        }),
+      },
+      {
+        scale: flowFlipAnim.interpolate({
+          inputRange: [0, 1],
+          outputRange: [0.96, 1],
+        }),
+      },
+    ],
+  };
+
+  useEffect(() => {
+    flowFlipAnim.setValue(0);
+    Animated.spring(flowFlipAnim, {
+      toValue: 1,
+      friction: 8,
+      tension: 70,
+      useNativeDriver: true,
+    }).start();
+  }, [flowFlipAnim, flowType]);
+
   return (
     <View style={{ gap: theme.spacing.md }}>
-      {/* ── 1. DAY-OF-WEEK SPENDING RHYTHM CARD WITH EMBEDDED WEEK NAVIGATOR ── */}
+      {/* ── 1. DAY-OF-WEEK RHYTHM CARD WITH EMBEDDED WEEK NAVIGATOR & MINI FLOW SWITCHER ── */}
+      <Animated.View style={flowFlipStyle}>
       <Card style={{ gap: theme.spacing.md, padding: theme.spacing.lg }}>
-        {/* Card Header: Title on Left + Embedded Week Stepper [ ◀ ] [ ▶ ] on Right */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
-            <Calendar size={18} color={theme.colors.primary} />
-            <View>
-              <Text variant="label" style={{ fontWeight: '700', fontSize: 15 }}>
+        {/* Card Header: Title on Left + Compact Mini-Pill & Stepper Controls on Right */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 6 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, minWidth: 120 }}>
+            <Calendar size={17} color={chartColor} />
+            <View style={{ minWidth: 0 }}>
+              <Text variant="label" style={{ fontWeight: '700', fontSize: 14 }}>
                 Day-of-Week Rhythm
               </Text>
               <Text variant="caption" muted style={{ fontSize: 10.5 }}>
@@ -198,53 +263,98 @@ export function FinancialInsights({ expenses, targetCurrency }: FinancialInsight
             </View>
           </View>
 
-          {/* Stepper Controls embedded in header */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Previous week"
-              onPress={() => changeWeek(-1)}
-              hitSlop={8}
-              style={({ pressed }) => ({
-                width: 28,
-                height: 28,
-                borderRadius: 14,
-                backgroundColor: theme.colors.surfaceElevated,
-                borderWidth: 1,
-                borderColor: theme.colors.border,
-                alignItems: 'center',
-                justifyContent: 'center',
-                opacity: pressed ? 0.6 : 1,
-              })}
-            >
-              <ChevronLeft size={14} color={theme.colors.primary} />
-            </Pressable>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+            {/* Single flow flip button */}
+            {hasIncome && (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Flip to ${flowType === 'income' ? 'expenses' : 'income'}`}
+                onPress={flipFlowType}
+                hitSlop={8}
+                style={({ pressed }) => ({
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 4,
+                  paddingHorizontal: 8,
+                  paddingVertical: 4,
+                  borderRadius: 12,
+                  backgroundColor:
+                    flowType === 'income'
+                      ? (theme.isDark ? 'rgba(52, 211, 153, 0.18)' : '#DCE9E3')
+                      : (theme.isDark ? 'rgba(239, 68, 68, 0.18)' : '#F1DCD3'),
+                  borderWidth: 1.2,
+                  borderColor: flowType === 'income' ? '#059669' : theme.colors.danger,
+                  opacity: pressed ? 0.75 : 1,
+                })}
+              >
+                <RefreshCw size={12} color={flowType === 'income' ? '#059669' : theme.colors.danger} />
+                <Text
+                  style={{
+                    fontSize: 11,
+                    fontWeight: '800',
+                    color: flowType === 'income' ? '#059669' : theme.colors.danger,
+                  }}
+                >
+                  {flowType === 'income' ? t('flow_income') : t('flow_expenses')}
+                </Text>
+              </Pressable>
+            )}
 
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Next week"
-              onPress={() => changeWeek(1)}
-              disabled={isCurrentWeek}
-              hitSlop={8}
-              style={({ pressed }) => ({
-                width: 28,
-                height: 28,
-                borderRadius: 14,
-                backgroundColor: isCurrentWeek ? 'transparent' : theme.colors.surfaceElevated,
-                borderWidth: 1,
-                borderColor: isCurrentWeek ? 'transparent' : theme.colors.border,
-                alignItems: 'center',
-                justifyContent: 'center',
-                opacity: isCurrentWeek ? 0.25 : pressed ? 0.6 : 1,
-              })}
-            >
-              <ChevronRight size={14} color={isCurrentWeek ? theme.colors.textMuted : theme.colors.primary} />
-            </Pressable>
+            {/* Stepper Controls */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Previous week"
+                onPress={() => changeWeek(-1)}
+                hitSlop={6}
+                style={({ pressed }) => ({
+                  width: 26,
+                  height: 26,
+                  borderRadius: 13,
+                  backgroundColor: theme.colors.surfaceElevated,
+                  borderWidth: 1,
+                  borderColor: theme.colors.border,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  opacity: pressed ? 0.6 : 1,
+                })}
+              >
+                <ChevronLeft size={13} color={chartColor} />
+              </Pressable>
+
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Next week"
+                onPress={() => changeWeek(1)}
+                disabled={isCurrentWeek}
+                hitSlop={6}
+                style={({ pressed }) => ({
+                  width: 26,
+                  height: 26,
+                  borderRadius: 13,
+                  backgroundColor: isCurrentWeek ? 'transparent' : theme.colors.surfaceElevated,
+                  borderWidth: 1,
+                  borderColor: isCurrentWeek ? 'transparent' : theme.colors.border,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  opacity: isCurrentWeek ? 0.25 : pressed ? 0.6 : 1,
+                })}
+              >
+                <ChevronRight size={13} color={isCurrentWeek ? theme.colors.textMuted : chartColor} />
+              </Pressable>
+            </View>
           </View>
         </View>
 
-        {/* Peak day indicator */}
-        <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
+        {/* Peak day indicator and weekly total */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: -2 }}>
+          <Text variant="caption" style={{ fontWeight: '700', color: theme.colors.text }}>
+            {flowType === 'income' ? 'Weekly Inflow: ' : 'Weekly Total: '}
+            <Text style={{ fontWeight: '800', color: chartColor }}>
+              {isPrivacyMode ? '••••' : `${flowType === 'income' ? '+' : ''}${formatMoney(activeTotal, targetCurrency)}`}
+            </Text>
+          </Text>
+
           {dayOfWeekStats.peakDay ? (
             <View
               style={{
@@ -254,21 +364,30 @@ export function FinancialInsights({ expenses, targetCurrency }: FinancialInsight
                 paddingHorizontal: 7,
                 paddingVertical: 2,
                 borderRadius: theme.radius.full,
-                backgroundColor: theme.isDark ? 'rgba(245, 158, 11, 0.15)' : 'rgba(245, 158, 11, 0.1)',
+                backgroundColor: flowType === 'income'
+                  ? (theme.isDark ? 'rgba(16, 185, 129, 0.18)' : 'rgba(16, 185, 129, 0.12)')
+                  : (theme.isDark ? 'rgba(245, 158, 11, 0.15)' : 'rgba(245, 158, 11, 0.1)'),
               }}
             >
-              <Flame size={11} color="#F59E0B" />
-              <Text variant="caption" style={{ fontWeight: '700', color: '#F59E0B', fontSize: 10.5 }}>
+              <Flame size={11} color={flowType === 'income' ? theme.colors.income : '#F59E0B'} />
+              <Text
+                variant="caption"
+                style={{
+                  fontWeight: '800',
+                  color: flowType === 'income' ? '#10B981' : '#F59E0B',
+                  fontSize: 10.5,
+                }}
+              >
                 Peak: {dayOfWeekStats.peakDay.name} ({dayOfWeekStats.peakDayPct}%)
               </Text>
             </View>
           ) : null}
         </View>
 
-        {activeWeekExpenses.length === 0 ? (
+        {activeTargetItems.length === 0 ? (
           <View style={{ paddingVertical: 20, alignItems: 'center', justifyContent: 'center', gap: 4 }}>
             <Text variant="caption" muted style={{ fontStyle: 'italic', fontSize: 12 }}>
-              No expenses recorded in this week.
+              No {flowType === 'income' ? 'income' : 'expenses'} recorded in this week.
             </Text>
           </View>
         ) : (
@@ -283,7 +402,7 @@ export function FinancialInsights({ expenses, targetCurrency }: FinancialInsight
                 <Pressable
                   key={day.name}
                   accessibilityRole="button"
-                  accessibilityLabel={`View ${day.full} expenses: ${formatMoney(day.total, targetCurrency)}`}
+                  accessibilityLabel={`View ${day.full} ${flowType}: ${formatMoney(day.total, targetCurrency)}`}
                   onPress={() => setSelectedDay(day)}
                   style={{ alignItems: 'center', flex: 1, gap: 4 }}
                 >
@@ -295,7 +414,7 @@ export function FinancialInsights({ expenses, targetCurrency }: FinancialInsight
                         style={{
                           fontSize: 9.5,
                           fontWeight: '700',
-                          color: isPeak ? theme.colors.primary : theme.colors.text,
+                          color: isPeak ? chartColor : theme.colors.text,
                         }}
                       >
                         {isPrivacyMode
@@ -319,13 +438,15 @@ export function FinancialInsights({ expenses, targetCurrency }: FinancialInsight
                         height: barHeight,
                         borderRadius: 6,
                         backgroundColor: isPeak
-                          ? theme.colors.primary
+                          ? chartColor
                           : hasSpend
-                          ? (theme.isDark ? 'rgba(99, 102, 241, 0.45)' : 'rgba(79, 70, 229, 0.35)')
+                          ? flowType === 'income'
+                            ? (theme.isDark ? 'rgba(16, 185, 129, 0.45)' : 'rgba(16, 185, 129, 0.35)')
+                            : (theme.isDark ? 'rgba(99, 102, 241, 0.45)' : 'rgba(79, 70, 229, 0.35)')
                           : theme.isDark
                           ? 'rgba(255,255,255,0.08)'
                           : 'rgba(0,0,0,0.08)',
-                        shadowColor: isPeak ? theme.colors.primary : 'transparent',
+                        shadowColor: isPeak ? chartColor : 'transparent',
                         shadowOffset: { width: 0, height: 4 },
                         shadowOpacity: isPeak ? 0.35 : 0,
                         shadowRadius: 6,
@@ -341,7 +462,7 @@ export function FinancialInsights({ expenses, targetCurrency }: FinancialInsight
                       style={{
                         fontSize: 11,
                         fontWeight: isPeak || hasSpend ? '700' : '600',
-                        color: isPeak ? theme.colors.primary : hasSpend ? theme.colors.text : theme.colors.textMuted,
+                        color: isPeak ? chartColor : hasSpend ? theme.colors.text : theme.colors.textMuted,
                       }}
                     >
                       {day.name}
@@ -353,6 +474,7 @@ export function FinancialInsights({ expenses, targetCurrency }: FinancialInsight
           </View>
         )}
       </Card>
+      </Animated.View>
 
       <Modal
         visible={Boolean(selectedDay)}
@@ -383,14 +505,14 @@ export function FinancialInsights({ expenses, targetCurrency }: FinancialInsight
           >
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
               <View style={{ flex: 1, gap: 2 }}>
-                <Text variant="h3">{selectedDay?.full} Expenses</Text>
-                <Text variant="caption" style={{ fontWeight: '700', color: theme.colors.primary }}>
-                  {isPrivacyMode ? '••••' : formatMoney(selectedDay?.total ?? 0, targetCurrency)} · {selectedDay?.expenses.length ?? 0} {(selectedDay?.expenses.length ?? 0) === 1 ? 'transaction' : 'transactions'}
+                <Text variant="h3">{selectedDay?.full} {flowType === 'income' ? 'Income' : 'Expenses'}</Text>
+                <Text variant="caption" style={{ fontWeight: '700', color: chartColor }}>
+                  {isPrivacyMode ? '••••' : formatMoney(selectedDay?.total ?? 0, targetCurrency)} · {selectedDay?.expenses.length ?? 0} {(selectedDay?.expenses.length ?? 0) === 1 ? 'entry' : 'entries'}
                 </Text>
               </View>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Close day expenses"
+                accessibilityLabel="Close day details"
                 onPress={() => setSelectedDay(null)}
                 hitSlop={8}
                 style={{ paddingHorizontal: 8, paddingVertical: 4 }}
@@ -415,7 +537,7 @@ export function FinancialInsights({ expenses, targetCurrency }: FinancialInsight
                   <Text style={{ fontSize: 20 }}>{expense.categories?.icon || '💳'}</Text>
                   <View style={{ flex: 1, gap: 2 }}>
                     <Text variant="label" numberOfLines={1}>
-                      {expense.description || expense.categories?.name || 'Expense'}
+                      {expense.description || expense.categories?.name || (flowType === 'income' ? 'Income' : 'Expense')}
                     </Text>
                     <Text variant="caption" muted>
                       {expense.date} · {expense.payment_method || 'Cash'}
@@ -426,9 +548,9 @@ export function FinancialInsights({ expenses, targetCurrency }: FinancialInsight
                     numberOfLines={1}
                     adjustsFontSizeToFit
                     minimumFontScale={0.72}
-                    style={{ maxWidth: 110, textAlign: 'right', color: theme.colors.primary }}
+                    style={{ maxWidth: 110, textAlign: 'right', color: chartColor, fontWeight: '800' }}
                   >
-                    {isPrivacyMode ? '••••' : formatMoney(getAmount(expense), targetCurrency)}
+                    {isPrivacyMode ? '••••' : `${flowType === 'income' ? '+' : ''}${formatMoney(getAmount(expense), targetCurrency)}`}
                   </Text>
                 </View>
               ))}
@@ -437,19 +559,24 @@ export function FinancialInsights({ expenses, targetCurrency }: FinancialInsight
         </Pressable>
       </Modal>
 
-      {/* ── 2. TIME-OF-DAY CHRONO SPENDING PATTERN ── */}
+      {/* ── 2. TIME-OF-DAY CHRONO PATTERN ── */}
       <Card style={{ gap: theme.spacing.md, padding: theme.spacing.lg }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <Clock size={18} color={theme.colors.primary} />
-            <Text variant="label" style={{ fontWeight: '700', fontSize: 15 }}>
-              Time-of-Day Chrono Pattern
-            </Text>
+            <Clock size={18} color={chartColor} />
+            <View>
+              <Text variant="label" style={{ fontWeight: '700', fontSize: 15 }}>
+                {flowType === 'income' ? 'Time-of-Day Earning Pattern' : 'Time-of-Day Spending Pattern'}
+              </Text>
+              <Text variant="caption" muted style={{ fontSize: 10.5 }}>
+                {weekLabel} Chronotypes
+              </Text>
+            </View>
           </View>
 
           {timeOfDayStats.peakQuadrant ? (
             <Text variant="caption" muted style={{ fontSize: 11 }}>
-              Most active: <Text style={{ fontWeight: '700', color: theme.colors.text }}>{timeOfDayStats.peakQuadrant.label}</Text>
+              Prime: <Text style={{ fontWeight: '700', color: theme.colors.text }}>{timeOfDayStats.peakQuadrant.label}</Text>
             </Text>
           ) : null}
         </View>
@@ -470,7 +597,7 @@ export function FinancialInsights({ expenses, targetCurrency }: FinancialInsight
                       ({q.hours})
                     </Text>
                   </View>
-                  <Text variant="caption" style={{ fontWeight: '700', color: theme.colors.primary }}>
+                  <Text variant="caption" style={{ fontWeight: '700', color: chartColor }}>
                     {formatMoney(q.total, targetCurrency)} ({q.pct}%)
                   </Text>
                 </View>

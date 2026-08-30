@@ -377,7 +377,7 @@ export function ProfileQuickCard({ visible, onClose }: ProfileQuickCardProps) {
                     Export Statement Hub
                   </Text>
                   <Text variant="caption" muted style={{ fontSize: 11 }}>
-                    Download luxury PDF, Excel & CSV
+                    Download PDF, Excel & CSV
                   </Text>
                 </View>
               </View>

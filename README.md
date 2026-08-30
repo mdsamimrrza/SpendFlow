@@ -11,7 +11,7 @@
 
 ## 📌 Executive Summary & Architecture Overview
 
-SpendFlow is an offline-first personal financial telemetry and expense tracking application. It is engineered with robust real-time multi-currency exchange conversion, interactive vector SVG charts, biometric security (Face ID / Fingerprint), automated recurring billing rules with local OS notifications, multi-format financial statement export (PDF, Excel XLSX, CSV), and multi-lingual support (English, Nepali, Hindi).
+SpendFlow is an offline-first personal financial telemetry and expense tracking application. It is engineered with robust real-time multi-currency exchange conversion, interactive vector SVG charts, biometric security (Face ID / Fingerprint), automated recurring billing rules with local OS notifications, multi-format financial statement export (PDF, Excel XLSX, CSV), and multi-lingual support (English, Nepali, Hindi)
 
 ```
 SpendFlow/
@@ -19,43 +19,52 @@ SpendFlow/
 │   ├── (tabs)/
 │   │   ├── _layout.tsx          # Custom Bottom Tab Bar with Icons & Dynamic Badges
 │   │   ├── index.tsx            # Dashboard / Home Screen
-│   │   ├── history.tsx          # Paginated Transaction History & Filter Vault
+│   │   ├── history.tsx          # Paginated Transaction History, Cash Flow Vault & 3-Icon Popover Toolbar
 │   │   ├── analytics.tsx        # Financial Intelligence & Behavioral Insights Hub
 │   │   ├── recurring.tsx        # Recurring Bills & Subscription Lifecycle Studio
 │   │   └── settings.tsx         # User Profile, Biometrics, Currency, Language & Budget Ceiling
+│   ├── accounts.tsx             # Multi-Account & Bank Management Studio (Cash, Bank, Cards, UPI, Wallets)
+│   ├── bullion.tsx              # Live Bullion Benchmark Engine (Gold 24K/22K, Silver, Nepal & India Fixings)
+│   ├── categories.tsx           # Category & Flow Type Manager (Expense / Income / Both)
 │   ├── expense/
-│   │   ├── add.tsx              # Add Transaction Screen
+│   │   ├── add.tsx              # Add Transaction Screen (Expense / Income Switcher)
 │   │   └── [id].tsx             # Edit Transaction Screen
-│   ├── export.tsx               # Luxury Statement Generator (PDF / XLSX / CSV)
+│   ├── export.tsx               # Financial Statement Generator (PDF / XLSX / CSV)
 │   ├── _layout.tsx              # Root Layout, Auth State Router & Theme Provider
 │   ├── sign-in.tsx              # Auth SignIn with Email & Google OAuth
 │   ├── sign-up.tsx              # Auth SignUp with Validation
 │   └── forgot-password.tsx      # Supabase Password Reset Flow
 ├── components/
+│   ├── account/
+│   │   ├── AccountCard.tsx               # Bank / Wallet Account Card with Live Balance
+│   │   └── AccountManageModal.tsx        # Add / Edit Bank Account & Wallet Modal
 │   ├── expense/
 │   │   ├── BudgetAnalyticsCard.tsx       # Burn Velocity & Forecast Pacing Card
 │   │   ├── BudgetLimitHeroCard.tsx       # Overall Budget Progress Hero Banner
 │   │   ├── BudgetProgress.tsx            # Category Limit Allocation Tracker
 │   │   ├── CategoryBudgetFormModal.tsx   # 50% 2-Column Category Limit Manager
 │   │   ├── Charts.tsx                    # Donut Breakdown Graph & Bottom Sheet Expense Detail Modal
-│   │   ├── ExpenseForm.tsx               # Interactive Transaction Entry & Receipt Engine
+│   │   ├── ExpenseForm.tsx               # Interactive Transaction Entry (Expense & Income)
 │   │   ├── ExpenseItem.tsx               # Reusable Swipeable / Pressable Expense Row
 │   │   ├── FinancialHealthScoreCard.tsx  # 0–100 Financial Health Grade Diagnostic
 │   │   ├── FinancialInsights.tsx         # Day-of-Week Rhythm & Time-of-Day Chronotypes
 │   │   └── StockTrendChart.tsx           # Multi-Period Bézier Wave Chart (Today, 7D, 4W, 6M, 1Y)
 │   └── ui/
 │       ├── Avatar.tsx, Button.tsx, Card.tsx, Input.tsx, Skeleton.tsx, Text.tsx, ThemeToggle.tsx
-│       ├── BottomSheet.tsx, CalendarModal.tsx, TimePickerModal.tsx, ImageViewerModal.tsx
-│       ├── PressableScale.tsx, ProfileQuickCard.tsx, Select.tsx
+│       ├── BottomSheet.tsx, CalendarModal.tsx, CategoryIcon.tsx, TimePickerModal.tsx, ImageViewerModal.tsx
+│       ├── PressableScale.tsx, PrivacyEyeButton.tsx, ProfileQuickCard.tsx, Select.tsx
 ├── constants/
 │   ├── app.ts, categories.ts, theme.ts
 │   └── i18n/ (en.ts, hi.ts, ne.ts)
 ├── hooks/
-│   ├── useAuth.ts, useExchangeRates.ts, useExpenses.ts, useLanguage.ts, useSecurity.ts, useSync.ts, useTheme.ts
+│   ├── useAuth.ts, useExchangeRates.ts, useExpenses.ts, useLanguage.ts, usePrivacy.ts, useSecurity.ts, useSync.ts, useTheme.ts
 ├── services/
-│   ├── auth.ts, categories.ts, exchange.ts, expenses.ts, export.ts, notifications.ts, recurring.ts, storage.ts
+│   ├── accounts.ts, auth.ts, bullion.ts, categories.ts, exchange.ts, expenses.ts, export.ts, notifications.ts, recurring.ts, storage.ts
 ├── supabase/
-│   └── migrations/20260823170000_initial_spendflow_schema.sql
+│   └── migrations/
+│       ├── 20260823170000_initial_spendflow_schema.sql
+│       ├── 20260828010000_add_type_to_categories_and_expenses.sql
+│       └── 20260828020000_create_bank_accounts.sql
 ├── app.json, eas.json, package.json, tsconfig.json
 ```
 
@@ -64,7 +73,7 @@ SpendFlow/
 ## 🎯 Screen-by-Screen Feature & Requirements Specification
 
 ### 1. 🏠 Home Screen (`app/(tabs)/index.tsx`)
-- **Header & Greeting**: Time-aware personalized greeting (`Good Morning / Afternoon / Evening, <Name>`), live date indicator, and interactive profile avatar quick-card.
+- **Header & Greeting**: Time-aware personalized greeting (`Good Morning / Afternoon / Evening, <Name>`), live date indicator, privacy mask toggle (`PrivacyEyeButton`), and interactive profile avatar quick-card.
 - **Offline Sync Queue Banner**: Live detection of pending offline writes with instant cloud sync badge.
 - **Overall Budget Limit Hero**: Visual progress bar showing total monthly spending vs set ceiling with dynamic color thresholds (Green `< 80%`, Amber `80–100%`, Crimson `> 100%`).
 - **Stock Trend Wave Chart**: Multi-point smooth Bézier curve of spending trajectory with touch-to-inspect tooltips and comparative growth percentage.
@@ -72,23 +81,33 @@ SpendFlow/
 - **Recent Transactions List**: Quick preview of the latest 3 transactions with categorized icons, date/time, payment method, formatted currency, and tap-to-view bottom sheet details.
 - **Pull-To-Refresh**: Native `RefreshControl` updating live balances, rates, and profiles simultaneously.
 
----
-
 ### 2. 📜 Transaction History & Filtering (`app/(tabs)/history.tsx`)
-- **Ultra-Compact Outflow Vault Card**:
-  - **Left**: Live computed total outflow for the selected timeframe in primary currency.
-  - **Right**: Side-by-side stacked badges: `[ 🧾 X entries ]` and `[ ✨ Peak: <Amount> ]`.
-- **Search & Live Filtering**: Instant debounced search bar querying description, notes, and merchant names.
-- **Period Filter Chips**: Horizontal carousel (`Today`, `This Week`, `This Month`, `This Year`, `All Time`, `Custom Range`).
-- **Custom Date Range Picker (`CalendarModal.tsx`)**: Multi-day calendar interval selector with quick presets.
-- **Category Filter Modal**: Popup modal to isolate transactions by spending category.
-- **Paginated SectionList**: Grouped by date (`Today`, `Yesterday`, `Weekday, Month Day, Year`) with sticky date headers.
+- **Consolidated Vault & Cash Flow Card**:
+  - **Live Totals**: Dynamically displays Total Outflow, Total Inflow, or Net Cash Flow in primary currency.
+  - **Badges**: `[ 🧾 X entries ]` and `[ ✨ Peak: <Amount> ]`.
+  - **3-Way Flow Switcher**: In-card segmented selector toggling `All Flow`, `Expenses (-)`, and `Income (+)`.
+- **Search & In-Place Popover Toolbar**:
+  - `[ 🔍 Search... ]` instant debounced search bar querying description, notes, and merchant names.
+  - `[ 📅 Timeframe ]` in-place floating popover (`Today`, `This Week`, `This Month`, `Custom 📅`).
+  - `[ 🏷️ Category ]` in-place floating popover displaying user categories with active dynamic filter chip (`[ 💼 Salary ✕ ]`).
+  - `[ ⇅ Sort ]` in-place floating popover ordering by Date Desc/Asc, Amount High/Low, Category A-Z.
+  - **Universal Click-Outside Dismissal**: Tapping anywhere on the screen dismisses popovers cleanly.
+- **Custom Date Range Picker (`CalendarModal.tsx`)**: Safe Area bottom inset padding (`paddingBottom: 36`) and `ScrollView` wrapper ensuring action buttons are never obscured by the Android gesture bar.
+- **Paginated SectionList**: Grouped by date (`Today`, `Yesterday`, `Weekday, Month Day, Year`) with sticky date headers and page-switch navigation.
 - **Enlarged Export Button**: Top app-bar shortcut opening the statement export modal.
-- **Expense Details Bottom Sheet**: Slides up smoothly, displays full metadata, notes, and high-res receipt viewer with equal 50/50 `[ Cancel ]` and `[ ✏️ Edit Expense ]` action buttons.
 
----
+### 3. 💳 Multi-Account & Bank Studio (`app/accounts.tsx`)
+- **Multi-Bank Balance Tracking**: Manage multiple liquid accounts across `Cash`, `Bank Account`, `Credit Card`, `UPI`, `Savings`, and `Digital Wallet`.
+- **Net Wealth Aggregation**: Real-time aggregation of total liquid net worth across all connected accounts.
+- **Account Modal (`AccountManageModal.tsx`)**: Add, edit, archive, and assign custom icons and starting balances.
 
-### 3. 📊 Analytics & Financial Intelligence (`app/(tabs)/analytics.tsx`)
+### 4. 🥇 Live Bullion Market Benchmark (`app/bullion.tsx`)
+- **Dual Country Alignment**:
+  - **Nepal (FENEGOSIDA)**: Fine Gold (24K / Chhapawal @ 1.20649x), Tejabi Gold (22K @ 92.5588%), Silver (@ 1.22765x). Fixed daily at 10:30 AM NPT.
+  - **India (IBJA)**: Gold 24K & Silver (@ 1.0918x / 6% Duty + 3% GST), Gold 22K (916 @ 91.67%). AM Fix (12:00 PM IST) & PM Fix (4:30 PM IST).
+- **Unit Converters**: Instant weight calculation across Tola (11.664g), 10 Grams, 1 Gram, Ounces, and Kilograms.
+
+### 5. 📊 Analytics & Financial Intelligence (`app/(tabs)/analytics.tsx`)
 - **Sub-Tabs Navigation**: `Overview` | `Categories` | `Habits & Forecast` | `All Insights`.
 - **4-Tile Executive KPI Cards**:
   1. *Total Spent* (Sum & transaction count)
@@ -145,7 +164,7 @@ SpendFlow/
 
 ---
 
-### 7. 📥 Luxury Financial Export Center (`app/export.tsx` & `services/export.ts`)
+### 7. 📥 Financial Export Center (`app/export.tsx` & `services/export.ts`)
 - **Branded PDF Statements (`expo-print`)**:
   - Generates print-ready vector PDF document with SpendFlow branding, user metadata, summary KPI cards, category breakdown tables, detailed transaction logs, and formal signature section.
 - **Excel Spreadsheet (`write-excel-file`)**:
@@ -248,20 +267,22 @@ CREATE TABLE public.recurring_rules (
 
 ## 🛠️ Build & Deployment Guide
 
-### Prerequisites
-- Node.js LTS (v20+)
-- Expo CLI (`npm install -g eas-cli`)
+> 📖 **Looking for a complete step-by-step local build walkthrough?**  
+> Check out the **[Complete Local Build Guide (BUILD.md)](./BUILD.md)** for Android Studio setup, environment variables, Gradle APK compilation, and troubleshooting.
 
-### Local Development
+### Quick Start
 ```bash
+# 1. Install dependencies
 npm install
-npx expo start -c
-```
 
-### Typecheck & Health Diagnostic
-```bash
-npm run typecheck    # 0 TypeScript Errors
-npx expo-doctor      # 18/18 Checks Passed
+# 2. Start Metro Development Server
+npx expo start -c
+
+# 3. Typecheck
+npx tsc --noEmit
+
+# 4. Build Local Android Release APK
+cd android && .\gradlew.bat assembleRelease
 ```
 
 ### EAS Production Builds
