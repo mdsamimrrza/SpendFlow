@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Image, Modal, Pressable, ScrollView, View } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
-import { Calendar, ChevronLeft, ChevronRight, CreditCard, FileText, Image as ImageIcon, RefreshCw, Tag, X } from 'lucide-react-native';
+import { Calendar, ChevronLeft, ChevronRight, CreditCard, FileText, Image as ImageIcon, Landmark, RefreshCw, Tag, X } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -203,6 +203,22 @@ function ExpenseDetailModal({
 
                 <View style={{ height: 1, backgroundColor: theme.colors.border }} />
 
+                {/* Paid From / Received To (bank account) */}
+                {expense.bank_accounts?.name ? (
+                  <>
+                    <View style={{ height: 1, backgroundColor: theme.colors.border }} />
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Landmark size={15} color={theme.colors.textMuted} />
+                        <Text variant="caption" muted>{isIncome ? 'Received To' : 'Paid From'}</Text>
+                      </View>
+                      <Text variant="label" style={{ flexShrink: 1, textAlign: 'right', fontWeight: '700' }}>
+                        {expense.bank_accounts.name}
+                      </Text>
+                    </View>
+                  </>
+                ) : null}
+
                 {/* Payment Method */}
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -218,12 +234,18 @@ function ExpenseDetailModal({
                 {expense.description ? (
                   <>
                     <View style={{ height: 1, backgroundColor: theme.colors.border }} />
-                    <View style={{ gap: 4, paddingVertical: 4 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4 }}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                         <FileText size={15} color={theme.colors.textMuted} />
                         <Text variant="caption" muted>{t('expense_description')}</Text>
                       </View>
-                      <Text variant="body" style={{ fontWeight: '600' }}>
+                      <Text
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.75}
+                        variant="label"
+                        style={{ flexShrink: 1, textAlign: 'right', fontWeight: '700' }}
+                      >
                         {expense.description}
                       </Text>
                     </View>
@@ -337,7 +359,23 @@ const VIBRANT_PALETTE = [
 ];
 
 /* ── 📊 INTERACTIVE SEGMENTED DONUT CATEGORY BREAKDOWN ── */
-export function CategoryBreakdown({ expenses, targetCurrency }: { expenses: Expense[]; targetCurrency?: string }) {
+type BreakdownView = 'expense' | 'payment' | 'income';
+
+const BREAKDOWN_VIEW_LABEL: Record<BreakdownView, string> = {
+  expense: 'Categories',
+  payment: 'Payment',
+  income: 'Income',
+};
+
+export function CategoryBreakdown({
+  expenses,
+  targetCurrency,
+  paymentMethods,
+}: {
+  expenses: Expense[];
+  targetCurrency?: string;
+  paymentMethods?: { method: string; total: number; count: number; pct: number }[];
+}) {
   const theme = useTheme();
   const { profile } = useAuth();
   const { rates, convert } = useExchangeRates();
@@ -346,6 +384,9 @@ export function CategoryBreakdown({ expenses, targetCurrency }: { expenses: Expe
   const currency = targetCurrency ?? profile?.preferred_currency ?? 'NPR';
 
   const [isFlipped, setIsFlipped] = useState(false);
+  const [flipCount, setFlipCount] = useState(0);
+  const [viewA, setViewA] = useState<BreakdownView>('expense');
+  const [viewB, setViewB] = useState<BreakdownView>('payment');
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [inspectingExpense, setInspectingExpense] = useState<Expense | null>(null);
   // Measured heights of both faces so the wrapper resizes to the ACTIVE face
@@ -355,15 +396,29 @@ export function CategoryBreakdown({ expenses, targetCurrency }: { expenses: Expe
 
   const hasIncome = useMemo(() => expenses.some((e) => e.type === 'income'), [expenses]);
 
+  // Flip cycle: Category → Payment Methods → Income (when present) → back to Category
+  const views = useMemo<BreakdownView[]>(() => {
+    const list: BreakdownView[] = ['expense'];
+    if (paymentMethods && paymentMethods.length > 0) list.push('payment');
+    if (hasIncome) list.push('income');
+    return list;
+  }, [paymentMethods, hasIncome]);
+
   // ── Flip Animation ──
   const flipAnim = useRef(new Animated.Value(0)).current;
 
   const handleFlip = () => {
-    const toValue = isFlipped ? 0 : 1;
+    if (views.length < 2) return;
+    const current = flipCount % 2 === 0 ? viewA : viewB;
+    const currentIdx = views.indexOf(current);
+    const next = views[(Math.max(currentIdx, 0) + 1) % views.length];
+    // Load the next view onto the hidden face before revealing it
+    if (flipCount % 2 === 0) setViewB(next); else setViewA(next);
+    setFlipCount((c) => c + 1);
     setIsFlipped(!isFlipped);
     setSelectedCategory(null);
     Animated.spring(flipAnim, {
-      toValue,
+      toValue: isFlipped ? 0 : 1,
       friction: 8,
       tension: 60,
       useNativeDriver: true,
@@ -413,24 +468,35 @@ export function CategoryBreakdown({ expenses, targetCurrency }: { expenses: Expe
     return { expense: build('expense'), income: build('income') };
   }, [expenses, selectedCategory]);
 
-  const renderBody = (type: 'expense' | 'income') => {
-    const data = dataByType[type];
+  const nextOf = (view: BreakdownView) => {
+    const idx = views.indexOf(view);
+    return views[(Math.max(idx, 0) + 1) % views.length];
+  };
+
+  const renderBody = (view: BreakdownView) => {
+    const data = view === 'payment' ? [] : dataByType[view];
     const total = data.reduce((sum, item) => sum + item.total, 0);
-    const filteredCategoryExpenses = filteredByType[type];
+    const filteredCategoryExpenses = view === 'payment' ? [] : filteredByType[view];
     const selectedCategoryItem = data.find((d) => d.label === selectedCategory);
+    const showFlipPill = views.length >= 2 && views.includes(view);
 
     return (
       <>
       {/* ── CARD HEADER ── */}
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 6 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          {view === 'payment' ? <CreditCard size={16} color={theme.colors.primary} /> : null}
           <Text variant="label" style={{ fontWeight: '800', fontSize: 14 }}>
-            {type === 'income' ? 'Income Streams Breakdown' : t('charts_category_breakdown') || 'Category Breakdown'}
+            {view === 'income'
+              ? 'Income Streams Breakdown'
+              : view === 'payment'
+              ? 'Payment Method Breakdown'
+              : t('charts_category_breakdown') || 'Category Breakdown'}
           </Text>
         </View>
 
-        {/* Flip Button — red = Expense side, green = Income side */}
-        {hasIncome && (
+        {/* Flip Button — cycles Category → Payment → Income */}
+        {showFlipPill && (
           <Pressable
             onPress={handleFlip}
             hitSlop={10}
@@ -441,18 +507,15 @@ export function CategoryBreakdown({ expenses, targetCurrency }: { expenses: Expe
               paddingHorizontal: 8,
               paddingVertical: 4,
               borderRadius: 12,
-              backgroundColor:
-                type === 'income'
-                  ? (theme.isDark ? 'rgba(52, 211, 153, 0.18)' : '#DCE9E3')
-                  : (theme.isDark ? 'rgba(239, 68, 68, 0.18)' : '#F1DCD3'),
+              backgroundColor: theme.isDark ? 'rgba(129, 140, 248, 0.16)' : 'rgba(79, 70, 229, 0.08)',
               borderWidth: 1.2,
-              borderColor: type === 'income' ? '#059669' : theme.colors.danger,
+              borderColor: theme.colors.primary,
               opacity: pressed ? 0.75 : 1,
             })}
           >
-            <RefreshCw size={12} color={type === 'income' ? '#059669' : theme.colors.danger} />
-            <Text style={{ fontSize: 11, fontWeight: '800', color: type === 'income' ? '#059669' : theme.colors.danger }}>
-              {type === 'income' ? 'Income' : 'Expenses'}
+            <RefreshCw size={12} color={theme.colors.primary} />
+            <Text style={{ fontSize: 11, fontWeight: '800', color: theme.colors.primary }}>
+              {BREAKDOWN_VIEW_LABEL[nextOf(view)]}
             </Text>
           </Pressable>
         )}
@@ -480,7 +543,46 @@ export function CategoryBreakdown({ expenses, targetCurrency }: { expenses: Expe
         )}
       </View>
 
-      {total === 0 ? (
+      {view === 'payment' ? (
+        /* ── PAYMENT METHOD ROWS ── */
+        <View style={{ gap: 12 }}>
+          {(paymentMethods ?? []).map((pm) => (
+            <View key={pm.method} style={{ gap: 4 }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: theme.colors.text }}>
+                    {pm.method === 'Cash' ? '💵' : pm.method === 'Card' ? '💳' : pm.method === 'UPI' ? '📱' : '🪙'} {pm.method}
+                  </Text>
+                  <Text variant="caption" muted style={{ fontSize: 11 }}>
+                    ({pm.count} {pm.count === 1 ? 'tx' : 'txs'})
+                  </Text>
+                </View>
+                <Text
+                  variant="caption"
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.72}
+                  style={{ flexShrink: 1, textAlign: 'right', fontWeight: '800', color: theme.colors.primary }}
+                >
+                  {isPrivacyMode ? '••••' : formatMoney(pm.total, currency)} ({pm.pct}%)
+                </Text>
+              </View>
+
+              {/* Progress Bar */}
+              <View style={{ height: 5, borderRadius: 2.5, overflow: 'hidden', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }}>
+                <View
+                  style={{
+                    width: `${pm.pct}%`,
+                    height: '100%',
+                    backgroundColor: theme.colors.primary,
+                    borderRadius: 2.5,
+                  }}
+                />
+              </View>
+            </View>
+          ))}
+        </View>
+      ) : total === 0 ? (
         <Text muted style={{ paddingVertical: 4, fontSize: 12 }}>
           {t('charts_no_category') || 'No category expenses logged yet.'}
         </Text>
@@ -658,7 +760,7 @@ export function CategoryBreakdown({ expenses, targetCurrency }: { expenses: Expe
           height: isFlipped ? (backHeight ?? undefined) : (frontHeight ?? undefined),
         }}
       >
-        {/* ═══════════ FRONT FACE: EXPENSE BREAKDOWN ═══════════ */}
+        {/* ═══════════ FRONT FACE: FIRST VIEW IN CYCLE ═══════════ */}
         <Animated.View
           pointerEvents={isFlipped ? 'none' : 'auto'}
           onLayout={(e) => {
@@ -671,10 +773,10 @@ export function CategoryBreakdown({ expenses, targetCurrency }: { expenses: Expe
             opacity: frontOpacity,
           }}
         >
-          <Card style={{ gap: 10, padding: 14 }}>{renderBody('expense')}</Card>
+          <Card style={{ gap: 10, padding: 14 }}>{renderBody(viewA)}</Card>
         </Animated.View>
 
-        {/* ═══════════ BACK FACE: INCOME BREAKDOWN ═══════════ */}
+        {/* ═══════════ BACK FACE: NEXT VIEW IN CYCLE ═══════════ */}
         <Animated.View
           pointerEvents={isFlipped ? 'auto' : 'none'}
           onLayout={(e) => {
@@ -691,7 +793,7 @@ export function CategoryBreakdown({ expenses, targetCurrency }: { expenses: Expe
             right: 0,
           }}
         >
-          <Card style={{ gap: 10, padding: 14 }}>{renderBody('income')}</Card>
+          <Card style={{ gap: 10, padding: 14 }}>{renderBody(viewB)}</Card>
         </Animated.View>
       </View>
 

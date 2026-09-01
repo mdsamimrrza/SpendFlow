@@ -303,7 +303,7 @@ export function CalendarModal({
                   style={[styles.presetChip, { backgroundColor: theme.colors.surfaceElevated, borderColor: theme.colors.border }]}
                   onPress={() => handleQuickPreset(p)}
                 >
-                  <Text variant="caption" style={{ fontWeight: '700', fontSize: 12 }}>
+                  <Text style={{ fontWeight: '700', fontSize: 12, color: theme.colors.text }}>
                     {p === 'today' ? 'Today' : p === 'yesterday' ? 'Yesterday' : p === 'last7' ? 'Last 7 Days' : p === 'thisMonth' ? 'This Month' : 'Last Month'}
                   </Text>
                 </Pressable>
@@ -515,13 +515,15 @@ export function CalendarModal({
           )}
 
           {/* ── Footer Actions (range mode + calendar view only) ── */}
-          {!isSingle && view === 'calendar' && (
-            <View style={styles.footerActions}>
-              <Button title="Reset"       variant="secondary" onPress={handleClear}  style={{ flex: 1 }} />
-              <Button title="Apply Range"                     onPress={handleApply}  style={{ flex: 2 }} />
-            </View>
-          )}
+          {/* NOTE: rendered below ScrollView to never be cut off */}
         </ScrollView>
+
+        {!isSingle && view === 'calendar' && (
+          <View style={[styles.footerActions, { paddingTop: 8 }]}>
+            <Button title="Reset"       variant="secondary" onPress={handleClear}  style={{ flex: 1 }} />
+            <Button title="Apply Range"                     onPress={handleApply}  style={{ flex: 2 }} />
+          </View>
+        )}
       </View>
     </Modal>
   );
@@ -631,25 +633,21 @@ const styles = StyleSheet.create({
   // ── Day grid ──────────────────────────────────────────────────────────────
   weekdaysRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     paddingVertical: 2,
   },
   weekdayCell: {
-    width: 38,
+    flex: 1,
     alignItems: 'center',
   },
   daysGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    gap: 1,
   },
   dayCell: {
-    width: 38,
-    height: 36,
+    width: '14.2857%',
+    aspectRatio: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    marginVertical: 1,
   },
   footerActions: {
     flexDirection: 'row',

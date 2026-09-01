@@ -146,6 +146,17 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
     [accounts, expenses.items],
   );
 
+  // Account picker rows ordered by live balance: highest first, lowest last.
+  const accountsByBalanceDesc = useMemo(
+    () =>
+      [...accounts].sort((a, b) => {
+        const bal = (id: string) =>
+          accountLiveBalances.find((x) => x.id === id)?.live_balance ?? 0;
+        return bal(b.id) - bal(a.id);
+      }),
+    [accounts, accountLiveBalances],
+  );
+
   // Profile hydration can finish after this screen mounts while offline. Apply the
   // cached preferred currency once, but never overwrite a currency the user picked.
   useEffect(() => {
@@ -462,7 +473,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
   return (
     <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: theme.colors.background }}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
     >
       <View style={{ flex: 1 }}>
@@ -1082,7 +1093,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
               }}
             >
               <ScrollView nestedScrollEnabled style={{ maxHeight: 230 }}>
-                {accounts.map((acc) => {
+                {accountsByBalanceDesc.map((acc) => {
                   const isSelected = form.bank_account_id === acc.id;
                   const liveEntry = accountLiveBalances.find((a) => a.id === acc.id);
                   const liveBalance = liveEntry?.live_balance ?? Number(acc.initial_balance ?? 0);

@@ -53,6 +53,44 @@ async function getEffectiveMonthlyBudget(userId?: string): Promise<number> {
   return 0;
 }
 
+/** Cycle-aware month start day for non-React code (default 1 = calendar month). */
+async function getCycleStartDay(userId?: string): Promise<number> {
+  try {
+    if (userId) {
+      const raw = await AsyncStorage.getItem(`@spendflow_cycle_start_day_${userId}`);
+      const day = Number(raw);
+      if (day >= 2 && day <= 28) return day;
+    }
+    const profileJson = await AsyncStorage.getItem('@spendflow_cached_profile');
+    if (profileJson) {
+      const day = Number(JSON.parse(profileJson)?.cycle_start_day);
+      if (day >= 2 && day <= 28) return day;
+    }
+  } catch {
+    // Ignore cache parse error
+  }
+  return 1;
+}
+
+/** Cycle-aware month end day for non-React code (default null = dynamic). */
+async function getCycleEndDay(userId?: string): Promise<number | null> {
+  try {
+    if (userId) {
+      const endRaw = await AsyncStorage.getItem(`@spendflow_cycle_end_day_${userId}`);
+      const endDay = Number(endRaw);
+      if (endDay >= 1 && endDay <= 31) return endDay;
+    }
+    const profileJson = await AsyncStorage.getItem('@spendflow_cached_profile');
+    if (profileJson) {
+      const endDay = Number(JSON.parse(profileJson)?.cycle_end_day);
+      if (endDay >= 1 && endDay <= 31) return endDay;
+    }
+  } catch {
+    // Ignore cache parse error
+  }
+  return null;
+}
+
 async function triggerExpenseNotifications(
   userId: string | undefined,
   amount: number,
@@ -65,7 +103,10 @@ async function triggerExpenseNotifications(
     void notifyExpenseAdded(amount, categoryId, description, currency);
     void notifyLargeExpense(amount, categoryId, currency);
 
-    const month = currentMonthRange();
+    const month = currentMonthRange(
+      await getCycleStartDay(userId),
+      await getCycleEndDay(userId),
+    );
     const monthItems = currentItems.filter((item) => item.date >= month.from && item.date <= month.to);
     const monthTotal = sumExpenses(monthItems, currency);
     const monthlyBudget = await getEffectiveMonthlyBudget(userId);

@@ -37,13 +37,11 @@ import {
   X,
 } from 'lucide-react-native';
 import {
-  endOfMonth,
   endOfWeek,
   format,
   isToday as isTodayFn,
   isYesterday as isYesterdayFn,
   parseISO,
-  startOfMonth,
   startOfWeek,
 } from 'date-fns';
 import { ExpenseItem } from '@/components/expense/ExpenseItem';
@@ -69,7 +67,7 @@ import { useTheme } from '@/hooks/useTheme';
 import { listCategories } from '@/services/categories';
 import { exportCsv, exportExcel, exportPdf } from '@/services/export';
 import { Category, Expense, SortKey } from '@/types';
-import { formatMoney, sumExpenses } from '@/utils/format';
+import { currentMonthRange, formatMoney, sumExpenses } from '@/utils/format';
 
 type HistoryPeriod = 'all' | 'today' | 'week' | 'month' | 'custom';
 
@@ -197,11 +195,13 @@ export default function HistoryScreen() {
           fromDate: format(startOfWeek(today, { weekStartsOn: 1 }), 'yyyy-MM-dd'),
           toDate: format(endOfWeek(today, { weekStartsOn: 1 }), 'yyyy-MM-dd'),
         };
-      case 'month':
+      case 'month': {
+        const { from, to } = currentMonthRange(profile?.cycle_start_day ?? 1, profile?.cycle_end_day ?? null);
         return {
-          fromDate: format(startOfMonth(today), 'yyyy-MM-dd'),
-          toDate: format(endOfMonth(today), 'yyyy-MM-dd'),
+          fromDate: from,
+          toDate: to,
         };
+      }
       case 'custom':
         return {
           fromDate: customRange.startDate || undefined,

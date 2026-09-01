@@ -4,9 +4,10 @@ import { seedDefaultCategories } from '@/services/categories';
 import { Expense, ExpenseFilters, ExpenseInput, ExpensePage, SortKey } from '@/types';
 import { supabase } from '@/utils/supabase';
 
-// Default selection with only categories (most common join). Bank accounts joined on demand to avoid duplicates.
-const selection = '*, categories(name, icon, color)';
-const selectionWithAccounts = '*, categories(name, icon, color), bank_accounts(name, icon, color, account_type)';
+// Selection always joins categories + bank_accounts so detail views can show
+// the account name. The bank_accounts embed is a many-to-one FK join (returns a
+// single object or null), so it never duplicates expense rows.
+const selection = '*, categories(name, icon, color), bank_accounts(name, icon, color, account_type)';
 
 function applyExpenseFilters(query: any, page = 0, filters?: ExpenseFilters, sort: SortKey = 'date_desc') {
   let q = query;
@@ -73,16 +74,13 @@ export function filterAndSortCachedExpenses(items: Expense[], filters?: ExpenseF
 }
 
 export async function listExpenses(userId: string, page = 0, filters?: ExpenseFilters, sort: SortKey = 'date_desc'): Promise<ExpensePage> {
-  const useAccountsJoin = !!(filters?.bankAccountId && filters.bankAccountId !== 'All');
-  const selectionToUse = useAccountsJoin ? selectionWithAccounts : selection;
-
   // Start the network request and the cache read in parallel — the request
   // must never wait on disk. The cache read (started before the query below
   // resolves) still sees the pre-write cache, which is what the offline merge
   // at the bottom of this function depends on.
   const queryPromise = Promise.resolve(
     applyExpenseFilters(
-      supabase.from('expenses').select(selectionToUse).eq('user_id', userId).is('deleted_at', null),
+      supabase.from('expenses').select(selection).eq('user_id', userId).is('deleted_at', null),
       page,
       filters,
       sort,
@@ -231,6 +229,16 @@ export async function updateExpense(id: string, input: ExpenseInput) {
 export async function softDeleteExpense(id: string) {
   const { error } = await supabase.from('expenses').update({ deleted_at: new Date().toISOString() }).eq('id', id);
   if (error) throw error;
+
+  // Remove immediately from local cache so the APK re-renders instantly
+  // without waiting for the next network fetch.
+  try {
+    const cached = await getCachedExpenses();
+    const updated = cached.filter((e) => e.id !== id);
+    await AsyncStorage.setItem(EXPENSE_CACHE_KEY, JSON.stringify(updated));
+  } catch {
+    // Best-effort cache cleanup — the next fetch will correct it anyway
+  }
 }
 
 function parseCsvLine(line: string) {

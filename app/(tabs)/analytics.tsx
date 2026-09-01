@@ -100,9 +100,11 @@ export default function AnalyticsScreen() {
   const preferredCurrency = profile?.preferred_currency ?? 'NPR';
 
   // Apply Period Filter (Today, This Week, This Month, This Year, All Time)
+  const cycleStartDay = profile?.cycle_start_day ?? 1;
+  const cycleEndDay = profile?.cycle_end_day ?? null;
   const filteredItems = useMemo(
-    () => filterExpensesByPeriod(expenses.items, period),
-    [expenses.items, period],
+    () => filterExpensesByPeriod(expenses.items, period, cycleStartDay, cycleEndDay),
+    [expenses.items, period, cycleStartDay, cycleEndDay],
   );
 
   const expenseItems = useMemo(
@@ -638,10 +640,11 @@ export default function AnalyticsScreen() {
             </View>
           )}
 
-          {/* Segmented Donut Category Breakdown */}
+          {/* Segmented Donut Category Breakdown — flip pill links to Payment Method Breakdown view */}
           <CategoryBreakdown
             expenses={filteredItems}
             targetCurrency={preferredCurrency}
+            paymentMethods={paymentMethodsBreakdown}
           />
 
           {/* Category Budget Limits Progress & Tracking */}

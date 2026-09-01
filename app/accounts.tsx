@@ -211,7 +211,7 @@ export default function AccountsScreen() {
                 TOTAL LIQUID BALANCE
               </Text>
             </View>
-            <PrivacyEyeButton size={26} iconSize={16} />
+            <PrivacyEyeButton size={32} iconSize={19} />
           </View>
 
           <Text

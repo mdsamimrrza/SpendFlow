@@ -81,17 +81,139 @@ export function currentFormattedTime() {
   return `${hour12}:${String(minute).padStart(2, '0')} ${period}`;
 }
 
-export function currentMonthRange() {
+/**
+ * Returns the current reporting month range based on the user's cycle window.
+ * startDay = 1 (default) and endDay = null → calendar month (1st → last day).
+ * startDay 2..28 with endDay = null → cycle starts on that day, ends the day
+ *   before the next cycle starts (dynamic; crosses calendar months as needed).
+ * startDay 2..28 with endDay 1..31 → fixed window that repeats every month;
+ *   endDay < startDay crosses into the next calendar month.
+ * The returned range is always in local YYYY-MM-DD.
+ */
+export function getSafeMonthDate(year: number, month: number, targetDay: number): Date {
+  const maxDaysInMonth = new Date(year, month + 1, 0).getDate();
+  const safeDay = Math.min(Math.max(Number(targetDay) || 1, 1), maxDaysInMonth);
+  return new Date(year, month, safeDay);
+}
+
+/**
+ * Returns the current reporting month range based on the user's cycle window.
+ * startDay = 1 (default) and endDay = null → calendar month (1st → last day).
+ * startDay 2..31 with endDay = null → cycle starts on that day, ends the day
+ *   before the next cycle starts (dynamic; crosses calendar months as needed).
+ * startDay 2..31 with endDay 1..31 → fixed window that repeats every month;
+ *   endDay < startDay crosses into the next calendar month.
+ * The returned range is always in local YYYY-MM-DD.
+ */
+export function currentMonthRange(startDay = 1, endDay: number | null = null) {
   const now = new Date();
+  const day = Math.min(Math.max(Number(startDay) || 1, 1), 31);
+
+  if (day === 1 && (endDay === null || endDay === 1)) {
+    // Fast path: exact calendar month
+    return {
+      from: format(startOfMonth(now), 'yyyy-MM-dd'),
+      to: format(endOfMonth(now), 'yyyy-MM-dd'),
+      previousFrom: format(startOfMonth(subMonths(now, 1)), 'yyyy-MM-dd'),
+      previousTo: format(endOfMonth(subMonths(now, 1)), 'yyyy-MM-dd'),
+    };
+  }
+
+  // Determine the anchor: the cycle start date on/before today
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const thisMonthStart = getSafeMonthDate(now.getFullYear(), now.getMonth(), day);
+  const anchor = today >= thisMonthStart
+    ? thisMonthStart
+    : getSafeMonthDate(now.getFullYear(), now.getMonth() - 1, day);
+
+  let from: Date;
+  let to: Date;
+  let previousFrom: Date;
+  let previousTo: Date;
+
+  if (endDay !== null && endDay >= 1 && endDay <= 31) {
+    // Fixed end day — may be before or after the start in calendar order
+    from = anchor;
+    to = getSafeMonthDate(anchor.getFullYear(), anchor.getMonth(), endDay);
+    if (endDay < day) {
+      // End day is earlier in calendar order → it falls in the next calendar month
+      to = getSafeMonthDate(anchor.getFullYear(), anchor.getMonth() + 1, endDay);
+    }
+    previousFrom = getSafeMonthDate(anchor.getFullYear(), anchor.getMonth() - 1, day);
+    previousTo = getSafeMonthDate(anchor.getFullYear(), anchor.getMonth(), endDay);
+    if (endDay < day) {
+      previousTo = getSafeMonthDate(anchor.getFullYear(), anchor.getMonth() + 1, endDay);
+    }
+  } else {
+    // Dynamic end: day before the next cycle starts
+    from = anchor;
+    const nextCycleStart = getSafeMonthDate(anchor.getFullYear(), anchor.getMonth() + 1, day);
+    to = new Date(nextCycleStart.getFullYear(), nextCycleStart.getMonth(), nextCycleStart.getDate() - 1);
+    previousFrom = getSafeMonthDate(anchor.getFullYear(), anchor.getMonth() - 1, day);
+    previousTo = new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate() - 1);
+  }
+
   return {
-    from: format(startOfMonth(now), 'yyyy-MM-dd'),
-    to: format(endOfMonth(now), 'yyyy-MM-dd'),
-    previousFrom: format(startOfMonth(subMonths(now, 1)), 'yyyy-MM-dd'),
-    previousTo: format(endOfMonth(subMonths(now, 1)), 'yyyy-MM-dd'),
+    from: format(from, 'yyyy-MM-dd'),
+    to: format(to, 'yyyy-MM-dd'),
+    previousFrom: format(previousFrom, 'yyyy-MM-dd'),
+    previousTo: format(previousTo, 'yyyy-MM-dd'),
   };
 }
 
-export function filterExpensesByPeriod(expenses: Expense[], period: PeriodKey): Expense[] {
+/**
+ * Returns detailed cycle metadata for pacing/budget cards.
+ * Returns calendar-month values when startDay=1 and endDay=null/1.
+ */
+export function getCycleMeta(startDay = 1, endDay: number | null = null) {
+  const now = new Date();
+  const day = Math.min(Math.max(Number(startDay) || 1, 1), 31);
+
+  if (day === 1 && (endDay === null || endDay === 1)) {
+    const monthStart = startOfMonth(now);
+    const monthEnd = endOfMonth(now);
+    const daysInCycle = monthEnd.getDate();
+    const daysElapsed = Math.max(now.getDate(), 1);
+    return {
+      daysInCycle,
+      daysElapsed,
+      cycleFrom: format(monthStart, 'yyyy-MM-dd'),
+      cycleTo: format(monthEnd, 'yyyy-MM-dd'),
+      isCalendar: true,
+    };
+  }
+
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const thisMonthStart = getSafeMonthDate(now.getFullYear(), now.getMonth(), day);
+  const anchor = today >= thisMonthStart
+    ? thisMonthStart
+    : getSafeMonthDate(now.getFullYear(), now.getMonth() - 1, day);
+
+  let to: Date;
+  if (endDay !== null && endDay >= 1 && endDay <= 31) {
+    to = getSafeMonthDate(anchor.getFullYear(), anchor.getMonth(), endDay);
+    if (endDay < day) to = getSafeMonthDate(anchor.getFullYear(), anchor.getMonth() + 1, endDay);
+  } else {
+    const nextCycleStart = getSafeMonthDate(anchor.getFullYear(), anchor.getMonth() + 1, day);
+    to = new Date(nextCycleStart.getFullYear(), nextCycleStart.getMonth(), nextCycleStart.getDate() - 1);
+  }
+
+  const daysInCycle = Math.round((to.getTime() - anchor.getTime()) / 86400000) + 1;
+  const daysElapsed = Math.max(
+    Math.round((now.getTime() - anchor.getTime()) / 86400000) + 1,
+    1,
+  );
+
+  return {
+    daysInCycle,
+    daysElapsed,
+    cycleFrom: format(anchor, 'yyyy-MM-dd'),
+    cycleTo: format(to, 'yyyy-MM-dd'),
+    isCalendar: false,
+  };
+}
+
+export function filterExpensesByPeriod(expenses: Expense[], period: PeriodKey, cycleStartDay = 1, cycleEndDay: number | null = null): Expense[] {
   if (!period || period === 'all') return expenses;
 
   const now = new Date();
@@ -116,8 +238,8 @@ export function filterExpensesByPeriod(expenses: Expense[], period: PeriodKey): 
   }
 
   if (period === 'month') {
-    const monthPrefix = format(now, 'yyyy-MM');
-    return expenses.filter((e) => e.date.startsWith(monthPrefix));
+    const range = currentMonthRange(cycleStartDay, cycleEndDay);
+    return expenses.filter((e) => e.date >= range.from && e.date <= range.to);
   }
 
   if (period === 'year') {

@@ -41,10 +41,12 @@ export default function ExportScreen() {
   const expenses = useExpenses(profile?.id);
   const preferredCurrency = profile?.preferred_currency ?? 'NPR';
 
-  // Filter items by chosen period
+  // Filter items by chosen period (month follows the user's salary cycle)
+  const cycleStartDay = profile?.cycle_start_day ?? 1;
+  const cycleEndDay = profile?.cycle_end_day ?? null;
   const filteredItems = useMemo(
-    () => filterExpensesByPeriod(expenses.items, period),
-    [expenses.items, period],
+    () => filterExpensesByPeriod(expenses.items, period, cycleStartDay, cycleEndDay),
+    [expenses.items, period, cycleStartDay, cycleEndDay],
   );
 
   const totalAmount = useMemo(

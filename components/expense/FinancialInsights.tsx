@@ -15,6 +15,7 @@ import {
 } from 'lucide-react-native';
 import { Card } from '@/components/ui/Card';
 import { Text } from '@/components/ui/Text';
+import { CategoryIcon } from '@/components/ui/CategoryIcon';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
@@ -488,7 +489,7 @@ export function FinancialInsights({ expenses, targetCurrency, flowType, onFlipFl
             flex: 1,
             justifyContent: 'center',
             padding: theme.spacing.lg,
-            backgroundColor: 'rgba(0, 0, 0, 0.65)',
+            backgroundColor: 'rgba(0, 0, 0, 0.85)',
           }}
         >
           <Pressable
@@ -501,6 +502,11 @@ export function FinancialInsights({ expenses, targetCurrency, flowType, onFlipFl
               borderColor: theme.colors.border,
               padding: theme.spacing.lg,
               gap: theme.spacing.md,
+              elevation: 30,
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: 12 },
+              shadowOpacity: 0.5,
+              shadowRadius: 24,
             }}
           >
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -534,7 +540,7 @@ export function FinancialInsights({ expenses, targetCurrency, flowType, onFlipFl
                     borderBottomColor: theme.colors.border,
                   }}
                 >
-                  <Text style={{ fontSize: 20 }}>{expense.categories?.icon || '💳'}</Text>
+                  <CategoryIcon name={expense.categories?.icon} size={20} color={theme.colors.primary} />
                   <View style={{ flex: 1, gap: 2 }}>
                     <Text variant="label" numberOfLines={1}>
                       {expense.description || expense.categories?.name || (flowType === 'income' ? 'Income' : 'Expense')}

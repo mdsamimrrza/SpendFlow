@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
+  KeyboardAvoidingView,
   Modal,
   Pressable,
   ScrollView,
@@ -136,10 +137,11 @@ export function CategoryManageModal({
     <>
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={[styles.backdrop, { backgroundColor: 'rgba(0,0,0,0.65)' }]}>
+        <KeyboardAvoidingView behavior="padding" style={{ width: '100%' }}>
         <Card
           style={{
             width: '100%',
-            maxHeight: '85%',
+            maxHeight: '92%',
             borderRadius: 24,
             padding: 20,
             gap: 16,
@@ -158,7 +160,7 @@ export function CategoryManageModal({
             </Pressable>
           </View>
 
-          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: 14 }}>
+          <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" nestedScrollEnabled style={{ flexShrink: 1 }} contentContainerStyle={{ gap: 14 }}>
             {/* Category Type Toggle */}
             <View style={{ flexDirection: 'row', gap: 8, backgroundColor: theme.colors.surfaceElevated, padding: 4, borderRadius: theme.radius.md }}>
               <Pressable
@@ -285,9 +287,10 @@ export function CategoryManageModal({
                 />
               </View>
             )}
+          </ScrollView>
 
-            {/* Action Buttons */}
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
+          {/* Action Buttons — pinned below the form, always visible without scrolling */}
+          <View style={{ flexDirection: 'row', gap: 10 }}>
               {categoryToEdit && (
                 <Pressable
                   onPress={handleDelete}
@@ -312,9 +315,9 @@ export function CategoryManageModal({
                 onPress={handleSave}
                 style={{ flex: 1, height: 48, borderRadius: theme.radius.md }}
               />
-            </View>
-          </ScrollView>
+          </View>
         </Card>
+        </KeyboardAvoidingView>
       </View>
       <ConfirmDialog
         visible={deleteConfirmOpen}

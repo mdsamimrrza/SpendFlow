@@ -86,6 +86,7 @@ function RootNavigator() {
         <Stack.Screen name="expense/[id]" />
         <Stack.Screen name="export" options={{ presentation: 'modal' }} />
         <Stack.Screen name="bullion" />
+        <Stack.Screen name="profit-loss" options={{ presentation: 'modal' }} />
       </Stack>
       <AnimatedSplashScreen visible={isLoading} />
       <BiometricLockOverlay />

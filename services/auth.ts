@@ -5,6 +5,7 @@ import * as WebBrowser from 'expo-web-browser';
 import { UserProfile } from '@/types';
 import { supabase } from '@/utils/supabase';
 import { seedDefaultCategories } from './categories';
+import { ensureUserSettingsBaseline, recordUserSettingsChange } from './settingsHistory';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -202,6 +203,27 @@ export async function ensureProfile(): Promise<UserProfile> {
     await AsyncStorage.setItem(`@spendflow_monthly_budget_${user.id}`, String(finalBudget)).catch(() => {});
   }
 
+  // ── Month-cycle window (local storage + cloud metadata fallback) ──
+  const cycleKey = `@spendflow_cycle_start_day_${user.id}`;
+  const cycleEndKey = `@spendflow_cycle_end_day_${user.id}`;
+  const localCycleRaw = await AsyncStorage.getItem(cycleKey).catch(() => null);
+  const localCycleEndRaw = await AsyncStorage.getItem(cycleEndKey).catch(() => null);
+  const metaCycleStart = user.user_metadata?.cycle_start_day;
+  const metaCycleEnd = user.user_metadata?.cycle_end_day;
+  const dbCycle = dbProfile?.cycle_start_day ?? metaCycleStart;
+  const cycleStartDay = Number(localCycleRaw) > 0
+    ? Number(localCycleRaw)
+    : Number(dbCycle) > 0
+    ? Number(dbCycle)
+    : 1;
+  const localCycleEnd = Number(localCycleEndRaw);
+  const dbCycleEnd = Number(dbProfile?.cycle_end_day ?? metaCycleEnd);
+  const cycleEndDay = localCycleEnd >= 1 && localCycleEnd <= 31
+    ? localCycleEnd
+    : dbCycleEnd >= 1 && dbCycleEnd <= 31
+    ? dbCycleEnd
+    : null;
+
   const result: UserProfile = {
     id: user.id,
     email: user.email,
@@ -210,6 +232,8 @@ export async function ensureProfile(): Promise<UserProfile> {
     preferred_currency: localCurrency ?? cachedProfile?.preferred_currency ?? dbProfile?.preferred_currency ?? (user.user_metadata?.preferred_currency as string | undefined) ?? 'NPR',
     theme_preference: dbProfile?.theme_preference ?? cachedProfile?.theme_preference ?? (user.user_metadata?.theme_preference as any) ?? 'system',
     monthly_budget: finalBudget,
+    cycle_start_day: cycleStartDay,
+    cycle_end_day: cycleEndDay,
     created_at: dbProfile?.created_at ?? new Date().toISOString(),
     updated_at: dbProfile?.updated_at ?? new Date().toISOString(),
   };
@@ -217,10 +241,18 @@ export async function ensureProfile(): Promise<UserProfile> {
   // Cache latest profile
   await AsyncStorage.setItem('@spendflow_cached_profile', JSON.stringify(result)).catch(() => {});
 
+  // Seed the append-only settings history once so past dates always resolve
+  // (best-effort: history failure must never block profile loading)
+  void ensureUserSettingsBaseline(user.id, {
+    monthly_budget: finalBudget ?? null,
+    cycle_start_day: cycleStartDay,
+    cycle_end_day: cycleEndDay,
+  }).catch(() => undefined);
+
   return result;
 }
 
-export async function updateProfile(input: Partial<Pick<UserProfile, 'display_name' | 'preferred_currency' | 'theme_preference' | 'monthly_budget'>>): Promise<UserProfile> {
+export async function updateProfile(input: Partial<Pick<UserProfile, 'display_name' | 'preferred_currency' | 'theme_preference' | 'monthly_budget' | 'cycle_start_day' | 'cycle_end_day'>>): Promise<UserProfile> {
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -234,6 +266,31 @@ export async function updateProfile(input: Partial<Pick<UserProfile, 'display_na
     }
   }
 
+  // ── Month-cycle window is device-local (start 1–31; end 1–31 or null = dynamic last day) ──
+  const cycleKey = `@spendflow_cycle_start_day_${user.id}`;
+  const cycleEndKey = `@spendflow_cycle_end_day_${user.id}`;
+  if (input.cycle_start_day !== undefined) {
+    const day = Number(input.cycle_start_day);
+    if (!day || day < 2 || day > 31) {
+      await AsyncStorage.removeItem(cycleKey).catch(() => {});
+    } else {
+      await AsyncStorage.setItem(cycleKey, String(day)).catch(() => {});
+    }
+  }
+  if (input.cycle_end_day !== undefined) {
+    const end = input.cycle_end_day;
+    if (end == null || !(end >= 1 && end <= 31)) {
+      await AsyncStorage.removeItem(cycleEndKey).catch(() => {});
+    } else {
+      await AsyncStorage.setItem(cycleEndKey, String(end)).catch(() => {});
+    }
+  }
+  const storedStartRaw = await AsyncStorage.getItem(cycleKey).catch(() => null);
+  const storedEndRaw = await AsyncStorage.getItem(cycleEndKey).catch(() => null);
+  const resolvedCycle = Number(storedStartRaw) >= 2 && Number(storedStartRaw) <= 31 ? Number(storedStartRaw) : 1;
+  const resolvedCycleEndRaw = Number(storedEndRaw);
+  const resolvedCycleEnd = resolvedCycleEndRaw >= 1 && resolvedCycleEndRaw <= 31 ? resolvedCycleEndRaw : null;
+
   // ── Currency is device-local — save to local key, never sync to Supabase ──
   const localCurrencyKey = `@spendflow_currency_${user.id}`;
   if (input.preferred_currency !== undefined) {
@@ -243,18 +300,47 @@ export async function updateProfile(input: Partial<Pick<UserProfile, 'display_na
     ?? (await AsyncStorage.getItem(localCurrencyKey).catch(() => null))
     ?? 'NPR';
 
-  // Strip preferred_currency from the Supabase update — it's device-only
+  // ── Sync cycle window and currency to Supabase Cloud Auth Metadata ──
+  await supabase.auth.updateUser({
+    data: {
+      cycle_start_day: resolvedCycle,
+      cycle_end_day: resolvedCycleEnd,
+      preferred_currency: resolvedCurrency,
+    },
+  }).catch(() => undefined);
+
+  // cycle_start_day and cycle_end_day now also go to the DB (not stripped)
   const { preferred_currency: _stripCurrency, ...supabaseInput } = input;
 
   let dbProfile: UserProfile | null = null;
   try {
     const { data, error } = await supabase
       .from('users')
-      .update({ ...supabaseInput, updated_at: new Date().toISOString() })
+      .update({
+        ...supabaseInput,
+        cycle_start_day: resolvedCycle,
+        cycle_end_day: resolvedCycleEnd,
+        updated_at: new Date().toISOString(),
+      })
       .eq('id', user.id)
       .select('*')
       .single();
-    if (!error && data) dbProfile = data as UserProfile;
+    if (!error && data) {
+      dbProfile = data as UserProfile;
+      // Append-only history so past reports can reconstruct the budget/cycle
+      // values that were active at the time (deduped against the latest row).
+      if (
+        input.monthly_budget !== undefined ||
+        input.cycle_start_day !== undefined ||
+        input.cycle_end_day !== undefined
+      ) {
+        void recordUserSettingsChange(user.id, {
+          monthly_budget: dbProfile.monthly_budget ?? null,
+          cycle_start_day: resolvedCycle,
+          cycle_end_day: resolvedCycleEnd,
+        }).catch(() => undefined);
+      }
+    }
   } catch {
     // Database table column fallback
   }
@@ -270,6 +356,8 @@ export async function updateProfile(input: Partial<Pick<UserProfile, 'display_na
     preferred_currency: resolvedCurrency,
     theme_preference: dbProfile?.theme_preference ?? input.theme_preference ?? 'system',
     monthly_budget: dbProfile?.monthly_budget ?? input.monthly_budget ?? localBudget,
+    cycle_start_day: resolvedCycle,
+    cycle_end_day: resolvedCycleEnd,
     created_at: dbProfile?.created_at ?? new Date().toISOString(),
     updated_at: dbProfile?.updated_at ?? new Date().toISOString(),
   };

@@ -10,7 +10,7 @@ import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
 import { useTheme } from '@/hooks/useTheme';
 import { Expense } from '@/types';
-import { formatMoney } from '@/utils/format';
+import { formatMoney, getCycleMeta } from '@/utils/format';
 
 interface BudgetAnalyticsCardProps {
   expenses: Expense[];
@@ -31,13 +31,24 @@ export function BudgetAnalyticsCard({ expenses, targetCurrency, flowType }: Budg
 
   const currency = targetCurrency ?? profile?.preferred_currency ?? 'NPR';
   const now = new Date();
-  const currentMonthStr = now.toISOString().slice(0, 7);
-  const currentDay = now.getDate();
-  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  // Cycle-aware month window (default: 1st → last day of month): the pacing
+  // window and the month slice follow the user's budget cycle so month-end
+  // salaries stay in the new cycle instead of vanishing when the month rolls.
+  const cycleStartDay = Math.min(Math.max(Number(profile?.cycle_start_day) || 1, 1), 31);
+  const cycleEndDayRaw = Number(profile?.cycle_end_day);
+  const cycleEndDay = cycleEndDayRaw >= 1 && cycleEndDayRaw <= 31 ? cycleEndDayRaw : null;
+  const cycleMeta = useMemo(
+    () => getCycleMeta(cycleStartDay, cycleEndDay),
+    [cycleStartDay, cycleEndDay],
+  );
+  const cycleFromStr = cycleMeta.cycleFrom;
+  const cycleToStr = cycleMeta.cycleTo;
+  const daysElapsed = cycleMeta.daysElapsed;
+  const daysInCycle = cycleMeta.daysInCycle;
 
   const currentMonthItems = useMemo(
-    () => expenses.filter((expense) => expense.date.startsWith(currentMonthStr)),
-    [expenses, currentMonthStr],
+    () => expenses.filter((expense) => expense.date >= cycleFromStr && expense.date <= cycleToStr),
+    [expenses, cycleFromStr, cycleToStr],
   );
   const totalMonthlySpend = useMemo(
     () => currentMonthItems
@@ -56,13 +67,13 @@ export function BudgetAnalyticsCard({ expenses, targetCurrency, flowType }: Budg
   const isBudgetSet = monthlyBudget > 0;
 
   // Daily budget calculations
-  const dailyAllowance = isBudgetSet ? monthlyBudget / daysInMonth : 0;
-  const actualDailyPace = totalMonthlySpend / Math.max(currentDay, 1);
-  const projectedEndMonthTotal = actualDailyPace * daysInMonth;
+  const dailyAllowance = isBudgetSet ? monthlyBudget / daysInCycle : 0;
+  const actualDailyPace = totalMonthlySpend / daysElapsed;
+  const projectedEndMonthTotal = actualDailyPace * daysInCycle;
   const isOverBudget = isBudgetSet && totalMonthlySpend > monthlyBudget;
   const isHighBurnRate = isBudgetSet && actualDailyPace > dailyAllowance;
-  const incomeDailyPace = totalMonthlyIncome / Math.max(currentDay, 1);
-  const projectedMonthlyIncome = incomeDailyPace * daysInMonth;
+  const incomeDailyPace = totalMonthlyIncome / daysElapsed;
+  const projectedMonthlyIncome = incomeDailyPace * daysInCycle;
   const isIncome = flowType === 'income';
   const flowFlipStyle = {
     opacity: flowFlipAnim,

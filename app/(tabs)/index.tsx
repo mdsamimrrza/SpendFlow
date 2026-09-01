@@ -20,7 +20,7 @@ import { useExpenses } from '@/hooks/useExpenses';
 import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
 import { useTheme } from '@/hooks/useTheme';
-import { currentMonthRange, isoDate, sumExpenses } from '@/utils/format';
+import { currentMonthRange, getCycleMeta, isoDate, sumExpenses } from '@/utils/format';
 import { CURRENCY_DETAILS } from '@/constants/app';
 
 export default function HomeScreen() {
@@ -30,7 +30,7 @@ export default function HomeScreen() {
   const theme = useTheme();
   const router = useRouter();
   const { rates } = useExchangeRates();
-  const month = currentMonthRange();
+  const month = currentMonthRange(profile?.cycle_start_day ?? 1, profile?.cycle_end_day ?? null);
   const expenses = useExpenses(profile?.id ?? session?.user?.id, {
     fromDate: month.previousFrom,
     toDate: month.to,

@@ -313,20 +313,27 @@ export function ExpenseDetailModal({
                   gap: 12,
                 }}
               >
-                {/* Description */}
+                {/* Description Row */}
                 {expense.description ? (
-                  <View style={{ gap: 3 }}>
-                    <Text variant="caption" muted style={{ fontSize: 11, fontWeight: '600', textTransform: 'uppercase' }}>
-                      {t('expense_description') || 'Description'}
-                    </Text>
-                    <Text style={{ fontSize: 15, fontWeight: '700', color: theme.colors.text }}>
-                      {expense.description}
-                    </Text>
-                  </View>
-                ) : null}
-
-                {expense.description ? (
-                  <View style={{ height: 1, backgroundColor: theme.colors.border, opacity: 0.6 }} />
+                  <>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                        <Tag size={16} color={theme.colors.textMuted} />
+                        <Text variant="caption" muted style={{ fontSize: 12 }}>
+                          {t('expense_description') || 'Description'}
+                        </Text>
+                      </View>
+                      <Text
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.75}
+                        style={{ flexShrink: 1, textAlign: 'right', fontSize: 13, fontWeight: '700', color: theme.colors.text }}
+                      >
+                        {expense.description}
+                      </Text>
+                    </View>
+                    <View style={{ height: 1, backgroundColor: theme.colors.border, opacity: 0.6 }} />
+                  </>
                 ) : null}
 
                 {/* Date & Time Row */}
@@ -344,31 +351,43 @@ export function ExpenseDetailModal({
 
                 <View style={{ height: 1, backgroundColor: theme.colors.border, opacity: 0.6 }} />
 
-                {/* Payment Method / Account Row */}
+                {/* Account Row (Paid From / Received To) */}
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    <CreditCard size={16} color={theme.colors.textMuted} />
+                    <Wallet size={16} color={theme.colors.textMuted} />
                     <Text variant="caption" muted style={{ fontSize: 12 }}>
                       {isIncome ? 'Received To' : 'Paid From'}
                     </Text>
                   </View>
-                  <View
-                    style={{
-                      paddingHorizontal: 8,
-                      paddingVertical: 3,
-                      borderRadius: 6,
-                      backgroundColor: theme.colors.surface,
-                      borderWidth: 1,
-                      borderColor: theme.colors.border,
-                    }}
+                  <Text
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.75}
+                    style={{ flexShrink: 1, textAlign: 'right', fontSize: 13, fontWeight: '700', color: theme.colors.text }}
                   >
-                    <Text style={{ fontSize: 12.5, fontWeight: '700', color: theme.colors.text }}>
-                      {expense.bank_accounts?.name
-                        ? expense.bank_accounts.name
-                        : expense.payment_method}
+                    {expense.bank_accounts?.name || expense.payment_method || 'Cash'}
+                  </Text>
+                </View>
+
+                {/* Payment Channel Row (UPI / Card / Cash) — only when an account is linked */}
+                {expense.bank_accounts?.name ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                      <CreditCard size={16} color={theme.colors.textMuted} />
+                      <Text variant="caption" muted style={{ fontSize: 12 }}>
+                        Payment Channel
+                      </Text>
+                    </View>
+                    <Text
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.75}
+                      style={{ flexShrink: 1, textAlign: 'right', fontSize: 13, fontWeight: '700', color: theme.colors.text }}
+                    >
+                      {expense.payment_method || 'Cash'}
                     </Text>
                   </View>
-                </View>
+                ) : null}
 
                 {/* Notes (if any) */}
                 {expense.notes ? (

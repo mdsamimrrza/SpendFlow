@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DEFAULT_CATEGORIES, DEFAULT_INCOME_CATEGORIES } from '@/constants/categories';
 import { Category, TransactionType } from '@/types';
 import { supabase } from '@/utils/supabase';
+import { recordCategoryBudgetChange } from './settingsHistory';
 
 const CATEGORY_CACHE_PREFIX = '@spendflow_categories_';
 const INCOME_CATEGORY_NAMES = new Set(DEFAULT_INCOME_CATEGORIES.map((c) => c.name.toLowerCase()));
@@ -285,6 +286,11 @@ export async function updateCategory(
     type: resolveCategoryType(updatedData.name, updatedData.type ?? input.type),
   };
 
+  // Append-only budget history so past cycles show the limit active at the time
+  if (userId && input.budget_monthly !== undefined) {
+    void recordCategoryBudgetChange(userId, categoryId, input.budget_monthly).catch(() => undefined);
+  }
+
   if (userId) {
     await AsyncStorage.removeItem(`${CATEGORY_CACHE_PREFIX}${userId}`).catch(() => {});
   }
@@ -356,6 +362,12 @@ export async function updateCategoryBudget(categoryId: string, budgetMonthly: nu
     .single();
 
   if (error) throw error;
+
+  // Append-only budget history so past cycles show the limit active at the time
+  if (userId) {
+    void recordCategoryBudgetChange(userId, categoryId, budgetMonthly).catch(() => undefined);
+  }
+
   if (userId) {
     await AsyncStorage.removeItem(`${CATEGORY_CACHE_PREFIX}${userId}`).catch(() => {});
   }

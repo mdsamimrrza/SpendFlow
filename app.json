@@ -15,7 +15,7 @@
     "android": {
       "package": "com.samimrrza.spendflow",
       "versionCode": 2,
-      "softwareKeyboardLayoutMode": "pan",
+      "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
         "backgroundColor": "#F2EFE9",
         "foregroundImage": "./assets/android-icon-foreground.png"

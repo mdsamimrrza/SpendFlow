@@ -27,7 +27,6 @@ import {
   Info,
   KeyRound,
   Landmark,
-  Layers,
   LayoutGrid,
   Lock,
   LogOut,
@@ -41,6 +40,7 @@ import {
   Tag,
   Target,
   Trash2,
+  TrendingUp,
   Upload,
   User,
   Wallet,
@@ -66,7 +66,6 @@ import {
 import { listCategories } from '@/services/categories';
 import { resetBudgetAlertHistory } from '@/services/notifications';
 import { Category, ThemePreference } from '@/types';
-import { formatMoney } from '@/utils/format';
 
 export default function SettingsScreen() {
   const { profile, refreshProfile } = useAuth();
@@ -81,7 +80,6 @@ export default function SettingsScreen() {
 
   // Modals state
   const [currencyModalOpen, setCurrencyModalOpen] = useState(false);
-  const [budgetModalOpen, setBudgetModalOpen] = useState(false);
   const [editProfileModalOpen, setEditProfileModalOpen] = useState(false);
   const [appearanceModalOpen, setAppearanceModalOpen] = useState(false);
   const [languageModalOpen, setLanguageModalOpen] = useState(false);
@@ -100,11 +98,8 @@ export default function SettingsScreen() {
   // Form inputs
   const [nameInput, setNameInput] = useState('');
   const [savingName, setSavingName] = useState(false);
-  const [budgetInput, setBudgetInput] = useState('');
-  const [savingBudget, setSavingBudget] = useState(false);
 
   const preferredCurrency = profile?.preferred_currency ?? 'NPR';
-  const monthlyBudget = profile?.monthly_budget ? Number(profile.monthly_budget) : 0;
   const displayName = profile?.display_name || profile?.email?.split('@')[0] || 'Samim Reza';
   const userEmail = profile?.email || 'samim.reza@example.com';
 
@@ -140,12 +135,6 @@ export default function SettingsScreen() {
     }
   }, [profile?.display_name]);
 
-  useEffect(() => {
-    if (profile?.monthly_budget !== undefined) {
-      setBudgetInput(profile.monthly_budget ? String(profile.monthly_budget) : '');
-    }
-  }, [profile?.monthly_budget]);
-
   const handleRefresh = async () => {
     setRefreshing(true);
     try {
@@ -173,21 +162,6 @@ export default function SettingsScreen() {
     }
   }
 
-  async function handleSaveBudget() {
-    setSavingBudget(true);
-    try {
-      const numeric = budgetInput.trim() ? Number(budgetInput.replace(/[^0-9.]/g, '')) : null;
-      await updateProfile({ monthly_budget: numeric });
-      await resetBudgetAlertHistory();
-      await refreshProfile();
-      setBudgetModalOpen(false);
-    } catch (err) {
-      Alert.alert(t('common_error'), err instanceof Error ? err.message : t('common_error'));
-    } finally {
-      setSavingBudget(false);
-    }
-  }
-
   function handleSignOut() {
     setSignOutModalOpen(true);
   }
@@ -195,7 +169,7 @@ export default function SettingsScreen() {
   return (
     <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: theme.colors.background }}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
     >
       <ScrollView
@@ -394,9 +368,9 @@ export default function SettingsScreen() {
           {/* Dotted Divider */}
           <View style={{ height: 1, backgroundColor: theme.colors.border, marginHorizontal: 16, opacity: 0.6 }} />
 
-          {/* Item 2: Monthly Budget */}
+          {/* Item 2.3: Profit & Loss report */}
           <Pressable
-            onPress={() => setBudgetModalOpen(true)}
+            onPress={() => router.push('/profit-loss' as any)}
             style={({ pressed }) => ({
               flexDirection: 'row',
               alignItems: 'center',
@@ -408,7 +382,7 @@ export default function SettingsScreen() {
                 : 'transparent',
             })}
           >
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, flex: 1 }}>
               <View
                 style={{
                   width: 38,
@@ -419,19 +393,16 @@ export default function SettingsScreen() {
                   justifyContent: 'center',
                 }}
               >
-                <Layers size={19} color={theme.colors.primary} />
+                <TrendingUp size={19} color={theme.colors.primary} />
               </View>
-              <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
-                Monthly budget
-              </Text>
+              <View style={{ flex: 1, paddingRight: 8 }}>
+                <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
+                  {t('pl_title') || 'Budget & Reports'}
+                </Text>
+              </View>
             </View>
 
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Text style={{ fontSize: 14, color: theme.colors.textMuted, fontWeight: '500' }}>
-                {monthlyBudget > 0 ? formatMoney(monthlyBudget, preferredCurrency) : 'Set limit'}
-              </Text>
-              <ChevronRight size={16} color={theme.colors.textMuted} />
-            </View>
+            <ChevronRight size={16} color={theme.colors.textMuted} />
           </Pressable>
 
           {/* Dotted Divider */}
@@ -856,157 +827,6 @@ export default function SettingsScreen() {
       {/* ══════════════════════════════════════════════
           MODALS & BOTTOM SHEETS
          ══════════════════════════════════════════════ */}
-
-      {/* ── 1. MONTHLY BUDGET MODAL ── */}
-      <Modal
-        visible={budgetModalOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setBudgetModalOpen(false)}
-      >
-        <Pressable
-          onPress={() => setBudgetModalOpen(false)}
-          style={{
-            flex: 1,
-            backgroundColor: 'rgba(0,0,0,0.6)',
-            justifyContent: 'center',
-            alignItems: 'center',
-            padding: 24,
-          }}
-        >
-          <Pressable
-            onPress={(e) => e.stopPropagation()}
-            style={{
-              width: '100%',
-              maxWidth: 360,
-              backgroundColor: theme.colors.surface,
-              borderRadius: 20,
-              padding: 20,
-              gap: 16,
-              borderWidth: 1,
-              borderColor: theme.colors.border,
-            }}
-          >
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                <View
-                  style={{
-                    width: 36,
-                    height: 36,
-                    borderRadius: 10,
-                    backgroundColor: theme.isDark ? 'rgba(129, 140, 248, 0.15)' : '#DCE9E3',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                >
-                  <Layers size={18} color={theme.colors.primary} />
-                </View>
-                <View>
-                  <Text variant="h3" style={{ fontWeight: '800', fontSize: 16 }}>
-                    Monthly Budget
-                  </Text>
-                  <Text variant="caption" muted style={{ fontSize: 11 }}>
-                    Set your maximum monthly ceiling
-                  </Text>
-                </View>
-              </View>
-
-              <Pressable
-                onPress={() => setBudgetModalOpen(false)}
-                style={{
-                  width: 28,
-                  height: 28,
-                  borderRadius: 14,
-                  backgroundColor: theme.colors.surfaceElevated,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
-                <X size={15} color={theme.colors.text} />
-              </Pressable>
-            </View>
-
-            <View style={{ gap: 8 }}>
-              <Text variant="label" style={{ fontSize: 12 }}>
-                Monthly Amount ({currentCurrencyObj.symbol})
-              </Text>
-              <TextInput
-                value={budgetInput}
-                onChangeText={(t) => setBudgetInput(t.replace(/[^0-9.]/g, ''))}
-                placeholder="e.g. 14000"
-                placeholderTextColor={theme.colors.textMuted}
-                keyboardType="numeric"
-                style={{
-                  height: 48,
-                  borderRadius: theme.radius.md,
-                  borderWidth: 1.5,
-                  borderColor: theme.colors.border,
-                  backgroundColor: theme.colors.surfaceElevated,
-                  paddingHorizontal: 14,
-                  fontSize: 16,
-                  fontWeight: '700',
-                  color: theme.colors.text,
-                }}
-              />
-            </View>
-
-            {/* Preset Amount Chips */}
-            <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
-              {[5000, 10000, 14000, 25000, 50000].map((preset) => (
-                <Pressable
-                  key={preset}
-                  onPress={() => setBudgetInput(String(preset))}
-                  style={{
-                    paddingHorizontal: 10,
-                    paddingVertical: 5,
-                    borderRadius: theme.radius.full,
-                    backgroundColor: theme.colors.surfaceElevated,
-                    borderWidth: 1,
-                    borderColor: theme.colors.border,
-                  }}
-                >
-                  <Text variant="caption" style={{ fontWeight: '700' }}>
-                    {currentCurrencyObj.symbol}{preset.toLocaleString()}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
-
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 4 }}>
-              <Pressable
-                onPress={() => setBudgetModalOpen(false)}
-                style={{
-                  flex: 1,
-                  paddingVertical: 12,
-                  borderRadius: theme.radius.md,
-                  backgroundColor: theme.colors.surfaceElevated,
-                  borderWidth: 1,
-                  borderColor: theme.colors.border,
-                  alignItems: 'center',
-                }}
-              >
-                <Text style={{ fontWeight: '700', color: theme.colors.text }}>Cancel</Text>
-              </Pressable>
-
-              <Pressable
-                onPress={handleSaveBudget}
-                disabled={savingBudget}
-                style={{
-                  flex: 1,
-                  paddingVertical: 12,
-                  borderRadius: theme.radius.md,
-                  backgroundColor: theme.colors.primary,
-                  alignItems: 'center',
-                }}
-              >
-                <Text style={{ fontWeight: '800', color: '#FFFFFF' }}>
-                  {savingBudget ? 'Saving...' : 'Save Limit'}
-                </Text>
-              </Pressable>
-            </View>
-          </Pressable>
-        </Pressable>
-      </Modal>
 
       {/* ── 2. EDIT PROFILE NAME MODAL ── */}
       <Modal

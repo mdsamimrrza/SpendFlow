@@ -12,6 +12,15 @@ export interface UserProfile {
   preferred_currency: string;
   theme_preference: ThemePreference;
   monthly_budget?: number | null;
+  /** Day the user's reporting month starts on (1–28). 1 = calendar month. */
+  cycle_start_day?: number | null;
+  /**
+   * Day the reporting month ends on (1–31, inclusive). null = "last day of
+   * cycle" (dynamic: day before the next cycle starts — calendar month when
+   * start is 1). An end day earlier than the start day crosses into the next
+   * calendar month (e.g. start 28 / end 27 → 28th → 27th).
+   */
+  cycle_end_day?: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -158,4 +167,19 @@ export interface OfflineOperation {
   payload: ExpenseInput & { id?: string };
   createdAt: string;
   localId?: string; // Local temp ID used before server sync, for cleanup
+}
+
+/** One segment of the user's budget / paycheck-cycle settings, effective from a date. */
+export interface UserSettingsPeriod {
+  effective_from: string; // YYYY-MM-DD
+  monthly_budget: number | null;
+  cycle_start_day: number;
+  cycle_end_day: number | null;
+}
+
+/** One segment of a category's monthly budget, effective from a date. */
+export interface CategoryBudgetPeriod {
+  category_id: string;
+  effective_from: string; // YYYY-MM-DD
+  budget_monthly: number | null;
 }
