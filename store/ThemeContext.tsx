@@ -32,7 +32,7 @@ export function ThemeProvider({ children }: PropsWithChildren) {
       if (auth?.profile) {
         try {
           await updateProfile({ theme_preference: pref });
-          await auth.refreshProfile();
+          await auth.refreshProfile(true);
         } catch {
           // offline fallback
         }

@@ -30,7 +30,8 @@ export async function seedDefaultCategories(userId: string): Promise<Category[]>
       return enriched;
     }
 
-    // 2. Insert default categories with valid database IDs
+    // 2. Insert default categories with valid database IDs. Single attempt:
+    //    on failure the flow falls through to the cache/template fallback below.
     const rowsWithType = DEFAULT_CATEGORIES.map((category) => ({
       user_id: userId,
       name: category.name,
@@ -40,24 +41,8 @@ export async function seedDefaultCategories(userId: string): Promise<Category[]>
       type: (category as any).type || 'expense',
     }));
 
-    const rowsWithoutType = DEFAULT_CATEGORIES.map((category) => ({
-      user_id: userId,
-      name: category.name,
-      icon: category.icon,
-      color: category.color,
-      is_custom: false,
-    }));
-
-    let inserted: any[] | null = null;
     const res1 = await supabase.from('categories').insert(rowsWithType).select('*').order('created_at', { ascending: true });
-    if (!res1.error && res1.data) {
-      inserted = res1.data;
-    } else {
-      const res2 = await supabase.from('categories').insert(rowsWithoutType).select('*').order('created_at', { ascending: true });
-      if (!res2.error && res2.data) {
-        inserted = res2.data;
-      }
-    }
+    const inserted = res1.error ? null : res1.data;
 
     if (inserted && inserted.length > 0) {
       const enriched = inserted.map((c: any) => ({
@@ -140,6 +125,23 @@ export async function listCategories(userId: string): Promise<Category[]> {
   return await seedDefaultCategories(userId);
 }
 
+/**
+ * Single-category lookup (e.g. for the per-save notification budget check).
+ * Returns null on error or when the category does not exist — callers treat
+ * null as "no category data" exactly like the previous full-list find-miss.
+ */
+export async function getCategoryById(categoryId: string): Promise<Category | null> {
+  if (!categoryId) return null;
+  const { data, error } = await supabase
+    .from('categories')
+    .select('*')
+    .eq('id', categoryId)
+    .maybeSingle();
+  if (error || !data) return null;
+  const category = data as Category;
+  return { ...category, type: resolveCategoryType(category.name, category.type) };
+}
+
 export async function createCategory(
   userId: string,
   input: {
@@ -177,32 +179,19 @@ export async function createCategory(
     budget_monthly: input.budget_monthly ?? null,
   };
 
-  let savedData: any = null;
-
-  // 1. Attempt insert with type field
-  const res1 = await supabase
+  // Single insert attempt (the legacy no-type retry was removed after the
+  // production categories.type column was verified to exist).
+  const { data: savedData, error: insertError } = await supabase
     .from('categories')
     .insert({ ...baseRow, type: categoryType })
     .select('*')
     .single();
 
-  if (!res1.error && res1.data) {
-    savedData = res1.data;
-  } else {
-    // 2. Fallback to insert without type column (if Supabase schema doesn't have type column yet)
-    const res2 = await supabase
-      .from('categories')
-      .insert(baseRow)
-      .select('*')
-      .single();
-
-    if (res2.error) {
-      if (res2.error.code === '23505') {
-        throw new Error('A category with this name already exists.');
-      }
-      throw res2.error;
+  if (insertError) {
+    if (insertError.code === '23505') {
+      throw new Error('A category with this name already exists.');
     }
-    savedData = { ...res2.data, type: categoryType };
+    throw insertError;
   }
 
   const finalCategory: Category = {
@@ -253,7 +242,8 @@ export async function updateCategory(
 
   let updatedData: any = null;
 
-  // 1. Try update with type
+  // Single update attempt (the legacy no-type retry was removed after the
+  // production categories.type column was verified to exist).
   const res1 = await supabase
     .from('categories')
     .update({ ...updates, type: input.type })
@@ -261,25 +251,13 @@ export async function updateCategory(
     .select('*')
     .single();
 
-  if (!res1.error && res1.data) {
-    updatedData = res1.data;
-  } else {
-    // 2. Fallback update without type
-    const res2 = await supabase
-      .from('categories')
-      .update(updates)
-      .eq('id', categoryId)
-      .select('*')
-      .single();
-
-    if (res2.error) {
-      if (res2.error.code === '23505') {
-        throw new Error('A category with this name already exists.');
-      }
-      throw res2.error;
+  if (res1.error) {
+    if (res1.error.code === '23505') {
+      throw new Error('A category with this name already exists.');
     }
-    updatedData = { ...res2.data, type: input.type };
+    throw res1.error;
   }
+  updatedData = res1.data;
 
   const finalCategory: Category = {
     ...updatedData,

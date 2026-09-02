@@ -1237,7 +1237,7 @@ export default function HistoryScreen() {
           <RefreshControl
             refreshing={expenses.refreshing}
             onRefresh={() => {
-              void refreshProfile();
+              void refreshProfile(true);
               void expenses.refresh(true);
             }}
             colors={[theme.colors.primary]}

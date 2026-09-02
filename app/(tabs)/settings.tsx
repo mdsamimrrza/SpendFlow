@@ -141,7 +141,7 @@ export default function SettingsScreen() {
   const handleRefresh = async () => {
     setRefreshing(true);
     try {
-      await refreshProfile();
+      await refreshProfile(true);
       if (profile?.id) {
         const cats = await listCategories(profile.id);
         setCategories(cats);
@@ -157,7 +157,7 @@ export default function SettingsScreen() {
     setNameSuccessMsg(null);
     try {
       await updateProfile({ display_name: nameInput.trim() });
-      await refreshProfile();
+      await refreshProfile(true);
       setEditProfileModalOpen(false);
 
       // Tactile Haptic Confirmation
@@ -1077,7 +1077,7 @@ export default function SettingsScreen() {
                     key={cur.code}
                     onPress={async () => {
                       await updateProfile({ preferred_currency: cur.code as any });
-                      await refreshProfile();
+                      await refreshProfile(true);
                       setCurrencyModalOpen(false);
                     }}
                     style={{

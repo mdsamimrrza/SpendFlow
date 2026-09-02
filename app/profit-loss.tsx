@@ -290,7 +290,7 @@ export default function ProfitLossScreen() {
     setCycleSuccessMsg(null);
     try {
       await updateProfile({ cycle_start_day: startDay, cycle_end_day: endDay });
-      await refreshProfile();
+      await refreshProfile(true);
 
       // Tactile Haptic Confirmation
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
@@ -364,7 +364,7 @@ export default function ProfitLossScreen() {
       const numeric = budgetInput.trim() ? Number(budgetInput.replace(/[^0-9.]/g, '')) : null;
       await updateProfile({ monthly_budget: numeric });
       await resetBudgetAlertHistory();
-      await refreshProfile();
+      await refreshProfile(true);
 
       // Tactile Haptic Confirmation
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);

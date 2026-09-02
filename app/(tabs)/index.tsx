@@ -174,7 +174,7 @@ export default function HomeScreen() {
           <RefreshControl
             refreshing={expenses.refreshing}
             onRefresh={() => {
-              void refreshProfile();
+              void refreshProfile(true);
               void expenses.refresh(true);
             }}
             tintColor={theme.colors.primary}

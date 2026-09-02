@@ -14,11 +14,15 @@ interface AuthContextValue {
   profile: UserProfile | null;
   loading: boolean;
   refreshSession: () => Promise<Session | null>;
-  refreshProfile: () => Promise<void>;
+  /** force=true bypasses the freshness throttle (post-save reloads, pull-to-refresh). */
+  refreshProfile: (force?: boolean) => Promise<void>;
   signOut: () => Promise<void>;
 }
 
 export const AuthContext = createContext<AuthContextValue | null>(null);
+
+/** Non-forced refreshProfile calls within this window reuse the last result. */
+const PROFILE_REFRESH_COOLDOWN_MS = 30_000;
 
 async function handleOAuthUrl(url: string) {
   if (!url) return;
@@ -52,6 +56,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const [loading, setLoading] = useState(true);
   const userId = session?.user?.id ?? null;
   const lastLoadedUserIdRef = useRef<string | null>(null);
+  const lastProfileRefreshAt = useRef(0);
+  const profileRefreshInFlight = useRef<Promise<void> | null>(null);
 
   const refreshSession = useCallback(async () => {
     try {
@@ -64,26 +70,40 @@ export function AuthProvider({ children }: PropsWithChildren) {
     }
   }, []);
 
-  const refreshProfile = useCallback(async () => {
-    try {
-      const nextProfile = await ensureProfile();
-      setProfile(nextProfile);
-      setNotificationUserId(nextProfile.id);
-    } catch {
-      const { data: sessionData } = await supabase.auth.getSession().catch(() => ({ data: { session: null } }));
-      if (!sessionData?.session) {
-        setProfile(null);
-        return;
-      }
-      // Offline fallback: check cached profile
-      const cached = await AsyncStorage.getItem('@spendflow_cached_profile').catch(() => null);
-      if (cached) {
-        try {
-          setProfile(JSON.parse(cached) as UserProfile);
-        } catch {
-          // ignore
+  const refreshProfile = useCallback(async (force = false) => {
+    // In-flight deduplication: concurrent callers reuse the same request.
+    if (profileRefreshInFlight.current) return profileRefreshInFlight.current;
+    // Freshness throttle: bursts of non-forced triggers (e.g. tab focus) reuse
+    // the last result instead of re-fetching. force=true always refreshes.
+    if (!force && Date.now() - lastProfileRefreshAt.current < PROFILE_REFRESH_COOLDOWN_MS) return;
+    const request = (async () => {
+      try {
+        const nextProfile = await ensureProfile();
+        setProfile(nextProfile);
+        setNotificationUserId(nextProfile.id);
+      } catch {
+        const { data: sessionData } = await supabase.auth.getSession().catch(() => ({ data: { session: null } }));
+        if (!sessionData?.session) {
+          setProfile(null);
+          return;
+        }
+        // Offline fallback: check cached profile
+        const cached = await AsyncStorage.getItem('@spendflow_cached_profile').catch(() => null);
+        if (cached) {
+          try {
+            setProfile(JSON.parse(cached) as UserProfile);
+          } catch {
+            // ignore
+          }
         }
       }
+    })();
+    profileRefreshInFlight.current = request;
+    try {
+      await request;
+    } finally {
+      lastProfileRefreshAt.current = Date.now();
+      profileRefreshInFlight.current = null;
     }
   }, []);
 
@@ -96,6 +116,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
       await signOutService();
     } finally {
       lastLoadedUserIdRef.current = null;
+      lastProfileRefreshAt.current = 0;
+      profileRefreshInFlight.current = null;
       setSession(null);
       setProfile(null);
       setNotificationUserId(null);
@@ -162,9 +184,14 @@ export function AuthProvider({ children }: PropsWithChildren) {
     lastLoadedUserIdRef.current = userId;
     let mounted = true;
 
+    // A user change is always a genuine refresh: reset throttle state and
+    // force-fetch so the new user never inherits the previous freshness window.
+    lastProfileRefreshAt.current = 0;
+    profileRefreshInFlight.current = null;
+
     // Profile fetch and recurring materialization run in parallel so neither
     // delays the first screenful of data.
-    void refreshProfile().catch(() => {
+    void refreshProfile(true).catch(() => {
       if (mounted && session?.user) {
         setProfile({
           id: session.user.id,

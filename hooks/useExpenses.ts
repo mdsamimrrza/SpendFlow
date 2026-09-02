@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { listCategories } from '@/services/categories';
+import { getCategoryById } from '@/services/categories';
 import { createExpense, filterAndSortCachedExpenses, getCachedExpenses, listExpenses, softDeleteExpense, updateExpense } from '@/services/expenses';
 import { checkAndNotifyBudgetThreshold, checkAndNotifyCategoryBudgetThreshold, notifyExpenseAdded, notifyLargeExpense } from '@/services/notifications';
 import { Expense, ExpenseFilters, ExpenseInput, SortKey } from '@/types';
@@ -98,8 +98,9 @@ async function triggerExpenseNotifications(
     }
 
     if (userId && categoryId) {
-      const categories = await listCategories(userId);
-      const targetCat = categories.find((c) => c.id === categoryId);
+      // Single-row lookup — the previous full listCategories() fetch pulled and
+      // re-cached every category just to inspect one budget on each save.
+      const targetCat = await getCategoryById(categoryId);
       if (targetCat && targetCat.budget_monthly && Number(targetCat.budget_monthly) > 0) {
         const catMonthItems = monthItems.filter((item) => item.category_id === categoryId);
         const catMonthTotal = sumExpenses(catMonthItems, currency);

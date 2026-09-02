@@ -71,25 +71,15 @@ export function filterAndSortCachedExpenses(items: Expense[], filters?: ExpenseF
 }
 
 export async function listExpenses(userId: string, page = 0, filters?: ExpenseFilters, sort: SortKey = 'date_desc'): Promise<ExpensePage> {
-  let { data, error } = await Promise.resolve(
-    applyExpenseFilters(
-      supabase.from('expenses').select(selection).eq('user_id', userId).is('deleted_at', null),
-      page,
-      filters,
-      sort,
-    ),
+  // One logical load = one query. Errors propagate to the caller (useExpenses
+  // paints the cache and surfaces the error) — no identical re-query.
+  const { data, error } = await applyExpenseFilters(
+    supabase.from('expenses').select(selection).eq('user_id', userId).is('deleted_at', null),
+    page,
+    filters,
+    sort,
   );
-  if (error) {
-    const fallbackQuery = applyExpenseFilters(
-      supabase.from('expenses').select(selection).eq('user_id', userId).is('deleted_at', null),
-      page,
-      filters,
-      sort,
-    );
-    const fallbackRes = await fallbackQuery;
-    if (fallbackRes.error) throw fallbackRes.error;
-    data = fallbackRes.data;
-  }
+  if (error) throw error;
 
   const serverItems = ((data ?? []) as Expense[]).map((e) => ({
     ...e,
@@ -179,19 +169,8 @@ export async function createExpense(userId: string, input: ExpenseInput) {
   };
   const result = await supabase.from('expenses').insert(values).select(selection).single();
 
-  if (!result.error && result.data) return result.data as Expense;
-
-  // Keep compatibility with databases that have not yet received the transaction-type
-  // migration. Never retry arbitrary errors: a write may already have succeeded.
-  if (result.error?.code !== '42703') throw result.error;
-  const { type: _omitType, ...baseInput } = sanitizedInput;
-  const legacyResult = await supabase
-    .from('expenses')
-    .insert({ ...baseInput, user_id: userId })
-    .select(selection)
-    .single();
-  if (legacyResult.error) throw legacyResult.error;
-  return { ...legacyResult.data, type: transactionType } as Expense;
+  if (result.error) throw result.error;
+  return result.data as Expense;
 }
 
 export async function updateExpense(id: string, input: ExpenseInput) {
@@ -222,20 +201,8 @@ export async function updateExpense(id: string, input: ExpenseInput) {
     .select(selection)
     .single();
 
-  if (!res1.error && res1.data) {
-    updatedData = res1.data;
-  } else {
-    const { type: _omitType, ...baseInput } = sanitizedInput;
-    const res2 = await supabase
-      .from('expenses')
-      .update({ ...baseInput, ...snapshotFields, updated_at: new Date().toISOString() })
-      .eq('id', id)
-      .select(selection)
-      .single();
-
-    if (res2.error) throw res2.error;
-    updatedData = { ...res2.data, type: transactionType };
-  }
+  if (res1.error) throw res1.error;
+  updatedData = res1.data;
 
   return updatedData as Expense;
 }

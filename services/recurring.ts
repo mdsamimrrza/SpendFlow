@@ -104,35 +104,54 @@ export async function generateDueRecurringExpenses(userId: string) {
   let generated = 0;
 
   for (const rule of rules.filter((item) => item.is_active)) {
-    let dueDate = parseISO(rule.next_due_date);
-    let nextDueDate = dueDate;
-    while (!isBefore(today, nextDueDate) && generated < 100) {
-      const expenseDate = format(nextDueDate, 'yyyy-MM-dd');
-      const snapshot = await getRate(rule.currency || 'USD', expenseDate).catch(() => undefined);
-      const { error } = await supabase.from('expenses').insert({
+    // 1. Collect every due occurrence date for this rule before touching the
+    //    network. The global cap matches the previous serial loop.
+    const dueDates: string[] = [];
+    let cursor = parseISO(rule.next_due_date);
+    while (!isBefore(today, cursor) && generated + dueDates.length < 100) {
+      dueDates.push(format(cursor, 'yyyy-MM-dd'));
+      cursor = nextDate(cursor, rule.frequency);
+    }
+    if (dueDates.length === 0) continue;
+
+    // 2. Resolve the historical rate snapshot per unique occurrence date in
+    //    parallel (previously one sequential lookup per inserted row).
+    const uniqueDates = [...new Set(dueDates)];
+    const resolvedRates = await Promise.all(
+      uniqueDates.map((date) => getRate(rule.currency || 'USD', date).catch(() => undefined)),
+    );
+    const rateByDate = new Map(uniqueDates.map((date, idx) => [date, resolvedRates[idx]]));
+
+    // 3. Insert all occurrences in ONE batch. The rule's next_due_date is only
+    //    advanced after the insert succeeds, so a failed launch regenerates the
+    //    same occurrences next time (all-or-nothing per rule — no partial
+    //    generation, no duplicates).
+    const rows = dueDates.map((date) => {
+      const snapshot = rateByDate.get(date);
+      return {
         user_id: userId,
         category_id: rule.category_id,
         amount: rule.amount,
         currency: rule.currency,
         description: rule.description,
-        date: expenseDate,
+        date,
         payment_method: rule.payment_method,
         is_recurring: true,
         recurring_rule_id: rule.id,
         ...(snapshot ? { exchange_rate_to_usd: snapshot, base_currency: 'USD' } : {}),
-      });
-      if (error) throw error;
-      generated += 1;
-      nextDueDate = nextDate(nextDueDate, rule.frequency);
-    }
+      };
+    });
+    const { error } = await supabase.from('expenses').insert(rows);
+    if (error) throw error;
+    generated += dueDates.length;
 
-    if (nextDueDate.getTime() !== dueDate.getTime()) {
-      const { error } = await supabase
-        .from('recurring_rules')
-        .update({ next_due_date: format(nextDueDate, 'yyyy-MM-dd') })
-        .eq('id', rule.id);
-      if (error) throw error;
-    }
+    // 4. Advance the schedule once per rule (previous loop advanced it after
+    //    the last occurrence of each rule; dueDates.length > 0 guarantees a change).
+    const { error: updateError } = await supabase
+      .from('recurring_rules')
+      .update({ next_due_date: format(cursor, 'yyyy-MM-dd') })
+      .eq('id', rule.id);
+    if (updateError) throw updateError;
   }
 
   return generated;
