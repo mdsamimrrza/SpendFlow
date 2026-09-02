@@ -122,10 +122,14 @@ export async function generateDueRecurringExpenses(userId: string) {
     );
     const rateByDate = new Map(uniqueDates.map((date, idx) => [date, resolvedRates[idx]]));
 
-    // 3. Insert all occurrences in ONE batch. The rule's next_due_date is only
-    //    advanced after the insert succeeds, so a failed launch regenerates the
-    //    same occurrences next time (all-or-nothing per rule — no partial
-    //    generation, no duplicates).
+    // 3. Insert all occurrences in ONE batch with conflict-skip semantics
+    //    (INSERT ... ON CONFLICT (recurring_rule_id, date) DO NOTHING): if
+    //    another device already generated an occurrence — enforced by the
+    //    expenses_recurring_rule_date_unique index — that row is skipped while
+    //    the rest insert. Manual transactions are unaffected (NULLs are
+    //    distinct). Genuine failures still throw, and the rule's next_due_date
+    //    is only advanced after success, so a failed launch regenerates
+    //    identically next time (no partial generation, no duplicates).
     const rows = dueDates.map((date) => {
       const snapshot = rateByDate.get(date);
       return {
@@ -141,7 +145,9 @@ export async function generateDueRecurringExpenses(userId: string) {
         ...(snapshot ? { exchange_rate_to_usd: snapshot, base_currency: 'USD' } : {}),
       };
     });
-    const { error } = await supabase.from('expenses').insert(rows);
+    const { error } = await supabase
+      .from('expenses')
+      .upsert(rows, { ignoreDuplicates: true, onConflict: 'recurring_rule_id,date' });
     if (error) throw error;
     generated += dueDates.length;
 

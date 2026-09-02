@@ -5,10 +5,18 @@ import { getRate } from '@/services/exchange';
 import { Expense, ExpenseFilters, ExpenseInput, ExpensePage, SortKey } from '@/types';
 import { supabase } from '@/utils/supabase';
 
-// Selection always joins categories + bank_accounts so detail views can show
-// the account name. The bank_accounts embed is a many-to-one FK join (returns a
-// single object or null), so it never duplicates expense rows.
-const selection = '*, categories(name, icon, color), bank_accounts(name, icon, color, account_type)';
+// Explicit column list (not select('*')) so list payloads never include
+// schema-only fields — the search_vector tsvector on environments where the
+// phase-2 migration is applied, and the legacy is_synced/client_sync_id
+// offline-era columns. Type-consistent with Expense on every schema state.
+const selection = [
+  'id', 'user_id', 'category_id', 'amount', 'currency', 'description', 'date', 'time',
+  'payment_method', 'notes', 'receipt_image_url', 'is_recurring', 'recurring_rule_id',
+  'bank_account_id', 'exchange_rate_to_usd', 'base_currency', 'type', 'deleted_at',
+  'created_at', 'updated_at',
+  'categories(name, icon, color)',
+  'bank_accounts(name, icon, color, account_type)',
+].join(', ');
 
 function applyExpenseFilters(query: any, page = 0, filters?: ExpenseFilters, sort: SortKey = 'date_desc') {
   let q = query;
@@ -81,7 +89,7 @@ export async function listExpenses(userId: string, page = 0, filters?: ExpenseFi
   );
   if (error) throw error;
 
-  const serverItems = ((data ?? []) as Expense[]).map((e) => ({
+  const serverItems = (((data ?? []) as unknown) as Expense[]).map((e) => ({
     ...e,
     type: e.type || 'expense',
   }));
@@ -133,7 +141,7 @@ export async function getExpense(id: string, userId?: string | null) {
   let requestError: unknown = null;
   try {
     const { data, error } = await supabase.from('expenses').select(selection).eq('id', id).is('deleted_at', null).single();
-    if (!error && data) return data as Expense;
+    if (!error && data) return data as unknown as Expense;
     requestError = error;
   } catch (error) {
     requestError = error;
@@ -170,7 +178,7 @@ export async function createExpense(userId: string, input: ExpenseInput) {
   const result = await supabase.from('expenses').insert(values).select(selection).single();
 
   if (result.error) throw result.error;
-  return result.data as Expense;
+  return result.data as unknown as Expense;
 }
 
 export async function updateExpense(id: string, input: ExpenseInput) {
