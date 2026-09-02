@@ -1,7 +1,15 @@
 import { PaymentMethod, PeriodKey, SortKey } from '@/types';
 
 export const PAGE_SIZE = 20;
-export const EXPENSE_CACHE_KEY = 'spendflow_expense_cache';
+/** Per-user expense cache key prefix — always suffixed with the authenticated user id. */
+export const EXPENSE_CACHE_PREFIX = '@spendflow_expense_cache_';
+/**
+ * Pre-Priority-2 global expense cache key (multi-user data under one key).
+ * READ-ONLY migration source: rows are migrated to the per-user key only when
+ * their embedded server-side user_id matches the requesting user. Do not build
+ * new architecture on this key; it is removed in a later cleanup priority.
+ */
+export const LEGACY_EXPENSE_CACHE_KEY = 'spendflow_expense_cache';
 
 export const CURRENCIES = ['NPR', 'USD', 'INR', 'QAR', 'GBP'] as const;
 export const CURRENCY_DETAILS: Record<(typeof CURRENCIES)[number], { flag: string; label: string }> = {

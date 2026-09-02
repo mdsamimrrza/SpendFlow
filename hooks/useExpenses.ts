@@ -146,7 +146,7 @@ export function useExpenses(userId?: string, filters?: ExpenseFilters, sort: Sor
       // stares at an empty screen while the network round trip completes.
       if (pageToLoad === 0) {
         try {
-          const cached = await getCachedExpenses();
+          const cached = await getCachedExpenses(userId);
           const cachedForUser = cached.filter((e) => e.user_id === userId && !e.deleted_at);
           // Apply the active filters/sort locally so the instant paint matches
           // what the server response will show (no flash of unfiltered data).
@@ -170,7 +170,7 @@ export function useExpenses(userId?: string, filters?: ExpenseFilters, sort: Sor
       } catch (err) {
         // Only fall back to cache on initial load (page 0)
         if (pageToLoad === 0) {
-          const cached = await getCachedExpenses();
+          const cached = await getCachedExpenses(userId);
           if (cached.length) setItems(cached);
         }
         setError(err instanceof Error ? err.message : 'Could not load expenses.');
@@ -233,10 +233,10 @@ export function useExpenses(userId?: string, filters?: ExpenseFilters, sort: Sor
   }, [userId, items, loadPage]);
 
   const remove = useCallback(async (id: string) => {
-    await softDeleteExpense(id);
+    await softDeleteExpense(id, userId);
     setItems((current) => current.filter((item) => item.id !== id));
     notifyExpensesChanged();
-  }, []);
+  }, [userId]);
 
   return useMemo(
     () => ({ items, loading, loadingMore, refreshing, error, hasMore, refresh, loadMore, save, remove }),

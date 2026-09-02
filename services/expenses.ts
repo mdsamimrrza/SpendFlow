@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { EXPENSE_CACHE_KEY, PAGE_SIZE } from '@/constants/app';
+import { EXPENSE_CACHE_PREFIX, LEGACY_EXPENSE_CACHE_KEY, PAGE_SIZE } from '@/constants/app';
 import { seedDefaultCategories } from '@/services/categories';
 import { getRate } from '@/services/exchange';
 import { Expense, ExpenseFilters, ExpenseInput, ExpensePage, SortKey } from '@/types';
@@ -100,21 +100,43 @@ export async function listExpenses(userId: string, page = 0, filters?: ExpenseFi
   // so it matches the cache-paint ordering used before the network resolves.
   const items = page === 0 ? sortExpenses(serverItems, sort) : serverItems;
 
-  if (page === 0) await AsyncStorage.setItem(EXPENSE_CACHE_KEY, JSON.stringify(items));
+  if (page === 0) await AsyncStorage.setItem(`${EXPENSE_CACHE_PREFIX}${userId}`, JSON.stringify(items));
   return { items, hasMore: filters?.fetchAll ? false : serverItems.length === PAGE_SIZE };
 }
 
-export async function getCachedExpenses() {
-  const raw = await AsyncStorage.getItem(EXPENSE_CACHE_KEY);
+function parseCachedExpenses(raw: string | null): Expense[] {
   if (!raw) return [];
-  const parsed = JSON.parse(raw) as Expense[];
-  return parsed.map((e) => ({
-    ...e,
-    type: e.type || 'expense',
-  }));
+  try {
+    return (JSON.parse(raw) as Expense[]).map((e) => ({
+      ...e,
+      type: e.type || 'expense',
+    }));
+  } catch {
+    return [];
+  }
 }
 
-export async function getExpense(id: string) {
+/**
+ * Reads the per-user expense cache. Falls back exactly once to the pre-P2
+ * global key, migrating only rows whose embedded server-side user_id matches
+ * the requesting user — rows belonging to anyone else are never returned or
+ * copied. Marks the migration complete per user (idempotent across launches)
+ * even when nothing migrates. The legacy key itself is left on disk during the
+ * one-release compatibility window and removed in a later cleanup priority.
+ */
+export async function getCachedExpenses(userId?: string | null): Promise<Expense[]> {
+  if (!userId) return [];
+  const raw = await AsyncStorage.getItem(`${EXPENSE_CACHE_PREFIX}${userId}`).catch(() => null);
+  if (raw !== null) return parseCachedExpenses(raw);
+
+  // Legacy migration fallback (ownership-validated)
+  const legacyRaw = await AsyncStorage.getItem(LEGACY_EXPENSE_CACHE_KEY).catch(() => null);
+  const owned = parseCachedExpenses(legacyRaw).filter((e) => e.user_id === userId && !e.deleted_at);
+  await AsyncStorage.setItem(`${EXPENSE_CACHE_PREFIX}${userId}`, JSON.stringify(owned)).catch(() => {});
+  return owned;
+}
+
+export async function getExpense(id: string, userId?: string | null) {
   if (!isValidUUID(id)) {
     throw new Error('This offline expense was removed because SpendFlow now requires an internet connection.');
   }
@@ -127,7 +149,8 @@ export async function getExpense(id: string) {
     requestError = error;
   }
 
-  const cachedExpense = (await getCachedExpenses()).find((expense) => expense.id === id && !expense.deleted_at);
+  // Scoped to the requesting user — without a userId no cache fallback runs.
+  const cachedExpense = (await getCachedExpenses(userId)).find((expense) => expense.id === id && !expense.deleted_at);
   if (cachedExpense) return cachedExpense;
   if (requestError) throw requestError;
   throw new Error('This offline expense is no longer available on this device.');
@@ -217,16 +240,18 @@ export async function updateExpense(id: string, input: ExpenseInput) {
   return updatedData as Expense;
 }
 
-export async function softDeleteExpense(id: string) {
+export async function softDeleteExpense(id: string, userId?: string | null) {
   const { error } = await supabase.from('expenses').update({ deleted_at: new Date().toISOString() }).eq('id', id);
   if (error) throw error;
 
-  // Remove immediately from local cache so the APK re-renders instantly
-  // without waiting for the next network fetch.
+  if (!userId) return; // cache pruning requires a user scope
+
+  // Remove immediately from the user's local cache so the UI re-renders
+  // instantly without waiting for the next network fetch.
   try {
-    const cached = await getCachedExpenses();
+    const cached = await getCachedExpenses(userId);
     const updated = cached.filter((e) => e.id !== id);
-    await AsyncStorage.setItem(EXPENSE_CACHE_KEY, JSON.stringify(updated));
+    await AsyncStorage.setItem(`${EXPENSE_CACHE_PREFIX}${userId}`, JSON.stringify(updated));
   } catch {
     // Best-effort cache cleanup — the next fetch will correct it anyway
   }

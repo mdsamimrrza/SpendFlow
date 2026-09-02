@@ -6,6 +6,7 @@ import { useEffect } from 'react';
 import { ActivityIndicator, Platform, View } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AuthProvider } from '@/store/AuthContext';
+import { ExchangeRateProvider } from '@/store/ExchangeRateContext';
 import { LanguageProvider } from '@/store/LanguageContext';
 import { OnboardingProvider, useOnboarding } from '@/store/OnboardingContext';
 import { ThemeProvider } from '@/store/ThemeContext';
@@ -97,19 +98,23 @@ function RootNavigator() {
 export default function Layout() {
   return (
     <SafeAreaProvider>
-      <LanguageProvider>
-        <AuthProvider>
-          <SecurityProvider>
-            <ThemeProvider>
-              <PrivacyProvider>
-                <OnboardingProvider>
-                  <RootNavigator />
-                </OnboardingProvider>
-              </PrivacyProvider>
-            </ThemeProvider>
-          </SecurityProvider>
-        </AuthProvider>
-      </LanguageProvider>
+      {/* FX rates are global market data (user-independent): one shared instance
+          at the app root — no per-screen state, no reset on navigation. */}
+      <ExchangeRateProvider>
+        <LanguageProvider>
+          <AuthProvider>
+            <SecurityProvider>
+              <ThemeProvider>
+                <PrivacyProvider>
+                  <OnboardingProvider>
+                    <RootNavigator />
+                  </OnboardingProvider>
+                </PrivacyProvider>
+              </ThemeProvider>
+            </SecurityProvider>
+          </AuthProvider>
+        </LanguageProvider>
+      </ExchangeRateProvider>
     </SafeAreaProvider>
   );
 }

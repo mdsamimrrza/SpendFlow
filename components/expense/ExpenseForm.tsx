@@ -210,7 +210,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
 
   useEffect(() => {
     if (!expenseId) return;
-    getExpense(expenseId)
+    getExpense(expenseId, userId)
       .then((expense) => {
         setForm({
           amount: Number(expense.amount),
@@ -2048,7 +2048,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
         onCancel={() => setDeleteConfirmOpen(false)}
         onConfirm={() => {
           setDeleteConfirmOpen(false);
-          void softDeleteExpense(expenseId!).then(() => {
+          void softDeleteExpense(expenseId!, userId).then(() => {
             notifyExpensesChanged();
             handleBack();
           }).catch((err) => {
