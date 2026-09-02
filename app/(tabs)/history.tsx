@@ -277,7 +277,31 @@ export default function HistoryScreen() {
     [rateResolver, convert, preferredCurrency],
   );
 
-  // Total summary of all matching expenses
+  // Per-row converted amounts, computed once per (data, rate) change — list
+  // rows, section totals and the summary all reuse these values.
+  const displayAmounts = useMemo(() => {
+    const map = new Map<string, number>();
+    filteredExpenses.forEach((item) => map.set(item.id, convertAtDate(item)));
+    return map;
+  }, [filteredExpenses, convertAtDate]);
+
+  // Stable delete callback so memoized ExpenseItem rows can bail out of
+  // parent-driven re-renders.
+  const handleDeleteExpense = useCallback(
+    (expense: Expense) => {
+      void expenses.remove(expense.id);
+    },
+    [expenses.remove],
+  );
+
+  const renderExpenseItem = useCallback(
+    ({ item }: { item: Expense }) => (
+      <ExpenseItem expense={item} displayAmount={displayAmounts.get(item.id)} onDelete={handleDeleteExpense} />
+    ),
+    [displayAmounts, handleDeleteExpense],
+  );
+
+  // Total summary of all matching expenses (reuses the per-row converted values)
   const totalAmount = useMemo(
     () => filteredExpenses.reduce((sum, item) => sum + convertAtDate(item), 0),
     [filteredExpenses, convertAtDate],
@@ -286,7 +310,7 @@ export default function HistoryScreen() {
   // Highest single expense
   const highestSingleSpend = useMemo(() => {
     if (filteredExpenses.length === 0) return 0;
-    return Math.max(...filteredExpenses.map((e) => Number(e.amount)));
+    return filteredExpenses.reduce((max, e) => Math.max(max, Number(e.amount)), 0);
   }, [filteredExpenses]);
 
   // Reset to page 1 whenever filters, search, or category changes
@@ -354,11 +378,11 @@ export default function HistoryScreen() {
       }
 
       groups[rawDate].data.push(item);
-      groups[rawDate].total += convertAtDate(item);
+      groups[rawDate].total += displayAmounts.get(item.id) ?? 0;
     });
 
     return Object.keys(groups).map((key) => groups[key]);
-  }, [paginatedItems, t, convertAtDate]);
+  }, [paginatedItems, t, displayAmounts]);
 
   const goToPage = (pageNumber: number) => {
     const clamped = Math.max(1, Math.min(pageNumber, totalPages));
@@ -1282,13 +1306,7 @@ export default function HistoryScreen() {
             </Text>
           </View>
         )}
-        renderItem={({ item }) => (
-          <ExpenseItem
-            expense={item}
-            displayAmount={convertAtDate(item)}
-            onDelete={(expense) => expenses.remove(expense.id)}
-          />
-        )}
+        renderItem={renderExpenseItem}
         ListEmptyComponent={
           expenses.loading ? (
             <View style={{ paddingVertical: theme.spacing['4xl'], alignItems: 'center' }}>

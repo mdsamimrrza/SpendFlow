@@ -195,8 +195,9 @@ export function AuthProvider({ children }: PropsWithChildren) {
     lastProfileRefreshAt.current = 0;
     profileRefreshInFlight.current = null;
 
-    // Profile fetch and recurring materialization run in parallel so neither
-    // delays the first screenful of data.
+    // Profile fetch runs immediately; recurring materialization is deferrable
+    // by design (after first paint) and is idempotent — a cancelled run simply
+    // re-runs on the next launch.
     void refreshProfile(true).catch(() => {
       if (mounted && session?.user) {
         setProfile({
@@ -212,10 +213,13 @@ export function AuthProvider({ children }: PropsWithChildren) {
         });
       }
     });
-    void generateDueRecurringExpenses(userId).catch(() => undefined);
+    const recurringTimer = setTimeout(() => {
+      void generateDueRecurringExpenses(userId).catch(() => undefined);
+    }, 2500);
 
     return () => {
       mounted = false;
+      clearTimeout(recurringTimer);
     };
   }, [refreshProfile, session?.user, userId]);
 

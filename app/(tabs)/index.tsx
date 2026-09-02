@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Easing, FlatList, Pressable, RefreshControl, View } from 'react-native';
 import { Link, useFocusEffect, useRouter } from 'expo-router';
 import { ArrowRight, Plus, ReceiptText } from 'lucide-react-native';
@@ -30,7 +30,12 @@ export default function HomeScreen() {
   const theme = useTheme();
   const router = useRouter();
   const { rates } = useExchangeRates();
-  const month = currentMonthRange(profile?.cycle_start_day ?? 1, profile?.cycle_end_day ?? null);
+  // Dashboard derivations are memoized: without this, every render (including
+  // local UI state like the profile drawer) re-filtered and re-converted the
+  // full loaded expense set five times.
+  const cycleStartDay = profile?.cycle_start_day ?? 1;
+  const cycleEndDay = profile?.cycle_end_day ?? null;
+  const month = useMemo(() => currentMonthRange(cycleStartDay, cycleEndDay), [cycleStartDay, cycleEndDay]);
   const expenses = useExpenses(profile?.id ?? session?.user?.id, {
     fromDate: month.previousFrom,
     toDate: month.to,
@@ -51,40 +56,36 @@ export default function HomeScreen() {
   );
 
   const preferredCurrency = profile?.preferred_currency ?? 'NPR';
-  const currentMonthItems = expenses.items.filter((expense) => expense.date >= month.from && expense.date <= month.to);
-  const monthTotal = sumExpenses(
-    currentMonthItems,
-    preferredCurrency,
-    rates,
-    'expense',
+  const currentMonthItems = useMemo(
+    () => expenses.items.filter((expense) => expense.date >= month.from && expense.date <= month.to),
+    [expenses.items, month],
   );
-  const monthIncome = sumExpenses(
-    currentMonthItems,
-    preferredCurrency,
-    rates,
-    'income',
+  const monthTotal = useMemo(
+    () => sumExpenses(currentMonthItems, preferredCurrency, rates, 'expense'),
+    [currentMonthItems, preferredCurrency, rates],
   );
-
-  const prevMonthItems = expenses.items.filter((expense) => expense.date >= month.previousFrom && expense.date <= month.previousTo);
-  const prevMonthTotal = sumExpenses(
-    prevMonthItems,
-    preferredCurrency,
-    rates,
-    'expense',
-  );
-  const prevMonthIncome = sumExpenses(
-    prevMonthItems,
-    preferredCurrency,
-    rates,
-    'income',
+  const monthIncome = useMemo(
+    () => sumExpenses(currentMonthItems, preferredCurrency, rates, 'income'),
+    [currentMonthItems, preferredCurrency, rates],
   );
 
-  const todayIso = isoDate(new Date());
-  const todayTotal = sumExpenses(
-    expenses.items.filter((expense) => expense.date === todayIso),
-    preferredCurrency,
-    rates,
+  const prevMonthItems = useMemo(
+    () => expenses.items.filter((expense) => expense.date >= month.previousFrom && expense.date <= month.previousTo),
+    [expenses.items, month],
   );
+  const prevMonthTotal = useMemo(
+    () => sumExpenses(prevMonthItems, preferredCurrency, rates, 'expense'),
+    [prevMonthItems, preferredCurrency, rates],
+  );
+  const prevMonthIncome = useMemo(
+    () => sumExpenses(prevMonthItems, preferredCurrency, rates, 'income'),
+    [prevMonthItems, preferredCurrency, rates],
+  );
+
+  const todayTotal = useMemo(() => {
+    const todayIso = isoDate(new Date());
+    return sumExpenses(expenses.items.filter((expense) => expense.date === todayIso), preferredCurrency, rates);
+  }, [expenses.items, preferredCurrency, rates]);
 
   const monthlyBudget = profile?.monthly_budget ? Number(profile.monthly_budget) : 0;
 
@@ -101,7 +102,7 @@ export default function HomeScreen() {
   const locale = language === 'ne' ? 'ne-NP' : language === 'hi' ? 'hi-IN' : 'en-US';
   const fullMonthName = getCycleLabel(profile?.cycle_start_day ?? 1, profile?.cycle_end_day ?? null, locale);
 
-  const latestExpenses = expenses.items.slice(0, 3);
+  const latestExpenses = useMemo(() => expenses.items.slice(0, 3), [expenses.items]);
   const displayName = profile?.display_name || profile?.email?.split('@')[0] || 'User';
 
   // Very subtle micro-floating animation (slight 3px vertical & 1.5px horizontal drift)

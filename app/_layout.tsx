@@ -10,7 +10,6 @@ import { ExchangeRateProvider } from '@/store/ExchangeRateContext';
 import { LanguageProvider } from '@/store/LanguageContext';
 import { OnboardingProvider, useOnboarding } from '@/store/OnboardingContext';
 import { ThemeProvider } from '@/store/ThemeContext';
-import { deactivateKeepAwake } from 'expo-keep-awake';
 import { useAuth } from '@/hooks/useAuth';
 import { useTheme } from '@/hooks/useTheme';
 import { Text } from '@/components/ui/Text';
@@ -36,14 +35,19 @@ function RootNavigator() {
   // SafeAreaProvider already accounts for each device's status bar and cutout.
   const topPadding = Platform.OS === 'web' ? 0 : insets.top;
 
+  // Non-critical startup work runs AFTER first paint so it never delays the
+  // first meaningful screen (permissions/token/recurring are deferrable by design).
   useEffect(() => {
-    void initNotifications().catch(() => {});
+    const t = setTimeout(() => { void initNotifications().catch(() => {}); }, 2500);
+    return () => clearTimeout(t);
   }, []);
 
   // Register this device's push token so OTHER devices of the same account can notify it
   useEffect(() => {
     const uid = session?.user?.id;
-    if (uid) void registerPushToken(uid).catch(() => {});
+    if (!uid) return;
+    const t = setTimeout(() => { void registerPushToken(uid).catch(() => {}); }, 2500);
+    return () => clearTimeout(t);
   }, [session?.user?.id]);
 
   useEffect(() => {

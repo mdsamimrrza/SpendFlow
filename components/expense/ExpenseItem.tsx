@@ -29,7 +29,11 @@ interface ExpenseItemProps {
   displayAmount?: number;
 }
 
-export function ExpenseItem({ expense, onDelete, onPress, displayAmount }: ExpenseItemProps) {
+// React.memo: list rows are the hottest render path (History + Dashboard).
+// With stable props (stable expense object identities, memoized displayAmount
+// values, stable callbacks) a parent re-render no longer re-renders every row,
+// including their embedded modal trees.
+export const ExpenseItem = React.memo(function ExpenseItem({ expense, onDelete, onPress, displayAmount }: ExpenseItemProps) {
   const theme = useTheme();
   const { profile } = useAuth();
   const { convert } = useExchangeRates();
@@ -272,4 +276,4 @@ export function ExpenseItem({ expense, onDelete, onPress, displayAmount }: Expen
       />
     </>
   );
-}
+});
