@@ -6,6 +6,7 @@ import { ensureProfile, signOut as signOutService } from '@/services/auth';
 import { setNotificationUserId } from '@/services/notifications';
 import { unregisterPushToken } from '@/services/pushNotifications';
 import { generateDueRecurringExpenses } from '@/services/recurring';
+import { notifyExpensesChanged } from '@/hooks/useExpenses';
 import { UserProfile } from '@/types';
 import { supabase } from '@/utils/supabase';
 
@@ -214,7 +215,13 @@ export function AuthProvider({ children }: PropsWithChildren) {
       }
     });
     const recurringTimer = setTimeout(() => {
-      void generateDueRecurringExpenses(userId).catch(() => undefined);
+      void generateDueRecurringExpenses(userId)
+        .then((generated) => {
+          // Deferred generation can land after the dashboard's first load —
+          // notify mounted expense lists so new occurrences appear immediately.
+          if (generated > 0) notifyExpensesChanged();
+        })
+        .catch(() => undefined);
     }, 2500);
 
     return () => {
