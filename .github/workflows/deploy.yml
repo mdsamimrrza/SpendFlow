@@ -9,6 +9,7 @@ jobs:
   deploy:
     name: Build & Publish to Expo
     runs-on: ubuntu-latest
+    environment: GOOGLE_SERVICES_JSON
 
     steps:
       - name: 🏗 Checkout Repository
