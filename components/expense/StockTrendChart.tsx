@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Modal, Platform, Pressable, useWindowDimensions, View } from 'react-native';
 import Svg, { Circle, Defs, Line, LinearGradient, Path, Rect, Stop, Text as SvgText } from 'react-native-svg';
 import * as Haptics from 'expo-haptics';
+import { addDays, format, parseISO } from 'date-fns';
 import { ArrowDownRight, ArrowUpRight, Check, ChevronDown, Sparkles, TrendingUp, Wallet } from 'lucide-react-native';
 import { Card } from '@/components/ui/Card';
 import { Text } from '@/components/ui/Text';
@@ -10,7 +11,7 @@ import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
 import { useTheme } from '@/hooks/useTheme';
 import { Expense } from '@/types';
-import { formatMoney } from '@/utils/format';
+import { currentMonthRange, formatMoney, getCycleLabel } from '@/utils/format';
 
 export type TimeFilter = 'today' | 'daily' | 'weekly' | 'monthly' | 'yearly';
 export type FlowViewMode = 'both' | 'expense' | 'income';
@@ -71,9 +72,14 @@ function buildBezierPath(
 export function StockTrendChart({
   expenses,
   targetCurrency = 'NPR',
+  cycleStartDay = 1,
+  cycleEndDay = null,
 }: {
   expenses: Expense[];
   targetCurrency?: string;
+  /** Active financial-cycle window (source of truth: currentMonthRange). */
+  cycleStartDay?: number;
+  cycleEndDay?: number | null;
 }) {
   const theme = useTheme();
   const { t, language } = useLanguage();
@@ -87,6 +93,21 @@ export function StockTrendChart({
   const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const hasIncome = useMemo(() => expenses.some((e) => e.type === 'income'), [expenses]);
+
+  // Financial-cycle awareness (single source of truth: currentMonthRange/getCycleLabel).
+  const locale = language === 'ne' ? 'ne-NP' : language === 'hi' ? 'hi-IN' : 'en-US';
+  const isCalendarCycle = cycleStartDay === 1 && (cycleEndDay === null || cycleEndDay === 1);
+  const cycleLabel = isCalendarCycle ? null : getCycleLabel(cycleStartDay, cycleEndDay, locale);
+  const periodName = (f: TimeFilter) =>
+    f === 'today'
+      ? 'Today'
+      : f === 'daily'
+      ? '7 Days'
+      : f === 'weekly'
+      ? (isCalendarCycle ? '1 Month' : cycleLabel!)
+      : f === 'monthly'
+      ? (isCalendarCycle ? '6 Months' : `6 Cycles · ${cycleLabel}`)
+      : '1 Year';
 
   const handleSelectPoint = (index: number) => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
@@ -125,7 +146,6 @@ export function StockTrendChart({
     const resultPoints: FlowDataPoint[] = [];
     const getAmount = (e: Expense) =>
       convert(Number(e.amount), e.currency || 'NPR', targetCurrency);
-    const locale = language === 'ne' ? 'ne-NP' : language === 'hi' ? 'hi-IN' : 'en-US';
 
     const expenseOnly = expenses.filter((e) => (e.type || 'expense') === 'expense');
     const incomeOnly = expenses.filter((e) => e.type === 'income');
@@ -183,74 +203,124 @@ export function StockTrendChart({
         });
       }
     } else if (filter === 'weekly') {
-      // 1M = current calendar month split into 4 week-buckets (days 1–7, 8–14, 15–21, 22–end)
-      const year = now.getFullYear();
-      const month = now.getMonth();
-      const daysInMonth = new Date(year, month + 1, 0).getDate();
-      const monthStr = String(month + 1).padStart(2, '0');
-      const weekBuckets = [
-        { start: 1,  end: 7,           label: 'W1', weekNum: 1 },
-        { start: 8,  end: 14,          label: 'W2', weekNum: 2 },
-        { start: 15, end: 21,          label: 'W3', weekNum: 3 },
-        { start: 22, end: daysInMonth, label: 'W4', weekNum: 4 },
-      ];
+      if (isCalendarCycle) {
+        // Calendar cycle → original behavior: current calendar month split into
+        // 4 week-buckets (days 1–7, 8–14, 15–21, 22–end)
+        const year = now.getFullYear();
+        const month = now.getMonth();
+        const daysInMonth = new Date(year, month + 1, 0).getDate();
+        const monthStr = String(month + 1).padStart(2, '0');
+        const weekBuckets = [
+          { start: 1,  end: 7,           label: 'W1', weekNum: 1 },
+          { start: 8,  end: 14,          label: 'W2', weekNum: 2 },
+          { start: 15, end: 21,          label: 'W3', weekNum: 3 },
+          { start: 22, end: daysInMonth, label: 'W4', weekNum: 4 },
+        ];
 
-      for (const bucket of weekBuckets) {
-        const pad = (n: number) => String(n).padStart(2, '0');
-        const startIso = `${year}-${monthStr}-${pad(bucket.start)}`;
-        const endIso   = `${year}-${monthStr}-${pad(bucket.end)}`;
-        const startDate = new Date(year, month, bucket.start);
-        const monthShort = startDate.toLocaleDateString(locale, { month: 'short' });
+        for (const bucket of weekBuckets) {
+          const pad = (n: number) => String(n).padStart(2, '0');
+          const startIso = `${year}-${monthStr}-${pad(bucket.start)}`;
+          const endIso   = `${year}-${monthStr}-${pad(bucket.end)}`;
+          const startDate = new Date(year, month, bucket.start);
+          const monthShort = startDate.toLocaleDateString(locale, { month: 'short' });
 
-        const weekExp = expenseOnly.filter((e) => e.date >= startIso && e.date <= endIso);
-        const weekInc = incomeOnly.filter((e) => e.date >= startIso && e.date <= endIso);
+          const weekExp = expenseOnly.filter((e) => e.date >= startIso && e.date <= endIso);
+          const weekInc = incomeOnly.filter((e) => e.date >= startIso && e.date <= endIso);
 
-        // Build per-day breakdown for tooltip
-        const breakdown: DayBreakdown[] = [];
-        for (let d = bucket.start; d <= bucket.end; d++) {
-          const iso = `${year}-${monthStr}-${pad(d)}`;
-          const dateObj = new Date(year, month, d);
-          const expAmt = expenseOnly.filter((e) => e.date === iso).reduce((sum, e) => sum + getAmount(e), 0);
-          const incAmt = incomeOnly.filter((e) => e.date === iso).reduce((sum, e) => sum + getAmount(e), 0);
-          if (expAmt > 0 || incAmt > 0) {
-            breakdown.push({
-              date: iso,
-              weekday: dateObj.toLocaleDateString(locale, { weekday: 'short' }),
-              dayNum: d,
-              expenseAmount: expAmt,
-              incomeAmount: incAmt,
-            });
+          // Build per-day breakdown for tooltip
+          const breakdown: DayBreakdown[] = [];
+          for (let d = bucket.start; d <= bucket.end; d++) {
+            const iso = `${year}-${monthStr}-${pad(d)}`;
+            const dateObj = new Date(year, month, d);
+            const expAmt = expenseOnly.filter((e) => e.date === iso).reduce((sum, e) => sum + getAmount(e), 0);
+            const incAmt = incomeOnly.filter((e) => e.date === iso).reduce((sum, e) => sum + getAmount(e), 0);
+            if (expAmt > 0 || incAmt > 0) {
+              breakdown.push({
+                date: iso,
+                weekday: dateObj.toLocaleDateString(locale, { weekday: 'short' }),
+                dayNum: d,
+                expenseAmount: expAmt,
+                incomeAmount: incAmt,
+              });
+            }
           }
-        }
 
-        resultPoints.push({
-          label: bucket.label,
-          subLabel: `Week ${bucket.weekNum} · ${monthShort} ${bucket.start}–${bucket.end}`,
-          expenseAmount: weekExp.reduce((sum, e) => sum + getAmount(e), 0),
-          incomeAmount:  weekInc.reduce((sum, e) => sum + getAmount(e), 0),
-          dateKey: `${startIso}_${endIso}`,
-          dayBreakdown: breakdown,
-        });
+          resultPoints.push({
+            label: bucket.label,
+            subLabel: `Week ${bucket.weekNum} · ${monthShort} ${bucket.start}–${bucket.end}`,
+            expenseAmount: weekExp.reduce((sum, e) => sum + getAmount(e), 0),
+            incomeAmount:  weekInc.reduce((sum, e) => sum + getAmount(e), 0),
+            dateKey: `${startIso}_${endIso}`,
+            dayBreakdown: breakdown,
+          });
+        }
+      } else {
+        // Custom financial cycle → split the ACTIVE cycle window into 4 segments
+        // so the 1M view covers exactly the configured financial month.
+        const cycle = currentMonthRange(cycleStartDay, cycleEndDay);
+        const segStart0 = parseISO(cycle.from);
+        const segEnd0 = parseISO(cycle.to);
+        const totalDays = Math.round((segEnd0.getTime() - segStart0.getTime()) / 86400000) + 1;
+        const segLen = Math.ceil(totalDays / 4);
+
+        for (let s = 0; s < 4; s++) {
+          const segStartDate = addDays(segStart0, s * segLen);
+          const segEndDate = addDays(segStart0, Math.min((s + 1) * segLen, totalDays) - 1);
+          const startIso = format(segStartDate, 'yyyy-MM-dd');
+          const endIso = format(segEndDate, 'yyyy-MM-dd');
+
+          const weekExp = expenseOnly.filter((e) => e.date >= startIso && e.date <= endIso);
+          const weekInc = incomeOnly.filter((e) => e.date >= startIso && e.date <= endIso);
+
+          const breakdown: DayBreakdown[] = [];
+          for (let d = segStartDate; d <= segEndDate; d = addDays(d, 1)) {
+            const iso = format(d, 'yyyy-MM-dd');
+            const expAmt = expenseOnly.filter((e) => e.date === iso).reduce((sum, e) => sum + getAmount(e), 0);
+            const incAmt = incomeOnly.filter((e) => e.date === iso).reduce((sum, e) => sum + getAmount(e), 0);
+            if (expAmt > 0 || incAmt > 0) {
+              breakdown.push({
+                date: iso,
+                weekday: format(d, 'EEE'),
+                dayNum: d.getDate(),
+                expenseAmount: expAmt,
+                incomeAmount: incAmt,
+              });
+            }
+          }
+
+          resultPoints.push({
+            label: `W${s + 1}`,
+            subLabel: `${format(segStartDate, 'MMM d')} – ${format(segEndDate, 'MMM d')}`,
+            expenseAmount: weekExp.reduce((sum, e) => sum + getAmount(e), 0),
+            incomeAmount:  weekInc.reduce((sum, e) => sum + getAmount(e), 0),
+            dateKey: `${startIso}_${endIso}`,
+            dayBreakdown: breakdown,
+          });
+        }
       }
     } else if (filter === 'monthly') {
+      // 6M = the last six financial-month/cycle windows (current cycle included),
+      // derived from the same currentMonthRange source of truth the rest of the
+      // app uses. For calendar cycles these are exactly the calendar months.
       for (let m = 5; m >= 0; m--) {
-        const d = new Date(now.getFullYear(), now.getMonth() - m, 1);
-        const year = d.getFullYear();
-        const monthNum = String(d.getMonth() + 1).padStart(2, '0');
-        const monthPrefix = `${year}-${monthNum}`;
+        const win = currentMonthRange(cycleStartDay, cycleEndDay, -m);
+        const winStart = parseISO(win.from);
+        const winEnd = parseISO(win.to);
 
-        const monthExp = expenseOnly.filter((e) => e.date.startsWith(monthPrefix));
-        const monthInc = incomeOnly.filter((e) => e.date.startsWith(monthPrefix));
+        const monthExp = expenseOnly.filter((e) => e.date >= win.from && e.date <= win.to);
+        const monthInc = incomeOnly.filter((e) => e.date >= win.from && e.date <= win.to);
 
         const expAmt = monthExp.reduce((sum, e) => sum + getAmount(e), 0);
         const incAmt = monthInc.reduce((sum, e) => sum + getAmount(e), 0);
 
         resultPoints.push({
-          label: d.toLocaleDateString(locale, { month: 'short' }),
-          subLabel: `${d.toLocaleDateString(locale, { month: 'long' })} ${year}`,
+          label: winStart.toLocaleDateString(locale, { month: 'short' }),
+          subLabel: isCalendarCycle
+            ? `${winStart.toLocaleDateString(locale, { month: 'long' })} ${winStart.getFullYear()}`
+            : `${format(winStart, 'MMM d')} – ${format(winEnd, 'MMM d, yyyy')}`,
           expenseAmount: expAmt,
           incomeAmount: incAmt,
-          dateKey: monthPrefix,
+          dateKey: win.from,
         });
       }
     } else {
@@ -311,7 +381,10 @@ export function StockTrendChart({
       previousExpenseTotal: prevExp,
       previousIncomeTotal: prevInc,
     };
-  }, [expenses, filter, targetCurrency, convert, language]);
+    // Financial-cycle awareness: the 1M/6M windows follow the active custom
+    // cycle (source of truth: currentMonthRange). Calendar cycles keep the
+    // original calendar-month bucketing exactly.
+  }, [expenses, filter, targetCurrency, convert, language, locale, isCalendarCycle, cycleStartDay, cycleEndDay]);
 
   const maxAmount = useMemo(() => {
     if (viewMode === 'expense') {
@@ -577,7 +650,7 @@ export function StockTrendChart({
                 </View>
               </View>
               <Text variant="caption" muted style={{ fontSize: 10.5 }}>
-                🟣 Expenses vs 🟢 Inflow ({filter === 'today' ? 'Today' : filter === 'daily' ? '7 Days' : filter === 'weekly' ? '1 Month' : filter === 'monthly' ? '6 Months' : '1 Year'})
+                🟣 Expenses vs 🟢 Inflow ({periodName(filter)})
               </Text>
             </View>
           ) : viewMode === 'income' ? (
@@ -592,7 +665,7 @@ export function StockTrendChart({
                 +{formatMoney(currentIncomeTotal, targetCurrency)}
               </Text>
               <Text variant="caption" muted style={{ fontSize: 11 }}>
-                Total Inflow ({filter === 'today' ? 'Today' : filter === 'daily' ? '7 Days' : filter === 'weekly' ? '1 Month' : filter === 'monthly' ? '6 Months' : '1 Year'})
+                Total Inflow ({periodName(filter)})
               </Text>
             </View>
           ) : (
@@ -607,7 +680,7 @@ export function StockTrendChart({
                 {formatMoney(currentExpenseTotal, targetCurrency)}
               </Text>
               <Text variant="caption" muted style={{ fontSize: 11 }}>
-                Total Outflow ({filter === 'today' ? 'Today' : filter === 'daily' ? '7 Days' : filter === 'weekly' ? '1 Month' : filter === 'monthly' ? '6 Months' : '1 Year'})
+                Total Outflow ({periodName(filter)})
               </Text>
             </View>
           )}

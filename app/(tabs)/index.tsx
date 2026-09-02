@@ -241,6 +241,8 @@ export default function HomeScreen() {
             <StockTrendChart
               expenses={expenses.items}
               targetCurrency={preferredCurrency}
+              cycleStartDay={cycleStartDay}
+              cycleEndDay={cycleEndDay}
             />
 
             {/* 4. INTERACTIVE CATEGORY BREAKDOWN */}

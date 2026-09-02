@@ -123,34 +123,40 @@ export function getSafeMonthDate(year: number, month: number, targetDay: number)
 }
 
 /**
- * Returns the current reporting month range based on the user's cycle window.
+ * Returns the reporting month range based on the user's cycle window.
  * startDay = 1 (default) and endDay = null → calendar month (1st → last day).
  * startDay 2..31 with endDay = null → cycle starts on that day, ends the day
- *   before the next cycle starts (dynamic; crosses calendar months as needed).
+ * before the next cycle starts (dynamic; crosses calendar months as needed).
  * startDay 2..31 with endDay 1..31 → fixed window that repeats every month;
- *   endDay < startDay crosses into the next calendar month.
+ * endDay < startDay crosses into the next calendar month.
+ * offset = 0 (default) returns the currently active cycle; negative offsets
+ * return previous cycle windows (e.g. -1 = the cycle before the active one).
  * The returned range is always in local YYYY-MM-DD.
  */
-export function currentMonthRange(startDay = 1, endDay: number | null = null) {
+export function currentMonthRange(startDay = 1, endDay: number | null = null, offset = 0) {
   const now = new Date();
+  // Reference "today" shifted by whole months for previous-cycle windows
+  // (negative offset = past cycles).
+  const ref = offset === 0
+    ? new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    : new Date(now.getFullYear(), now.getMonth() + offset, now.getDate());
   const day = Math.min(Math.max(Number(startDay) || 1, 1), 31);
 
   if (day === 1 && (endDay === null || endDay === 1)) {
     // Fast path: exact calendar month
     return {
-      from: format(startOfMonth(now), 'yyyy-MM-dd'),
-      to: format(endOfMonth(now), 'yyyy-MM-dd'),
-      previousFrom: format(startOfMonth(subMonths(now, 1)), 'yyyy-MM-dd'),
-      previousTo: format(endOfMonth(subMonths(now, 1)), 'yyyy-MM-dd'),
+      from: format(startOfMonth(ref), 'yyyy-MM-dd'),
+      to: format(endOfMonth(ref), 'yyyy-MM-dd'),
+      previousFrom: format(startOfMonth(subMonths(ref, 1)), 'yyyy-MM-dd'),
+      previousTo: format(endOfMonth(subMonths(ref, 1)), 'yyyy-MM-dd'),
     };
   }
 
-  // Determine the anchor: the cycle start date on/before today
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const thisMonthStart = getSafeMonthDate(now.getFullYear(), now.getMonth(), day);
-  const anchor = today >= thisMonthStart
+  // Determine the anchor: the cycle start date on/before the reference day
+  const thisMonthStart = getSafeMonthDate(ref.getFullYear(), ref.getMonth(), day);
+  const anchor = ref >= thisMonthStart
     ? thisMonthStart
-    : getSafeMonthDate(now.getFullYear(), now.getMonth() - 1, day);
+    : getSafeMonthDate(ref.getFullYear(), ref.getMonth() - 1, day);
 
   let from: Date;
   let to: Date;
