@@ -68,9 +68,9 @@ export interface Expense {
   is_recurring: boolean;
   recurring_rule_id: string | null;
   bank_account_id?: string | null;
-  // Stable ID supplied only for offline-created transactions. It makes retries idempotent.
-  client_sync_id?: string | null;
-  is_synced: boolean;
+  /** USD per 1 unit of `currency`, snapshotted at the transaction date. Never recomputed. */
+  exchange_rate_to_usd?: number | null;
+  base_currency?: string | null;
   type?: TransactionType;
   deleted_at: string | null;
   created_at: string;
@@ -107,6 +107,9 @@ export interface RecurringRule {
   frequency: RecurringFrequency;
   next_due_date: string;
   is_active: boolean;
+  /** USD per 1 unit of `currency`, snapshotted at rule creation. Never recomputed. */
+  exchange_rate_to_usd?: number | null;
+  base_currency?: string | null;
   created_at: string;
   updated_at: string;
   categories?: Pick<Category, 'name' | 'icon' | 'color'> | null;
@@ -159,14 +162,6 @@ export interface ExpenseFilters {
 export interface ExpensePage {
   items: Expense[];
   hasMore: boolean;
-}
-
-export interface OfflineOperation {
-  id: string;
-  type: 'create' | 'update' | 'delete';
-  payload: ExpenseInput & { id?: string };
-  createdAt: string;
-  localId?: string; // Local temp ID used before server sync, for cleanup
 }
 
 /** One segment of the user's budget / paycheck-cycle settings, effective from a date. */

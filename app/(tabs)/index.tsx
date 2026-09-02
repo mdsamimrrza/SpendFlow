@@ -20,7 +20,7 @@ import { useExpenses } from '@/hooks/useExpenses';
 import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
 import { useTheme } from '@/hooks/useTheme';
-import { currentMonthRange, getCycleMeta, isoDate, sumExpenses } from '@/utils/format';
+import { currentMonthRange, getCycleMeta, getCycleLabel, isoDate, sumExpenses } from '@/utils/format';
 import { CURRENCY_DETAILS } from '@/constants/app';
 
 export default function HomeScreen() {
@@ -98,10 +98,8 @@ export default function HomeScreen() {
     month: 'short',
   });
 
-  const fullMonthName = new Date().toLocaleDateString(language === 'ne' ? 'ne-NP' : language === 'hi' ? 'hi-IN' : 'en-US', {
-    month: 'long',
-    year: 'numeric',
-  });
+  const locale = language === 'ne' ? 'ne-NP' : language === 'hi' ? 'hi-IN' : 'en-US';
+  const fullMonthName = getCycleLabel(profile?.cycle_start_day ?? 1, profile?.cycle_end_day ?? null, locale);
 
   const latestExpenses = expenses.items.slice(0, 3);
   const displayName = profile?.display_name || profile?.email?.split('@')[0] || 'User';
@@ -168,7 +166,6 @@ export default function HomeScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
-      {/* Offline Sync Banner — tap to retry sync, long-press to clear the queue */}
       <FlatList
         data={latestExpenses}
         keyExtractor={(item) => item.id}
@@ -231,6 +228,8 @@ export default function HomeScreen() {
               preferredCurrency={preferredCurrency}
               formattedDate={formattedDate}
               fullMonthName={fullMonthName}
+              cycleStartDay={profile?.cycle_start_day ?? 1}
+              cycleEndDay={profile?.cycle_end_day ?? null}
               todayTotal={todayTotal}
               prevMonthTotal={prevMonthTotal}
               monthIncome={monthIncome}

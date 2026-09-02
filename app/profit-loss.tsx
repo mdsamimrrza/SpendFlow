@@ -45,7 +45,10 @@ export default function ProfitLossScreen() {
   const { isPrivacyMode } = usePrivacy();
   const { rates } = useExchangeRates();
 
-  const expenses = useExpenses(profile?.id);
+  // Financial reporting must span every cycle since the first transaction, so
+  // the full history is fetched — the default server page (20 rows) would
+  // silently truncate every total below.
+  const expenses = useExpenses(profile?.id, { fetchAll: true });
   const currency = profile?.preferred_currency ?? 'NPR';
 
   // Default reporting range: Jan 1 of the current year → today
@@ -62,6 +65,7 @@ export default function ProfitLossScreen() {
 
   const [budgetInput, setBudgetInput] = useState('');
   const [savingBudget, setSavingBudget] = useState(false);
+  const [budgetSuccessMsg, setBudgetSuccessMsg] = useState<string | null>(null);
   const [selectedChartIdx, setSelectedChartIdx] = useState<number | null>(null);
   const [chartViewMode, setChartViewMode] = useState<'all' | 'income' | 'expense' | 'net'>('all');
 
@@ -355,12 +359,27 @@ export default function ProfitLossScreen() {
 
   async function handleSaveBudget() {
     setSavingBudget(true);
+    setBudgetSuccessMsg(null);
     try {
       const numeric = budgetInput.trim() ? Number(budgetInput.replace(/[^0-9.]/g, '')) : null;
       await updateProfile({ monthly_budget: numeric });
       await resetBudgetAlertHistory();
       await refreshProfile();
+
+      // Tactile Haptic Confirmation
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+
+      const msg = numeric
+        ? `Monthly budget saved: ${formatMoney(numeric, currency)}`
+        : 'Monthly budget cleared!';
+      setBudgetSuccessMsg(msg);
+
+      // Auto clear after 3.5 seconds
+      setTimeout(() => {
+        setBudgetSuccessMsg(null);
+      }, 3500);
     } catch (err) {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => undefined);
       Alert.alert(
         t('common_error') || 'Something went wrong',
         err instanceof Error ? err.message : t('common_error') || 'Something went wrong',
@@ -495,7 +514,7 @@ export default function ProfitLossScreen() {
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
           <Pressable
-            onPress={() => router.back()}
+            onPress={() => router.dismiss()}
             hitSlop={8}
             style={{
               width: 36,
@@ -1033,6 +1052,30 @@ export default function ProfitLossScreen() {
               numberOfLines={2}
             >
               {cycleSuccessMsg}
+            </Text>
+          </View>
+        )}
+
+        {/* Budget Save Success Toast */}
+        {budgetSuccessMsg && (
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 10,
+              padding: 12,
+              borderRadius: theme.radius.md,
+              backgroundColor: theme.isDark ? 'rgba(99, 102, 241, 0.2)' : '#EEF2FF',
+              borderWidth: 1.5,
+              borderColor: theme.colors.primary,
+            }}
+          >
+            <CheckCircle2 size={18} color={theme.colors.primary} />
+            <Text
+              style={{ flex: 1, fontSize: 12, fontWeight: '800', color: theme.colors.primary, includeFontPadding: false }}
+              numberOfLines={2}
+            >
+              {budgetSuccessMsg}
             </Text>
           </View>
         )}

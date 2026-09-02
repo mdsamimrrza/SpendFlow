@@ -10,7 +10,6 @@ import {
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Check, Plus, Trash2, X } from 'lucide-react-native';
-import { AlertModal } from '@/components/ui/AlertModal';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
@@ -47,7 +46,7 @@ export function CategoryManageModal({
   const [budgetMonthly, setBudgetMonthly] = useState('');
   const [loading, setLoading] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-  const [alert, setAlert] = useState<{ title: string; message: string } | null>(null);
+  const [validationError, setValidationError] = useState<string | null>(null);
 
   useEffect(() => {
     if (categoryToEdit) {
@@ -67,11 +66,11 @@ export function CategoryManageModal({
 
   async function handleSave() {
     if (!name.trim()) {
-      setAlert({ title: 'Validation Error', message: 'Please enter a category name.' });
+      setValidationError('Please enter a category name.');
       return;
     }
     if (!userId) {
-      setAlert({ title: 'Error', message: 'You must be logged in to manage categories.' });
+      setValidationError('You must be logged in to manage categories.');
       return;
     }
 
@@ -105,7 +104,7 @@ export function CategoryManageModal({
       }
       onClose();
     } catch (err) {
-      setAlert({ title: 'Error', message: err instanceof Error ? err.message : 'Could not save category.' });
+      setValidationError(err instanceof Error ? err.message : 'Could not save category.');
     } finally {
       setLoading(false);
     }
@@ -127,7 +126,7 @@ export function CategoryManageModal({
       onSuccess();
       onClose();
     } catch (err) {
-      setAlert({ title: 'Error', message: err instanceof Error ? err.message : 'Could not delete category.' });
+      setValidationError(err instanceof Error ? err.message : 'Could not delete category.');
     } finally {
       setLoading(false);
     }
@@ -329,13 +328,16 @@ export function CategoryManageModal({
       />
     </Modal>
 
-    <AlertModal
-      visible={!!alert}
-      title={alert?.title ?? ''}
-      message={alert?.message ?? ''}
-      variant="error"
-      onClose={() => setAlert(null)}
-    />
+      {validationError && (
+        <ConfirmDialog
+          visible
+          title="Error"
+          message={validationError}
+          confirmLabel="OK"
+          onCancel={() => setValidationError(null)}
+          onConfirm={() => setValidationError(null)}
+        />
+      )}
     </>
   );
 }

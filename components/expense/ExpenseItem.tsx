@@ -25,9 +25,11 @@ interface ExpenseItemProps {
   expense: Expense;
   onDelete?: (expense: Expense) => void;
   onPress?: (expense: Expense) => void;
+  /** Pre-converted amount in the preferred currency (historical-rate aware). */
+  displayAmount?: number;
 }
 
-export function ExpenseItem({ expense, onDelete, onPress }: ExpenseItemProps) {
+export function ExpenseItem({ expense, onDelete, onPress, displayAmount }: ExpenseItemProps) {
   const theme = useTheme();
   const { profile } = useAuth();
   const { convert } = useExchangeRates();
@@ -41,9 +43,11 @@ export function ExpenseItem({ expense, onDelete, onPress }: ExpenseItemProps) {
 
   const preferredCurrency = profile?.preferred_currency ?? 'NPR';
   const isDifferentCurrency = expense.currency && expense.currency !== preferredCurrency;
-  const convertedAmount = isDifferentCurrency
-    ? convert(Number(expense.amount), expense.currency, preferredCurrency)
-    : Number(expense.amount);
+  const convertedAmount =
+    displayAmount ??
+    (isDifferentCurrency
+      ? convert(Number(expense.amount), expense.currency, preferredCurrency)
+      : Number(expense.amount));
 
   // Swipe Left PanResponder Gesture
   const panResponder = useRef(

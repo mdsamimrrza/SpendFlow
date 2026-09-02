@@ -13,9 +13,11 @@ import {
   View,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import * as Haptics from 'expo-haptics';
 import {
   Bell,
   Check,
+  CheckCircle2,
   ChevronRight,
   Coins,
   DollarSign,
@@ -98,6 +100,7 @@ export default function SettingsScreen() {
   // Form inputs
   const [nameInput, setNameInput] = useState('');
   const [savingName, setSavingName] = useState(false);
+  const [nameSuccessMsg, setNameSuccessMsg] = useState<string | null>(null);
 
   const preferredCurrency = profile?.preferred_currency ?? 'NPR';
   const displayName = profile?.display_name || profile?.email?.split('@')[0] || 'Samim Reza';
@@ -151,11 +154,24 @@ export default function SettingsScreen() {
   async function handleSaveName() {
     if (!nameInput.trim()) return;
     setSavingName(true);
+    setNameSuccessMsg(null);
     try {
       await updateProfile({ display_name: nameInput.trim() });
       await refreshProfile();
       setEditProfileModalOpen(false);
+
+      // Tactile Haptic Confirmation
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+
+      const msg = `Name updated to "${nameInput.trim()}"`;
+      setNameSuccessMsg(msg);
+
+      // Auto clear after 3.5 seconds
+      setTimeout(() => {
+        setNameSuccessMsg(null);
+      }, 3500);
     } catch (err) {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => undefined);
       Alert.alert(t('common_error'), err instanceof Error ? err.message : t('common_error'));
     } finally {
       setSavingName(false);
@@ -955,6 +971,34 @@ export default function SettingsScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      {/* Name Save Success Toast */}
+      {nameSuccessMsg && (
+        <View
+          style={{
+            position: 'absolute',
+            top: 80,
+            left: 16,
+            right: 16,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 10,
+            padding: 12,
+            borderRadius: theme.radius.md,
+            backgroundColor: theme.isDark ? 'rgba(99, 102, 241, 0.2)' : '#EEF2FF',
+            borderWidth: 1.5,
+            borderColor: theme.colors.primary,
+            zIndex: 1000,
+          }}
+        >
+          <CheckCircle2 size={18} color={theme.colors.primary} />
+          <Text
+            style={{ flex: 1, fontSize: 12, fontWeight: '800', color: theme.colors.primary }}
+          >
+            {nameSuccessMsg}
+          </Text>
+        </View>
+      )}
 
       {/* ── 3. CURRENCY SELECTION MODAL ── */}
       <Modal

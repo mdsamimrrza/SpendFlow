@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Modal, Pressable, RefreshControl, ScrollView, useWindowDimensions, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
@@ -37,6 +37,7 @@ import { Card } from '@/components/ui/Card';
 import { PrivacyEyeButton } from '@/components/ui/PrivacyEyeButton';
 import { Text } from '@/components/ui/Text';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
+import { CalendarModal, DateRange } from '@/components/ui/CalendarModal';
 import { useAuth } from '@/hooks/useAuth';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { useExpenses } from '@/hooks/useExpenses';
@@ -44,7 +45,8 @@ import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
 import { useTheme } from '@/hooks/useTheme';
 import { listCategories } from '@/services/categories';
-import { Category, PeriodKey } from '@/types';
+import { buildRateResolver, RateResolver } from '@/services/exchange';
+import { Category, Expense, PeriodKey } from '@/types';
 import { filterExpensesByPeriod, formatMoney, sumExpenses, sumIncome } from '@/utils/format';
 
 type AnalyticsSectionTab = 'overview' | 'categories' | 'habits' | 'all';
@@ -56,10 +58,12 @@ export default function AnalyticsScreen() {
   const { t } = useLanguage();
   const { isPrivacyMode } = usePrivacy();
   const theme = useTheme();
-  const { rates, convert } = useExchangeRates();
+  const { convert } = useExchangeRates();
   const { width } = useWindowDimensions();
   const isCompact = width < 390;
   const [period, setPeriod] = useState<PeriodKey>('month');
+  const [customRange, setCustomRange] = useState<DateRange>({ startDate: null, endDate: null });
+  const [calendarOpen, setCalendarOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<AnalyticsSectionTab>('overview');
   const [periodModalOpen, setPeriodModalOpen] = useState(false);
   const [sectionModalOpen, setSectionModalOpen] = useState(false);
@@ -80,6 +84,7 @@ export default function AnalyticsScreen() {
     { label: t('analytics_period_week') || 'Week', value: 'week' },
     { label: t('analytics_period_month') || 'Month', value: 'month' },
     { label: t('analytics_period_year') || 'Year', value: 'year' },
+    { label: t('analytics_period_custom') || 'Custom', value: 'custom' },
     { label: t('analytics_period_all') || 'All Time', value: 'all' },
   ];
 
@@ -99,12 +104,12 @@ export default function AnalyticsScreen() {
 
   const preferredCurrency = profile?.preferred_currency ?? 'NPR';
 
-  // Apply Period Filter (Today, This Week, This Month, This Year, All Time)
+  // Apply Period Filter (Today, This Week, This Month, This Year, Custom, All Time)
   const cycleStartDay = profile?.cycle_start_day ?? 1;
   const cycleEndDay = profile?.cycle_end_day ?? null;
   const filteredItems = useMemo(
-    () => filterExpensesByPeriod(expenses.items, period, cycleStartDay, cycleEndDay),
-    [expenses.items, period, cycleStartDay, cycleEndDay],
+    () => filterExpensesByPeriod(expenses.items, period, cycleStartDay, cycleEndDay, customRange),
+    [expenses.items, period, cycleStartDay, cycleEndDay, customRange],
   );
 
   const expenseItems = useMemo(
@@ -117,8 +122,39 @@ export default function AnalyticsScreen() {
     [filteredItems],
   );
 
-  const totalSpend = sumExpenses(filteredItems, preferredCurrency, rates, 'expense');
-  const totalIncome = sumIncome(filteredItems, preferredCurrency, rates);
+  const [rateResolver, setRateResolver] = useState<RateResolver | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    buildRateResolver(filteredItems, preferredCurrency)
+      .then((resolver) => {
+        if (!cancelled) setRateResolver(resolver);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [filteredItems, preferredCurrency]);
+
+  // Every expense converts at its own transaction date, never today's rate
+  const convertAtDate = useCallback(
+    (expense: Expense) => {
+      if (rateResolver) {
+        return rateResolver.convert(Number(expense.amount), expense.currency || 'NPR', preferredCurrency, expense.date);
+      }
+      return convert(Number(expense.amount), expense.currency || 'NPR', preferredCurrency);
+    },
+    [rateResolver, convert, preferredCurrency],
+  );
+
+  const totalSpend = useMemo(
+    () => expenseItems.reduce((sum, e) => sum + convertAtDate(e), 0),
+    [expenseItems, convertAtDate],
+  );
+  const totalIncome = useMemo(
+    () => incomeItems.reduce((sum, e) => sum + convertAtDate(e), 0),
+    [incomeItems, convertAtDate],
+  );
   const netSavings = totalIncome - totalSpend;
 
   // Largest single expense item
@@ -127,14 +163,14 @@ export default function AnalyticsScreen() {
     let highest = expenseItems[0];
     let maxVal = 0;
     expenseItems.forEach((e) => {
-      const converted = convert(Number(e.amount), e.currency || 'NPR', preferredCurrency);
+      const converted = convertAtDate(e);
       if (converted > maxVal) {
         maxVal = converted;
         highest = e;
       }
     });
     return { expense: highest, amount: maxVal };
-  }, [expenseItems, preferredCurrency, convert]);
+  }, [expenseItems, convertAtDate]);
 
   // Daily average spend velocity in this period
   const dailyVelocity = useMemo(() => {
@@ -158,7 +194,7 @@ export default function AnalyticsScreen() {
     const map: Record<string, { total: number; count: number }> = {};
     expenseItems.forEach((e) => {
       const pm = e.payment_method || 'Cash';
-      const converted = convert(Number(e.amount), e.currency || 'NPR', preferredCurrency);
+      const converted = convertAtDate(e);
       if (!map[pm]) map[pm] = { total: 0, count: 0 };
       map[pm].total += converted;
       map[pm].count += 1;
@@ -169,7 +205,7 @@ export default function AnalyticsScreen() {
       count: data.count,
       pct: totalSpend > 0 ? Math.round((data.total / totalSpend) * 100) : 0,
     }));
-  }, [expenseItems, preferredCurrency, convert, totalSpend]);
+  }, [expenseItems, convertAtDate, totalSpend]);
 
   const showOverview = activeTab === 'overview' || activeTab === 'all';
   const showCategories = activeTab === 'categories' || activeTab === 'all';
@@ -305,8 +341,13 @@ export default function AnalyticsScreen() {
                       key={opt.value}
                       onPress={() => {
                         void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
-                        setPeriod(opt.value);
-                        setPeriodModalOpen(false);
+                        if (opt.value === 'custom') {
+                          setPeriodModalOpen(false);
+                          setCalendarOpen(true);
+                        } else {
+                          setPeriod(opt.value);
+                          setPeriodModalOpen(false);
+                        }
                       }}
                       style={({ pressed }) => ({
                         flexDirection: 'row',
@@ -1060,6 +1101,20 @@ export default function AnalyticsScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      {/* Custom Date Range Calendar */}
+      <CalendarModal
+        visible={calendarOpen}
+        onClose={() => setCalendarOpen(false)}
+        initialRange={customRange}
+        onApply={(applied) => {
+          if (applied.startDate) {
+            setCustomRange(applied);
+            setPeriod('custom');
+          }
+          setCalendarOpen(false);
+        }}
+      />
     </ScrollView>
   );
 }

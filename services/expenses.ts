@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { EXPENSE_CACHE_KEY, PAGE_SIZE } from '@/constants/app';
 import { seedDefaultCategories } from '@/services/categories';
+import { getRate } from '@/services/exchange';
 import { Expense, ExpenseFilters, ExpenseInput, ExpensePage, SortKey } from '@/types';
 import { supabase } from '@/utils/supabase';
 
@@ -28,10 +29,6 @@ function applyExpenseFilters(query: any, page = 0, filters?: ExpenseFilters, sor
   if (sort === 'amount_asc' || sort === 'amount_desc') q = q.order('amount', { ascending: sort === 'amount_asc' });
   else q = q.order('date', { ascending: sort === 'date_asc' }).order('created_at', { ascending: false });
   return q;
-}
-
-function isUnsyncedLocalExpense(expense: Expense): boolean {
-  return expense.is_synced === false || expense.id.startsWith('offline-');
 }
 
 function matchesLocalFilters(expense: Expense, filters?: ExpenseFilters): boolean {
@@ -74,11 +71,7 @@ export function filterAndSortCachedExpenses(items: Expense[], filters?: ExpenseF
 }
 
 export async function listExpenses(userId: string, page = 0, filters?: ExpenseFilters, sort: SortKey = 'date_desc'): Promise<ExpensePage> {
-  // Start the network request and the cache read in parallel — the request
-  // must never wait on disk. The cache read (started before the query below
-  // resolves) still sees the pre-write cache, which is what the offline merge
-  // at the bottom of this function depends on.
-  const queryPromise = Promise.resolve(
+  let { data, error } = await Promise.resolve(
     applyExpenseFilters(
       supabase.from('expenses').select(selection).eq('user_id', userId).is('deleted_at', null),
       page,
@@ -86,9 +79,6 @@ export async function listExpenses(userId: string, page = 0, filters?: ExpenseFi
       sort,
     ),
   );
-  const cachePromise: Promise<Expense[]> = page === 0 ? getCachedExpenses() : Promise.resolve([]);
-
-  let { data, error } = await queryPromise;
   if (error) {
     const fallbackQuery = applyExpenseFilters(
       supabase.from('expenses').select(selection).eq('user_id', userId).is('deleted_at', null),
@@ -100,24 +90,15 @@ export async function listExpenses(userId: string, page = 0, filters?: ExpenseFi
     if (fallbackRes.error) throw fallbackRes.error;
     data = fallbackRes.data;
   }
-  const cachedExpenses = await cachePromise;
 
   const serverItems = ((data ?? []) as Expense[]).map((e) => ({
     ...e,
     type: e.type || 'expense',
   }));
 
-  const localPendingItems = page === 0
-    ? cachedExpenses.filter((expense) => (
-      expense.user_id === userId
-      && isUnsyncedLocalExpense(expense)
-      && matchesLocalFilters(expense, filters)
-    ))
-    : [];
-  const serverIds = new Set(serverItems.map((expense) => expense.id));
-  const items = page === 0
-    ? sortExpenses([...localPendingItems.filter((expense) => !serverIds.has(expense.id)), ...serverItems], sort)
-    : serverItems;
+  // The server result is the authoritative list; page 0 is re-sorted client-side
+  // so it matches the cache-paint ordering used before the network resolves.
+  const items = page === 0 ? sortExpenses(serverItems, sort) : serverItems;
 
   if (page === 0) await AsyncStorage.setItem(EXPENSE_CACHE_KEY, JSON.stringify(items));
   return { items, hasMore: filters?.fetchAll ? false : serverItems.length === PAGE_SIZE };
@@ -157,35 +138,33 @@ function isValidUUID(str?: string | null): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
 }
 
-export async function createExpense(userId: string, input: ExpenseInput, clientSyncId?: string) {
+export async function createExpense(userId: string, input: ExpenseInput) {
   const transactionType = input.type || 'expense';
   const sanitizedBankAccountId = isValidUUID(input.bank_account_id) ? input.bank_account_id : null;
   const sanitizedInput = {
     ...input,
     bank_account_id: sanitizedBankAccountId,
   };
-  const { type, ...baseInput } = sanitizedInput;
+
+  const snapshot = await getRate(input.currency || 'USD', input.date).catch(() => undefined);
 
   const values = {
     ...sanitizedInput,
     type: transactionType,
     user_id: userId,
-    is_synced: true,
-    ...(clientSyncId ? { client_sync_id: clientSyncId } : {}),
+    ...(snapshot ? { exchange_rate_to_usd: snapshot, base_currency: 'USD' } : {}),
   };
-  const query = clientSyncId
-    ? supabase.from('expenses').upsert(values, { onConflict: 'user_id,client_sync_id' })
-    : supabase.from('expenses').insert(values);
-  const result = await query.select(selection).single();
+  const result = await supabase.from('expenses').insert(values).select(selection).single();
 
   if (!result.error && result.data) return result.data as Expense;
 
   // Keep compatibility with databases that have not yet received the transaction-type
   // migration. Never retry arbitrary errors: a write may already have succeeded.
   if (result.error?.code !== '42703') throw result.error;
+  const { type: _omitType, ...baseInput } = sanitizedInput;
   const legacyResult = await supabase
     .from('expenses')
-    .insert({ ...baseInput, user_id: userId, is_synced: true })
+    .insert({ ...baseInput, user_id: userId })
     .select(selection)
     .single();
   if (legacyResult.error) throw legacyResult.error;
@@ -199,12 +178,23 @@ export async function updateExpense(id: string, input: ExpenseInput) {
     ...input,
     bank_account_id: sanitizedBankAccountId,
   };
-  const { type, ...baseInput } = sanitizedInput;
+
+  const existing = await supabase.from('expenses').select('date, currency').eq('id', id).maybeSingle();
+  const dateChanged = Boolean(
+    existing.data &&
+      (existing.data.date !== input.date || existing.data.currency !== input.currency),
+  );
+  const snapshot = dateChanged
+    ? await getRate(input.currency || 'USD', input.date).catch(() => undefined)
+    : undefined;
+  const snapshotFields = snapshot
+    ? { exchange_rate_to_usd: snapshot, base_currency: 'USD' }
+    : {};
 
   let updatedData: any = null;
   const res1 = await supabase
     .from('expenses')
-    .update({ ...sanitizedInput, type: transactionType, updated_at: new Date().toISOString(), is_synced: true })
+    .update({ ...sanitizedInput, ...snapshotFields, type: transactionType, updated_at: new Date().toISOString() })
     .eq('id', id)
     .select(selection)
     .single();
@@ -212,9 +202,10 @@ export async function updateExpense(id: string, input: ExpenseInput) {
   if (!res1.error && res1.data) {
     updatedData = res1.data;
   } else {
+    const { type: _omitType, ...baseInput } = sanitizedInput;
     const res2 = await supabase
       .from('expenses')
-      .update({ ...baseInput, updated_at: new Date().toISOString(), is_synced: true })
+      .update({ ...baseInput, ...snapshotFields, updated_at: new Date().toISOString() })
       .eq('id', id)
       .select(selection)
       .single();
@@ -290,7 +281,6 @@ export async function importExpensesFromCsv(userId: string, csv: string) {
       payment_method: (indexOf('payment method') >= 0 ? cells[indexOf('payment method')] : 'Cash') || 'Cash',
       description: indexOf('description') >= 0 ? cells[indexOf('description')] || null : null,
       notes: indexOf('notes') >= 0 ? cells[indexOf('notes')] || null : null,
-      is_synced: true,
     };
   }).filter((row) => row.category_id);
   if (!rows.length) throw new Error('CSV has no importable rows.');

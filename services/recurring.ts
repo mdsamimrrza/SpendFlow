@@ -2,6 +2,7 @@ import { addDays, addMonths, addWeeks, format, isBefore, parseISO } from 'date-f
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import { PaymentMethod, RecurringFrequency, RecurringRule } from '@/types';
+import { getRate } from '@/services/exchange';
 import { supabase } from '@/utils/supabase';
 
 const selection = '*, categories(name, icon, color)';
@@ -25,9 +26,15 @@ export async function createRecurringRule(userId: string, input: {
   frequency: RecurringFrequency;
   next_due_date: string;
 }) {
+  const snapshot = await getRate(input.currency || 'USD', input.next_due_date).catch(() => undefined);
   const { data, error } = await supabase
     .from('recurring_rules')
-    .insert({ user_id: userId, ...input, is_active: true })
+    .insert({
+      user_id: userId,
+      ...input,
+      is_active: true,
+      ...(snapshot ? { exchange_rate_to_usd: snapshot, base_currency: 'USD' } : {}),
+    })
     .select(selection)
     .single();
   if (error) throw error;
@@ -100,17 +107,19 @@ export async function generateDueRecurringExpenses(userId: string) {
     let dueDate = parseISO(rule.next_due_date);
     let nextDueDate = dueDate;
     while (!isBefore(today, nextDueDate) && generated < 100) {
+      const expenseDate = format(nextDueDate, 'yyyy-MM-dd');
+      const snapshot = await getRate(rule.currency || 'USD', expenseDate).catch(() => undefined);
       const { error } = await supabase.from('expenses').insert({
         user_id: userId,
         category_id: rule.category_id,
         amount: rule.amount,
         currency: rule.currency,
         description: rule.description,
-        date: format(nextDueDate, 'yyyy-MM-dd'),
+        date: expenseDate,
         payment_method: rule.payment_method,
         is_recurring: true,
         recurring_rule_id: rule.id,
-        is_synced: true,
+        ...(snapshot ? { exchange_rate_to_usd: snapshot, base_currency: 'USD' } : {}),
       });
       if (error) throw error;
       generated += 1;

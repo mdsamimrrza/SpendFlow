@@ -45,6 +45,7 @@ import {
   startOfWeek,
 } from 'date-fns';
 import { ExpenseItem } from '@/components/expense/ExpenseItem';
+import { buildRateResolver, RateResolver } from '@/services/exchange';
 import { BottomSheet } from '@/components/ui/BottomSheet';
 import { Button } from '@/components/ui/Button';
 import { CalendarModal, DateRange } from '@/components/ui/CalendarModal';
@@ -67,14 +68,14 @@ import { useTheme } from '@/hooks/useTheme';
 import { listCategories } from '@/services/categories';
 import { exportCsv, exportExcel, exportPdf } from '@/services/export';
 import { Category, Expense, SortKey } from '@/types';
-import { currentMonthRange, formatMoney, sumExpenses } from '@/utils/format';
+import { currentMonthRange, getCycleLabel, formatMoney } from '@/utils/format';
 
 type HistoryPeriod = 'all' | 'today' | 'week' | 'month' | 'custom';
 
 export default function HistoryScreen() {
   const { profile, session, refreshProfile } = useAuth();
-  const { rates } = useExchangeRates();
-  const { t } = useLanguage();
+  const { convert } = useExchangeRates();
+  const { t, language } = useLanguage();
   const { isPrivacyMode } = usePrivacy();
   const theme = useTheme();
   const [search, setSearch] = useState('');
@@ -173,11 +174,14 @@ export default function HistoryScreen() {
     }
   }, [profile?.id]);
 
+  const locale = language === 'ne' ? 'ne-NP' : language === 'hi' ? 'hi-IN' : 'en-US';
+  const cycleMonthLabel = getCycleLabel(profile?.cycle_start_day ?? 1, profile?.cycle_end_day ?? null, locale);
+
   const PERIOD_CHIPS: { label: string; value: HistoryPeriod }[] = [
     { label: t('history_period_all') || 'All Time', value: 'all' },
     { label: t('history_period_today') || 'Today', value: 'today' },
     { label: t('history_period_week') || 'This Week', value: 'week' },
-    { label: t('history_period_month') || 'This Month', value: 'month' },
+    { label: cycleMonthLabel, value: 'month' },
     { label: t('history_period_custom') || 'Custom 📅', value: 'custom' },
   ];
 
@@ -248,10 +252,35 @@ export default function HistoryScreen() {
     });
   }, [expenses.items, selectedCategoryId, typeFilter]);
 
+  const [rateResolver, setRateResolver] = useState<RateResolver | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    buildRateResolver(filteredExpenses, preferredCurrency)
+      .then((resolver) => {
+        if (!cancelled) setRateResolver(resolver);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [filteredExpenses, preferredCurrency]);
+
+  // Every expense converts at its own transaction date, never today's rate
+  const convertAtDate = useCallback(
+    (expense: Expense) => {
+      if (rateResolver) {
+        return rateResolver.convert(Number(expense.amount), expense.currency || 'NPR', preferredCurrency, expense.date);
+      }
+      return convert(Number(expense.amount), expense.currency || 'NPR', preferredCurrency);
+    },
+    [rateResolver, convert, preferredCurrency],
+  );
+
   // Total summary of all matching expenses
   const totalAmount = useMemo(
-    () => sumExpenses(filteredExpenses, preferredCurrency, rates, typeFilter),
-    [filteredExpenses, preferredCurrency, rates, typeFilter],
+    () => filteredExpenses.reduce((sum, item) => sum + convertAtDate(item), 0),
+    [filteredExpenses, convertAtDate],
   );
 
   // Highest single expense
@@ -325,11 +354,11 @@ export default function HistoryScreen() {
       }
 
       groups[rawDate].data.push(item);
-      groups[rawDate].total += Number(item.amount);
+      groups[rawDate].total += convertAtDate(item);
     });
 
     return Object.keys(groups).map((key) => groups[key]);
-  }, [paginatedItems, t]);
+  }, [paginatedItems, t, convertAtDate]);
 
   const goToPage = (pageNumber: number) => {
     const clamped = Math.max(1, Math.min(pageNumber, totalPages));
@@ -1254,7 +1283,11 @@ export default function HistoryScreen() {
           </View>
         )}
         renderItem={({ item }) => (
-          <ExpenseItem expense={item} onDelete={(expense) => expenses.remove(expense.id)} />
+          <ExpenseItem
+            expense={item}
+            displayAmount={convertAtDate(item)}
+            onDelete={(expense) => expenses.remove(expense.id)}
+          />
         )}
         ListEmptyComponent={
           expenses.loading ? (

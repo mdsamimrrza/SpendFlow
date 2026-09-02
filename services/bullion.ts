@@ -1,6 +1,32 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { format, subDays, subMonths } from 'date-fns';
-import { convertCurrency } from '@/services/currency';
+
+const DEFAULT_RATES: Record<string, number> = {
+  USD: 1.0,
+  NPR: 133.5,
+  INR: 83.5,
+  QAR: 3.64,
+  GBP: 0.79,
+};
+
+function convertCurrency(
+  amount: number,
+  fromCurrency = 'NPR',
+  toCurrency = 'NPR',
+  rates: Record<string, number> = DEFAULT_RATES,
+): number {
+  if (fromCurrency === toCurrency || !amount) return amount;
+
+  const fromRate = rates[fromCurrency] || DEFAULT_RATES[fromCurrency] || 1;
+  const toRate = rates[toCurrency] || DEFAULT_RATES[toCurrency] || 1;
+
+  if (fromRate <= 0) return amount;
+
+  const amountInUSD = amount / fromRate;
+  const converted = amountInUSD * toRate;
+
+  return Math.round(converted * 100) / 100;
+}
 
 export interface BullionRates {
   goldUsdPerOz: number;

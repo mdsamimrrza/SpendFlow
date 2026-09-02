@@ -16,8 +16,8 @@ import {
   Wallet,
   X,
 } from 'lucide-react-native';
-import { AlertModal } from '@/components/ui/AlertModal';
 import { Button } from '@/components/ui/Button';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Card } from '@/components/ui/Card';
 import { CategoryIcon } from '@/components/ui/CategoryIcon';
 import { PressableScale } from '@/components/ui/PressableScale';
@@ -631,13 +631,16 @@ export function CategoryBudgetFormModal({
       </View>
     </Modal>
 
-    <AlertModal
-      visible={!!alert}
-      title={alert?.title ?? ''}
-      message={alert?.message ?? ''}
-      variant="error"
-      onClose={() => setAlert(null)}
-    />
+      {alert && (
+        <ConfirmDialog
+          visible
+          title={alert.title}
+          message={alert.message}
+          confirmLabel="OK"
+          onCancel={() => setAlert(null)}
+          onConfirm={() => setAlert(null)}
+        />
+      )}
     </>
   );
 }

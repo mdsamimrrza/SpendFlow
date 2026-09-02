@@ -300,7 +300,10 @@ export function CalendarModal({
               {(['today', 'yesterday', 'last7', 'thisMonth', 'lastMonth'] as const).map((p) => (
                 <Pressable
                   key={p}
-                  style={[styles.presetChip, { backgroundColor: theme.colors.surfaceElevated, borderColor: theme.colors.border }]}
+                  style={[styles.presetChip, {
+                    backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
+                    borderColor: theme.colors.border,
+                  }]}
                   onPress={() => handleQuickPreset(p)}
                 >
                   <Text style={{ fontWeight: '700', fontSize: 12, color: theme.colors.text }}>
@@ -569,10 +572,13 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   presetChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
     borderRadius: 14,
     borderWidth: 1,
+    minHeight: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   monthNav: {
     flexDirection: 'row',

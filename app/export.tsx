@@ -38,7 +38,9 @@ export default function ExportScreen() {
   const [period, setPeriod] = useState<PeriodKey>('month');
   const [isExporting, setIsExporting] = useState<string | null>(null);
 
-  const expenses = useExpenses(profile?.id);
+  // Statements must cover the complete selected period — the default server
+  // page (20 rows) would silently truncate exports for larger histories.
+  const expenses = useExpenses(profile?.id, { fetchAll: true });
   const preferredCurrency = profile?.preferred_currency ?? 'NPR';
 
   // Filter items by chosen period (month follows the user's salary cycle)

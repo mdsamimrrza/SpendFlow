@@ -1,8 +1,34 @@
-import { endOfMonth, format, startOfMonth, subMonths } from 'date-fns';
+import { endOfMonth, format, parseISO, startOfMonth, subMonths } from 'date-fns';
 import { Expense, PeriodKey } from '@/types';
-import { convertCurrency } from '@/services/currency';
 
 let globalPrivacyMode = false;
+
+const DEFAULT_RATES: Record<string, number> = {
+  USD: 1.0,
+  NPR: 133.5,
+  INR: 83.5,
+  QAR: 3.64,
+  GBP: 0.79,
+};
+
+function convertCurrency(
+  amount: number,
+  fromCurrency = 'NPR',
+  toCurrency = 'NPR',
+  rates: Record<string, number> = DEFAULT_RATES,
+): number {
+  if (fromCurrency === toCurrency || !amount) return amount;
+
+  const fromRate = rates[fromCurrency] || DEFAULT_RATES[fromCurrency] || 1;
+  const toRate = rates[toCurrency] || DEFAULT_RATES[toCurrency] || 1;
+
+  if (fromRate <= 0) return amount;
+
+  const amountInUSD = amount / fromRate;
+  const converted = amountInUSD * toRate;
+
+  return Math.round(converted * 100) / 100;
+}
 
 export function setGlobalPrivacyMode(enabled: boolean) {
   globalPrivacyMode = enabled;
@@ -213,7 +239,36 @@ export function getCycleMeta(startDay = 1, endDay: number | null = null) {
   };
 }
 
-export function filterExpensesByPeriod(expenses: Expense[], period: PeriodKey, cycleStartDay = 1, cycleEndDay: number | null = null): Expense[] {
+/**
+ * Returns a short human label for the active cycle.
+ * - Calendar month (startDay=1): "Aug" or "Aug 2026" (with year when not current year)
+ * - Custom cycle crossing months: "Aug–Sep" or "Aug–Sep 2026"
+ * - Same-month custom cycle: "Aug"
+ */
+export function getCycleLabel(startDay = 1, endDay: number | null = null, locale = 'en-US'): string {
+  const range = currentMonthRange(startDay, endDay);
+  const from = parseISO(range.from);
+  const to = parseISO(range.to);
+  const now = new Date();
+  const showYear = from.getFullYear() !== now.getFullYear() || to.getFullYear() !== now.getFullYear();
+
+  const fromMonth = from.toLocaleDateString(locale, { month: 'short' });
+  const toMonth   = to.toLocaleDateString(locale, { month: 'short' });
+  const year = to.getFullYear();
+
+  if (fromMonth === toMonth) {
+    return showYear ? `${fromMonth} ${year}` : fromMonth;
+  }
+  return showYear ? `${fromMonth}–${toMonth} ${year}` : `${fromMonth}–${toMonth}`;
+}
+
+export function filterExpensesByPeriod(
+  expenses: Expense[],
+  period: PeriodKey,
+  cycleStartDay = 1,
+  cycleEndDay: number | null = null,
+  customRange?: { startDate: string | null; endDate: string | null },
+): Expense[] {
   if (!period || period === 'all') return expenses;
 
   const now = new Date();
@@ -245,6 +300,12 @@ export function filterExpensesByPeriod(expenses: Expense[], period: PeriodKey, c
   if (period === 'year') {
     const yearPrefix = format(now, 'yyyy');
     return expenses.filter((e) => e.date.startsWith(yearPrefix));
+  }
+
+  if (period === 'custom' && customRange?.startDate) {
+    const start = customRange.startDate;
+    const end = customRange.endDate || start;
+    return expenses.filter((e) => e.date >= start && e.date <= end);
   }
 
   return expenses;

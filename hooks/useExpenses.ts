@@ -3,7 +3,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { listCategories } from '@/services/categories';
 import { createExpense, filterAndSortCachedExpenses, getCachedExpenses, listExpenses, softDeleteExpense, updateExpense } from '@/services/expenses';
 import { checkAndNotifyBudgetThreshold, checkAndNotifyCategoryBudgetThreshold, notifyExpenseAdded, notifyLargeExpense } from '@/services/notifications';
-import { EXPENSE_CACHE_KEY } from '@/constants/app';
 import { Expense, ExpenseFilters, ExpenseInput, SortKey } from '@/types';
 import { currentMonthRange, sumExpenses } from '@/utils/format';
 import { notifyOtherDevices } from '@/services/pushNotifications';
@@ -13,23 +12,6 @@ const listeners = new Set<ExpenseChangeListener>();
 
 export function notifyExpensesChanged() {
   listeners.forEach((listener) => listener());
-}
-
-/**
- * Synchronously removes offline entries from AsyncStorage cache
- * Returns a promise that resolves when cleanup is complete
- */
-export async function removeOfflineEntries(localIds: string[]): Promise<void> {
-  if (localIds.length === 0) return;
-  try {
-    const raw = await AsyncStorage.getItem(EXPENSE_CACHE_KEY);
-    if (!raw) return;
-    const parsed = JSON.parse(raw) as Expense[];
-    const cleaned = parsed.filter((e) => !localIds.includes(e.id));
-    await AsyncStorage.setItem(EXPENSE_CACHE_KEY, JSON.stringify(cleaned));
-  } catch {
-    // Ignore cache cleanup errors
-  }
 }
 
 async function getEffectiveMonthlyBudget(userId?: string): Promise<number> {

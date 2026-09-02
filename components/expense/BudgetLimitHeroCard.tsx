@@ -16,7 +16,7 @@ import { CURRENCY_DETAILS } from '@/constants/app';
 import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
 import { useTheme } from '@/hooks/useTheme';
-import { formatBudgetPercent, formatMoney } from '@/utils/format';
+import { formatBudgetPercent, formatMoney, getCycleLabel } from '@/utils/format';
 
 interface BudgetLimitHeroCardProps {
   monthTotal: number;
@@ -24,6 +24,8 @@ interface BudgetLimitHeroCardProps {
   preferredCurrency: string;
   formattedDate: string;
   fullMonthName?: string;
+  cycleStartDay?: number;
+  cycleEndDay?: number | null;
   todayTotal?: number;
   prevMonthTotal?: number;
   monthIncome?: number;
@@ -36,6 +38,8 @@ export function BudgetLimitHeroCard({
   preferredCurrency,
   formattedDate,
   fullMonthName,
+  cycleStartDay = 1,
+  cycleEndDay = null,
   todayTotal = 0,
   prevMonthTotal = 0,
   monthIncome = 0,
@@ -148,11 +152,9 @@ export function BudgetLimitHeroCard({
     incIsUp = true;
   }
 
-  // Current month name (abbreviated: Jan, Feb, Mar …)
-  const currentMonthName = new Date().toLocaleDateString(
-    language === 'ne' ? 'ne-NP' : language === 'hi' ? 'hi-IN' : 'en-US',
-    { month: 'short' }
-  );
+  // Cycle-aware month label: "Aug" for calendar month, "Aug–Sep" for custom cycle
+  const locale = language === 'ne' ? 'ne-NP' : language === 'hi' ? 'hi-IN' : 'en-US';
+  const currentMonthName = getCycleLabel(cycleStartDay, cycleEndDay, locale);
 
   // Measure the unmasked amount width so that when privacy mode turns on (and amount becomes ••••••),
   // the eye button remains locked in the EXACT same spot with zero layout jump or shift.
