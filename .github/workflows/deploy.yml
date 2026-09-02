@@ -26,6 +26,13 @@ jobs:
       - name: 📦 Install Dependencies
         run: npm ci
 
+      - name: 🔐 Restore Firebase configuration
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          test -n "$GOOGLE_SERVICES_JSON"
+          printf '%s' "$GOOGLE_SERVICES_JSON" > google-services.json
+
       - name: ⚡ Trigger EAS Production Build (Expo.dev APK)
         run: eas build --platform android --profile production --non-interactive --no-wait
         env:

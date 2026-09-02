@@ -44,6 +44,7 @@ yarn-error.*
 .expo/dev/logs/
 
 # ── Firebase (keep google-services.json out of source control) ────────────────
+google-services.json
 android/app/google-services.json
 ios/GoogleService-Info.plist
 
