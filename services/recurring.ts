@@ -153,10 +153,14 @@ export async function generateDueRecurringExpenses(userId: string) {
 
     // 4. Advance the schedule once per rule (previous loop advanced it after
     //    the last occurrence of each rule; dueDates.length > 0 guarantees a change).
+    //    Atomic forward-only guard: a stale device that read an older
+    //    next_due_date must never overwrite a newer schedule another device
+    //    already advanced (the unique index already protected the transactions).
     const { error: updateError } = await supabase
       .from('recurring_rules')
       .update({ next_due_date: format(cursor, 'yyyy-MM-dd') })
-      .eq('id', rule.id);
+      .eq('id', rule.id)
+      .lt('next_due_date', format(cursor, 'yyyy-MM-dd'));
     if (updateError) throw updateError;
   }
 
