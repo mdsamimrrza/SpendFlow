@@ -71,8 +71,14 @@ export function AuthProvider({ children }: PropsWithChildren) {
   }, []);
 
   const refreshProfile = useCallback(async (force = false) => {
-    // In-flight deduplication: concurrent callers reuse the same request.
-    if (profileRefreshInFlight.current) return profileRefreshInFlight.current;
+    // In-flight deduplication: concurrent non-forced callers reuse the same request.
+    if (profileRefreshInFlight.current) {
+      if (!force) return profileRefreshInFlight.current;
+      // A forced refresh must reflect data saved AFTER the in-flight request
+      // started (e.g. a profile save landing during a focus-triggered refresh),
+      // so wait for it to finish and then fetch fresh — never reuse its result.
+      await profileRefreshInFlight.current.catch(() => undefined);
+    }
     // Freshness throttle: bursts of non-forced triggers (e.g. tab focus) reuse
     // the last result instead of re-fetching. force=true always refreshes.
     if (!force && Date.now() - lastProfileRefreshAt.current < PROFILE_REFRESH_COOLDOWN_MS) return;
