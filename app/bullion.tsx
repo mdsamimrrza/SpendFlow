@@ -8,6 +8,7 @@ import {
   View,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { format } from 'date-fns';
 import Svg, { Circle, Defs, Line, LinearGradient, Path, Rect, Stop, Text as SvgText } from 'react-native-svg';
 import {
   Calculator,
@@ -29,11 +30,28 @@ import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
 import { useTheme } from '@/hooks/useTheme';
 import { generateBullionHistoricalTrend } from '@/services/bullion';
+import { OfficialNepalGoldRate } from '@/services/nepalGold';
 import { formatMoney } from '@/utils/format';
 
 type ActiveBenchmarkKey = 'gold_tola' | 'silver_tola' | 'gold_10g' | 'silver_10g';
 type TrendPeriod = 1 | 3 | 6 | 12;
 type TargetCountryMarket = 'NEPAL' | 'INDIA';
+
+const GRAMS_PER_TOLA = 11.6638;
+
+/** Official daily price for the selected benchmark, straight from the stored record. */
+function officialBenchmarkPrice(record: OfficialNepalGoldRate, key: ActiveBenchmarkKey): number {
+  switch (key) {
+    case 'gold_tola':
+      return record.fine_gold_per_tola;
+    case 'gold_10g':
+      return record.fine_gold_per_10g ?? Math.round((record.fine_gold_per_tola * 10) / GRAMS_PER_TOLA);
+    case 'silver_tola':
+      return record.silver_per_tola ?? 0;
+    case 'silver_10g':
+      return record.silver_per_10g ?? Math.round(((record.silver_per_tola ?? 0) * 10) / GRAMS_PER_TOLA);
+  }
+}
 
 export default function BullionScreen() {
   const theme = useTheme();
@@ -47,7 +65,26 @@ export default function BullionScreen() {
   const [activeMarket, setActiveMarket] = useState<TargetCountryMarket>(defaultCountry);
 
   const activeCurrency = activeMarket === 'NEPAL' ? 'NPR' : 'INR';
-  const { prices, rawRates, loading, refreshBullionRates } = useBullionRates(activeCurrency);
+  const { prices, rawRates, loading, refreshBullionRates, nepalHistory } = useBullionRates(activeCurrency);
+
+  // Real day-over-day change from consecutive stored official records.
+  const nepalChange = useMemo(() => {
+    if (activeMarket !== 'NEPAL' || nepalHistory.length < 2) return null;
+    const latest = nepalHistory[nepalHistory.length - 1];
+    const prev = nepalHistory[nepalHistory.length - 2];
+    const delta = (key: ActiveBenchmarkKey) => {
+      const now = officialBenchmarkPrice(latest, key);
+      const before = officialBenchmarkPrice(prev, key);
+      if (!now || !before) return null;
+      return { change: Math.round(now - before), pct: ((now - before) / before) * 100 };
+    };
+    return {
+      gold_tola: delta('gold_tola'),
+      silver_tola: delta('silver_tola'),
+      gold_10g: delta('gold_10g'),
+      silver_10g: delta('silver_10g'),
+    };
+  }, [activeMarket, nepalHistory]);
 
   // Active selected benchmark card for chart synchronisation
   const [selectedKey, setSelectedKey] = useState<ActiveBenchmarkKey>('gold_tola');
@@ -80,36 +117,36 @@ export default function BullionScreen() {
         label: goldLabel,
         unit: tolaLabel,
         price: prices.gold24kPerTola,
-        change: isNepal ? -100 : -78,
-        pct: -0.03,
+        change: nepalChange?.gold_tola?.change ?? (isNepal ? null : -78),
+        pct: nepalChange?.gold_tola?.pct ?? (isNepal ? null : -0.03),
         metal: 'gold' as const,
       },
       silver_tola: {
         label: silverLabel,
         unit: tolaLabel,
         price: prices.silverPerTola,
-        change: isNepal ? 75 : 55,
-        pct: 1.53,
+        change: nepalChange?.silver_tola?.change ?? (isNepal ? null : 55),
+        pct: nepalChange?.silver_tola?.pct ?? (isNepal ? null : 1.53),
         metal: 'silver' as const,
       },
       gold_10g: {
         label: goldLabel,
         unit: gram10Label,
         price: prices.gold24kPer10g,
-        change: isNepal ? -85 : -65,
-        pct: -0.03,
+        change: nepalChange?.gold_10g?.change ?? (isNepal ? null : -65),
+        pct: nepalChange?.gold_10g?.pct ?? (isNepal ? null : -0.03),
         metal: 'gold' as const,
       },
       silver_10g: {
         label: silverLabel,
         unit: gram10Label,
         price: prices.silverPer10g,
-        change: isNepal ? 64.5 : 47,
-        pct: 1.54,
+        change: nepalChange?.silver_10g?.change ?? (isNepal ? null : 47),
+        pct: nepalChange?.silver_10g?.pct ?? (isNepal ? null : 1.54),
         metal: 'silver' as const,
       },
     };
-  }, [prices, activeMarket, t]);
+  }, [prices, activeMarket, nepalChange, t]);
 
   const activeBenchmark = benchmarks[selectedKey];
   const isGold = activeBenchmark.metal === 'gold';
@@ -117,10 +154,28 @@ export default function BullionScreen() {
   const chartGradColor = isGold ? '#F59E0B' : '#64748B';
 
   // ── HISTORICAL TREND DATA FOR SELECTED BENCHMARK ──
+  // Nepal: real stored official daily rates once at least two exist; the
+  // simulated curve is only a visual fallback until history accumulates.
   const historyPoints = useMemo(() => {
+    if (activeMarket === 'NEPAL' && nepalHistory.length >= 2) {
+      const cutoff = Date.now() - trendMonths * 30 * 86_400_000;
+      const points = nepalHistory
+        .filter((r) => new Date(`${r.rate_date}T00:00:00`).getTime() >= cutoff)
+        .map((r) => {
+          const d = new Date(`${r.rate_date}T00:00:00`);
+          return {
+            date: r.rate_date,
+            label: format(d, 'd MMM yyyy'),
+            fullDate: format(d, 'EEE, d MMM yyyy'),
+            price: Math.round(officialBenchmarkPrice(r, selectedKey)),
+          };
+        })
+        .filter((p) => p.price > 0);
+      if (points.length >= 2) return points;
+    }
     if (!activeBenchmark.price) return [];
     return generateBullionHistoricalTrend(activeBenchmark.price, trendMonths, activeBenchmark.metal);
-  }, [activeBenchmark.price, trendMonths, activeBenchmark.metal]);
+  }, [activeMarket, nepalHistory, trendMonths, selectedKey, activeBenchmark.price, activeBenchmark.metal]);
 
   const { minPrice, maxPrice } = useMemo(() => {
     if (historyPoints.length === 0) {
@@ -208,8 +263,9 @@ export default function BullionScreen() {
   // Format updated market session label
   const updatedReadable = useMemo(() => {
     if (prices?.fixingLabel) {
+      const staleSuffix = prices.rateStatus === 'stale' ? ' · Last Verified Rate' : '';
       const closedSuffix = prices.isMarketClosed ? ' · Closed Today' : '';
-      return `${prices.fixingLabel}${closedSuffix}`;
+      return `${prices.fixingLabel}${staleSuffix}${closedSuffix}`;
     }
     if (!rawRates?.updatedAt) return 'Official Market Benchmark';
     try {
@@ -218,7 +274,25 @@ export default function BullionScreen() {
     } catch {
       return 'Official Market Benchmark';
     }
-  }, [prices?.fixingLabel, prices?.isMarketClosed, rawRates?.updatedAt]);
+  }, [prices?.fixingLabel, prices?.rateStatus, prices?.isMarketClosed, rawRates?.updatedAt]);
+
+  // Day-over-day change badge. Unknown (no official history yet) renders a
+  // neutral placeholder instead of a fabricated delta.
+  const renderChange = (change: number | null, pct: number | null) => {
+    if (change === null || pct === null) {
+      return (
+        <Text style={{ fontSize: 11, fontWeight: '700', color: theme.colors.textMuted, marginTop: 2 }}>
+          — awaiting official history
+        </Text>
+      );
+    }
+    const positive = change >= 0;
+    return (
+      <Text style={{ fontSize: 11, fontWeight: '700', color: positive ? '#10B981' : '#EF4444', marginTop: 2 }}>
+        {positive ? `+${change}` : change} ({pct.toFixed(2)}%)
+      </Text>
+    );
+  };
 
   const handleBack = () => {
     if (router.canGoBack()) {
@@ -389,16 +463,7 @@ export default function BullionScreen() {
                   {formatMoney(benchmarks.gold_tola.price, activeCurrency)}{' '}
                   <Text style={{ fontSize: 11, fontWeight: '600', color: theme.colors.textMuted }}>/ {benchmarks.gold_tola.unit}</Text>
                 </Text>
-                <Text
-                  style={{
-                    fontSize: 11,
-                    fontWeight: '700',
-                    color: benchmarks.gold_tola.change >= 0 ? '#10B981' : '#EF4444',
-                    marginTop: 2,
-                  }}
-                >
-                  {benchmarks.gold_tola.change >= 0 ? `+${benchmarks.gold_tola.change}` : benchmarks.gold_tola.change} ({benchmarks.gold_tola.pct}%)
-                </Text>
+                {renderChange(benchmarks.gold_tola.change, benchmarks.gold_tola.pct)}
               </View>
             </Pressable>
 
@@ -438,16 +503,7 @@ export default function BullionScreen() {
                   {formatMoney(benchmarks.silver_tola.price, activeCurrency)}{' '}
                   <Text style={{ fontSize: 11, fontWeight: '600', color: theme.colors.textMuted }}>/ {benchmarks.silver_tola.unit}</Text>
                 </Text>
-                <Text
-                  style={{
-                    fontSize: 11,
-                    fontWeight: '700',
-                    color: benchmarks.silver_tola.change >= 0 ? '#10B981' : '#EF4444',
-                    marginTop: 2,
-                  }}
-                >
-                  {benchmarks.silver_tola.change >= 0 ? `+${benchmarks.silver_tola.change}` : benchmarks.silver_tola.change} (+{benchmarks.silver_tola.pct}%)
-                </Text>
+                {renderChange(benchmarks.silver_tola.change, benchmarks.silver_tola.pct)}
               </View>
             </Pressable>
           </View>
@@ -490,16 +546,7 @@ export default function BullionScreen() {
                   {formatMoney(benchmarks.gold_10g.price, activeCurrency)}{' '}
                   <Text style={{ fontSize: 11, fontWeight: '600', color: theme.colors.textMuted }}>/ {benchmarks.gold_10g.unit}</Text>
                 </Text>
-                <Text
-                  style={{
-                    fontSize: 11,
-                    fontWeight: '700',
-                    color: benchmarks.gold_10g.change >= 0 ? '#10B981' : '#EF4444',
-                    marginTop: 2,
-                  }}
-                >
-                  {benchmarks.gold_10g.change >= 0 ? `+${benchmarks.gold_10g.change}` : benchmarks.gold_10g.change} ({benchmarks.gold_10g.pct}%)
-                </Text>
+                {renderChange(benchmarks.gold_10g.change, benchmarks.gold_10g.pct)}
               </View>
             </Pressable>
 
@@ -539,16 +586,7 @@ export default function BullionScreen() {
                   {formatMoney(benchmarks.silver_10g.price, activeCurrency)}{' '}
                   <Text style={{ fontSize: 11, fontWeight: '600', color: theme.colors.textMuted }}>/ {benchmarks.silver_10g.unit}</Text>
                 </Text>
-                <Text
-                  style={{
-                    fontSize: 11,
-                    fontWeight: '700',
-                    color: benchmarks.silver_10g.change >= 0 ? '#10B981' : '#EF4444',
-                    marginTop: 2,
-                  }}
-                >
-                  {benchmarks.silver_10g.change >= 0 ? `+${benchmarks.silver_10g.change}` : benchmarks.silver_10g.change} (+{benchmarks.silver_10g.pct}%)
-                </Text>
+                {renderChange(benchmarks.silver_10g.change, benchmarks.silver_10g.pct)}
               </View>
             </Pressable>
           </View>
@@ -571,7 +609,9 @@ export default function BullionScreen() {
                 {activeBenchmark.label} / {activeBenchmark.unit}
               </Text>
               <Text variant="caption" muted style={{ fontSize: 11 }}>
-                Live Historical Benchmark Curve
+                {activeMarket === 'NEPAL' && nepalHistory.length >= 2
+                  ? 'Official Daily Rate History (FENEGOSIDA)'
+                  : 'Live Historical Benchmark Curve'}
               </Text>
             </View>
 

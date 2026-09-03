@@ -1,0 +1,1 @@
+module.exports = { get supabase(){return global.__cfg.supabase;} };

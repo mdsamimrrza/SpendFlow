@@ -48,6 +48,16 @@ google-services.json
 android/app/google-services.json
 ios/GoogleService-Info.plist
 
+# Firebase service account credentials
+firebase-service-account.json
+service-account.json
+service-account-*.json
+serviceAccountKey.json
+
+# Private keys
+*.pem
+*.p8
+
 # ── macOS ─────────────────────────────────────────────────────────────────────
 .DS_Store
 .DS_Store?

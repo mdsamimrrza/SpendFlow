@@ -1,0 +1,1 @@
+module.exports = { getExpoPushTokenAsync: async () => ({ data: "ExpoPushToken[AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA]" }), scheduleNotificationAsync: async () => "", SchedulableTriggerInputTypes: { DATE: "date" }, AndroidImportance: { MAX: 4 }, setNotificationHandler() {} };

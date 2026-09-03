@@ -1,0 +1,1 @@
+module.exports = { get Platform() { return { OS: global.__platformOS }; } };

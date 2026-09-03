@@ -5,6 +5,7 @@ import {
   ScrollView,
   StyleSheet,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import {
   addMonths,
@@ -42,8 +43,8 @@ interface CalendarModalProps {
   onClose: () => void;
   onApply: (range: DateRange) => void;
   initialRange?: DateRange;
-   /** 'single' — picks one date (hides From/To banner and range presets).
-   *  'range'  — default, full range-picker behaviour. */
+  /** 'single' — picks one date (hides From/To banner and range presets).
+  *  'range'  — default, full range-picker behaviour. */
   mode?: 'single' | 'range';
 }
 
@@ -63,6 +64,8 @@ export function CalendarModal({
 }: CalendarModalProps) {
   const isSingle = mode === 'single';
   const theme = useTheme();
+  const { height: screenHeight } = useWindowDimensions();
+  const maxModalHeight = screenHeight * 0.88;
 
   // 'calendar' — normal day grid  |  'monthYear' — month+year jump picker
   const [view, setView] = useState<'calendar' | 'monthYear'>('calendar');
@@ -214,7 +217,7 @@ export function CalendarModal({
   // ── Day grid helpers ───────────────────────────────────────────────────────
 
   const isSelectedStart = (day: Date) => !!(startDate && isSameDay(day, parseISO(startDate)));
-  const isSelectedEnd   = (day: Date) => !!(endDate && isSameDay(day, parseISO(endDate)));
+  const isSelectedEnd = (day: Date) => !!(endDate && isSameDay(day, parseISO(endDate)));
   const isInRange = (day: Date) => {
     if (!startDate || !endDate) return false;
     return isWithinInterval(day, { start: parseISO(startDate), end: parseISO(endDate) });
@@ -233,13 +236,15 @@ export function CalendarModal({
             backgroundColor: theme.colors.surface,
             borderTopLeftRadius: 24,
             borderTopRightRadius: 24,
+            maxHeight: maxModalHeight,
           },
         ]}
       >
         <ScrollView
+          style={{ flexGrow: 0, flexShrink: 1 }}
           showsVerticalScrollIndicator={false}
           bounces={false}
-          contentContainerStyle={{ gap: 10 }}
+          contentContainerStyle={{ gap: 14 }}
           scrollEnabled={view === 'calendar'}
         >
           {/* ── Header ── */}
@@ -287,8 +292,8 @@ export function CalendarModal({
                   {endDate
                     ? format(parseISO(endDate), 'MMM dd, yyyy')
                     : startDate
-                    ? format(parseISO(startDate), 'MMM dd, yyyy')
-                    : 'Select end'}
+                      ? format(parseISO(startDate), 'MMM dd, yyyy')
+                      : 'Select end'}
                 </Text>
               </View>
             </View>
@@ -476,9 +481,9 @@ export function CalendarModal({
                 {daysInGrid.map((day, idx) => {
                   const isCurrentMonth = isSameMonth(day, currentMonth);
                   const isStart = isSelectedStart(day);
-                  const isEnd   = isSelectedEnd(day);
+                  const isEnd = isSelectedEnd(day);
                   const inRange = isInRange(day);
-                  const today   = isToday(day);
+                  const today = isToday(day);
 
                   let bgColor = 'transparent';
                   let textColor = isCurrentMonth ? theme.colors.text : theme.colors.textMuted;
@@ -516,15 +521,12 @@ export function CalendarModal({
               </View>
             </>
           )}
-
-          {/* ── Footer Actions (range mode + calendar view only) ── */}
-          {/* NOTE: rendered below ScrollView to never be cut off */}
         </ScrollView>
 
         {!isSingle && view === 'calendar' && (
           <View style={[styles.footerActions, { paddingTop: 8 }]}>
-            <Button title="Reset"       variant="secondary" onPress={handleClear}  style={{ flex: 1 }} />
-            <Button title="Apply Range"                     onPress={handleApply}  style={{ flex: 2 }} />
+            <Button title="Reset" variant="secondary" onPress={handleClear} style={{ flex: 1 }} />
+            <Button title="Apply Range" onPress={handleApply} style={{ flex: 2 }} />
           </View>
         )}
       </View>
@@ -541,7 +543,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingTop: 16,
     paddingBottom: 36,
-    maxHeight: '88%',
   },
   header: {
     flexDirection: 'row',

@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { format, subDays, subMonths } from 'date-fns';
+import { getKathmanduToday, OfficialNepalGoldRate } from '@/services/nepalGold';
 
 const DEFAULT_RATES: Record<string, number> = {
   USD: 1.0,
@@ -50,6 +51,11 @@ export interface ComputedBullionPrices {
   fixingLabel?: string;
   marketName?: string;
   isMarketClosed?: boolean;
+  /** 'verified' = today's stored official rate, 'stale' = last verified rate (source not yet updated), 'estimated' = computed benchmark only. */
+  rateStatus?: 'verified' | 'stale' | 'estimated';
+  /** Market date (Asia/Kathmandu) of the official rate being displayed. */
+  rateDate?: string;
+  marketAuthority?: string;
 }
 
 export interface BullionHistoryPoint {
@@ -113,7 +119,7 @@ export function getMarketSessionInfo(currency = 'NPR'): {
     return {
       sessionKey,
       marketName: 'FENEGOSIDA (Nepal)',
-      fixingLabel: `FENEGOSIDA Daily Fix (10:30 AM NPT) · ${dateStr}`,
+      fixingLabel: `FENEGOSIDA Daily Fix (11:00 AM NPT) · ${dateStr}`,
       isClosed: day === 6,
     };
   }
@@ -329,6 +335,58 @@ export function computeBullionPrices(
     fixingLabel: sessionInfo.fixingLabel,
     marketName: sessionInfo.marketName,
     isMarketClosed: sessionInfo.isClosed,
+  };
+}
+
+/**
+ * Overlays the centrally stored official FENEGOSIDA daily rate onto the
+ * computed benchmark. The stored values replace ALL derived Nepal gold/silver
+ * prices so every user sees the exact published market board for the day;
+ * the session label reflects the official daily fix, never a live spot price.
+ */
+export function applyOfficialNepalRates(
+  base: ComputedBullionPrices,
+  official: OfficialNepalGoldRate,
+): ComputedBullionPrices {
+  const gramsPerTola = GRAMS_PER_TOLA;
+  const rateDate = official.rate_date;
+  const isToday = rateDate === getKathmanduToday();
+
+  const gold24kPerTola = official.fine_gold_per_tola;
+  const gold24kPer10g = official.fine_gold_per_10g ?? Math.round((gold24kPerTola * 10) / gramsPerTola);
+  const gold24kPerGram = gold24kPer10g / 10;
+
+  // Tejabi (22K) is only replaced when the source actually published it;
+  // otherwise the calibrated 92.5588% ratio of the official fine rate applies.
+  const gold22kPerTola = official.tejabi_gold_per_tola
+    ? official.tejabi_gold_per_tola
+    : Math.round((gold24kPerTola * 0.925588) / 100) * 100;
+  const gold22kPer10g = official.tejabi_gold_per_10g ?? Math.round((gold22kPerTola * 10) / gramsPerTola);
+  const gold22kPerGram = gold22kPer10g / 10;
+
+  const silverPerTola = official.silver_per_tola ?? base.silverPerTola;
+  const silverPer10g = official.silver_per_10g ?? Math.round((silverPerTola * 10) / gramsPerTola);
+  const silverPerGram = silverPer10g / 10;
+
+  return {
+    ...base,
+    gold24kPerTola,
+    gold24kPer10g,
+    gold24kPerGram,
+    gold22kPerTola,
+    gold22kPer10g,
+    gold22kPerGram,
+    silverPerTola,
+    silverPer10g,
+    silverPer1kg: Math.round(silverPerGram * 1000),
+    updatedAt: official.published_at ?? official.fetched_at,
+    fixingLabel: `FENEGOSIDA Official Daily Rate · ${rateDate}`,
+    // Session closure (Saturday) comes from the calendar; a non-today record is
+    // communicated via rateStatus='stale' instead of pretending the market closed.
+    isMarketClosed: base.isMarketClosed,
+    rateStatus: isToday ? 'verified' : 'stale',
+    rateDate,
+    marketAuthority: official.market_authority,
   };
 }
 
