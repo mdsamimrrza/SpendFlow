@@ -375,7 +375,7 @@ export function FinancialInsights({ expenses, targetCurrency, flowType, onFlipFl
                 variant="caption"
                 style={{
                   fontWeight: '800',
-                  color: flowType === 'income' ? '#10B981' : '#F59E0B',
+                  color: flowType === 'income' ? theme.colors.income : '#F59E0B',
                   fontSize: 10.5,
                 }}
               >

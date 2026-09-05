@@ -1,20 +1,53 @@
 import { addDays, addMonths, addWeeks, format, isBefore, parseISO } from 'date-fns';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { PaymentMethod, RecurringFrequency, RecurringRule } from '@/types';
 import { getRate } from '@/services/exchange';
 import { supabase } from '@/utils/supabase';
 
 const selection = '*, categories(name, icon, color)';
 
-export async function listRecurringRules(userId: string) {
+const RULES_CACHE_PREFIX = '@spendflow_cached_recurring_rules_';
+
+export async function getCachedRecurringRules(userId?: string): Promise<RecurringRule[]> {
+  if (!userId) return [];
+  try {
+    const raw = await AsyncStorage.getItem(`${RULES_CACHE_PREFIX}${userId}`);
+    return raw ? (JSON.parse(raw) as RecurringRule[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+async function setCachedRecurringRules(userId: string, rules: RecurringRule[]): Promise<void> {
+  try {
+    await AsyncStorage.setItem(`${RULES_CACHE_PREFIX}${userId}`, JSON.stringify(rules));
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+/**
+ * Lists the user's recurring rules. `onCached` fires first with the locally
+ * cached list (when present) so the tab paints instantly — the same
+ * cache-then-network pattern as bank accounts, expenses, and transfers.
+ */
+export async function listRecurringRules(
+  userId: string,
+  onCached?: (cached: RecurringRule[]) => void,
+) {
+  const cached = await getCachedRecurringRules(userId);
+  if (onCached && cached.length > 0) onCached(cached);
   const { data, error } = await supabase
     .from('recurring_rules')
     .select(selection)
     .eq('user_id', userId)
     .order('next_due_date');
   if (error) throw error;
-  return (data ?? []) as RecurringRule[];
+  const rules = (data ?? []) as RecurringRule[];
+  await setCachedRecurringRules(userId, rules);
+  return rules;
 }
 
 export async function createRecurringRule(userId: string, input: {

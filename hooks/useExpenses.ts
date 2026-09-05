@@ -4,7 +4,7 @@ import { getCategoryById } from '@/services/categories';
 import { createExpense, filterAndSortCachedExpenses, getCachedExpenses, listExpenses, softDeleteExpense, updateExpense } from '@/services/expenses';
 import { checkAndNotifyBudgetThreshold, checkAndNotifyCategoryBudgetThreshold, notifyExpenseAdded, notifyLargeExpense } from '@/services/notifications';
 import { Expense, ExpenseFilters, ExpenseInput, SortKey } from '@/types';
-import { currentMonthRange, sumExpenses } from '@/utils/format';
+import { convertCurrency, currentMonthRange, sumExpenses } from '@/utils/format';
 import { notifyOtherDevices } from '@/services/pushNotifications';
 
 type ExpenseChangeListener = () => void;
@@ -14,13 +14,15 @@ export function notifyExpensesChanged() {
   listeners.forEach((listener) => listener());
 }
 
-async function getEffectiveMonthlyBudget(userId?: string): Promise<number> {
+async function getEffectiveMonthlyBudget(userId?: string, targetCurrency = 'NPR'): Promise<number> {
   try {
     const profileJson = await AsyncStorage.getItem('@spendflow_cached_profile');
     if (profileJson) {
       const parsed = JSON.parse(profileJson);
       if (parsed?.monthly_budget && Number(parsed.monthly_budget) > 0) {
-        return Number(parsed.monthly_budget);
+        // The stored figure is in its own currency (budget_currency) — convert
+        // so threshold comparisons match the expense totals in targetCurrency.
+        return convertCurrency(Number(parsed.monthly_budget), parsed?.budget_currency || targetCurrency, targetCurrency);
       }
     }
     if (userId) {
@@ -91,7 +93,7 @@ async function triggerExpenseNotifications(
     );
     const monthItems = currentItems.filter((item) => item.date >= month.from && item.date <= month.to);
     const monthTotal = sumExpenses(monthItems, currency);
-    const monthlyBudget = await getEffectiveMonthlyBudget(userId);
+    const monthlyBudget = await getEffectiveMonthlyBudget(userId, currency);
 
     if (monthlyBudget > 0) {
       void checkAndNotifyBudgetThreshold(monthTotal + amount, monthlyBudget, currency);

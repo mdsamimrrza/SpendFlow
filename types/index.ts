@@ -12,6 +12,8 @@ export interface UserProfile {
   preferred_currency: string;
   theme_preference: ThemePreference;
   monthly_budget?: number | null;
+  /** Currency the monthly_budget figure was entered in. Null/absent = preferred_currency. */
+  budget_currency?: string | null;
   /** Day the user's reporting month starts on (1–28). 1 = calendar month. */
   cycle_start_day?: number | null;
   /**
@@ -123,6 +125,8 @@ export interface BankAccount {
   name: string;
   account_type: AccountType;
   currency: string;
+  /** ISO 3166-1 alpha-2 country code chosen at setup (null = unknown / Other). */
+  country?: string | null;
   initial_balance: number;
   current_balance: number;
   color: string;
@@ -138,12 +142,49 @@ export interface BankAccountInput {
   name: string;
   account_type: AccountType;
   currency: string;
+  country?: string | null;
   initial_balance?: number;
   current_balance?: number;
   color?: string;
   icon?: string;
   account_number_last4?: string | null;
   is_default?: boolean;
+}
+
+/** Money moved from one account to another, converted into the target account's currency. */
+export interface Transfer {
+  id: string;
+  user_id: string;
+  from_account_id: string;
+  to_account_id: string;
+  /** Amount in `from_currency` (the source account's currency). */
+  amount: number;
+  from_currency: string;
+  to_currency: string;
+  /** Units of `to_currency` per 1 unit of `from_currency`, locked at transfer time. Never recomputed. */
+  exchange_rate: number;
+  /** Amount received in `to_currency` (the target account's currency). */
+  converted_amount: number;
+  /** Optional fee in `from_currency`, deducted from the source account only. */
+  fee: number;
+  date: string;
+  time: string | null;
+  notes: string | null;
+  deleted_at: string | null;
+  created_at: string;
+  updated_at: string;
+  from_account?: Pick<BankAccount, 'name' | 'icon' | 'color' | 'currency' | 'country'> | null;
+  to_account?: Pick<BankAccount, 'name' | 'icon' | 'color' | 'currency' | 'country'> | null;
+}
+
+export interface TransferInput {
+  from_account_id: string;
+  to_account_id: string;
+  amount: number;
+  date: string;
+  time?: string | null;
+  notes?: string | null;
+  fee?: number;
 }
 
 export interface ExpenseFilters {
@@ -168,6 +209,7 @@ export interface ExpensePage {
 export interface UserSettingsPeriod {
   effective_from: string; // YYYY-MM-DD
   monthly_budget: number | null;
+  budget_currency?: string | null;
   cycle_start_day: number;
   cycle_end_day: number | null;
 }

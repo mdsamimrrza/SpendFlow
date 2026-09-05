@@ -17,6 +17,37 @@ const FALLBACK_UNITS_PER_USD: Record<string, number> = {
   GBP: 0.79,
 };
 
+// ── Session rate memory ─────────────────────────────────────────────────────
+// Historical rates never change, so they are remembered for the whole session;
+// today's rate moves with the market and refreshes after a short TTL. This is
+// what makes repeat balance computations instant when switching between the
+// Accounts, ExpenseForm, and Transfer screens — memory instead of network.
+const RATE_MEMORY_TODAY_TTL_MS = 10 * 60 * 1000;
+
+const memoryRateCache = new Map<string, { rate: number; expiresAt: number }>();
+
+function todayIso(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+
+function rememberRate(currency: string, date: string, rate: number): void {
+  memoryRateCache.set(`${currency}|${date}`, {
+    rate,
+    expiresAt: date >= todayIso() ? Date.now() + RATE_MEMORY_TODAY_TTL_MS : Number.POSITIVE_INFINITY,
+  });
+}
+
+function recallRate(currency: string, date: string): number | null {
+  const entry = memoryRateCache.get(`${currency}|${date}`);
+  if (!entry) return null;
+  if (entry.expiresAt !== Number.POSITIVE_INFINITY && Date.now() > entry.expiresAt) {
+    memoryRateCache.delete(`${currency}|${date}`);
+    return null;
+  }
+  return entry.rate;
+}
+
 export interface SnapshotRow {
   currency: string;
   date: string;
@@ -65,9 +96,79 @@ export function createExchangeService(client: SupabaseClient) {
     }
   }
 
+  // One query serves the whole exchange_rates table (only this app writes to
+  // it, so it stays small), with a short TTL so back-to-back resolver builds
+  // — e.g. an NPR account and an INR account — share a single round trip.
+  let dbRatesAt = 0;
+  let dbRatesByCurrency = new Map<string, { date: string; rate: number }[]>();
+  async function loadDbRates(): Promise<Map<string, { date: string; rate: number }[]>> {
+    if (Date.now() - dbRatesAt < 60_000) return dbRatesByCurrency;
+    const { data, error } = await client
+      .from('exchange_rates')
+      .select('currency, date, rate_to_usd')
+      .order('date', { ascending: true });
+    if (!error && data) {
+      const byCurrency = new Map<string, { date: string; rate: number }[]>();
+      for (const row of data as { currency: string; date: string; rate_to_usd: number | null }[]) {
+        const rate = Number(row.rate_to_usd);
+        if (!(rate > 0)) continue;
+        const list = byCurrency.get(row.currency) ?? [];
+        list.push({ date: row.date, rate });
+        byCurrency.set(row.currency, list);
+      }
+      dbRatesByCurrency = byCurrency;
+      dbRatesAt = Date.now();
+    }
+    return dbRatesByCurrency;
+  }
+
+  /** Latest rate on/before `date` from an ascending-sorted list (binary search). */
+  function nearestDbRate(list: { date: string; rate: number }[] | undefined, date: string): number | null {
+    if (!list || list.length === 0) return null;
+    let lo = 0;
+    let hi = list.length - 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (list[mid].date <= date) lo = mid + 1;
+      else hi = mid - 1;
+    }
+    return hi >= 0 ? list[hi].rate : null;
+  }
+
+  // One live-rates call (primary API, then fallback) answers every remaining
+  // currency at once — replaces the old per-currency historical fetches that
+  // made balance loading take many seconds.
+  let latestAt = 0;
+  let latestUnits: Record<string, number> | null = null;
+  async function loadLatestUnitsPerUsd(): Promise<Record<string, number> | null> {
+    if (latestUnits && Date.now() - latestAt < 5 * 60_000) return latestUnits;
+    const primary =
+      process.env.EXPO_PUBLIC_EXCHANGE_RATE_API_URL || 'https://open.er-api.com/v6/latest/USD';
+    const fallbackApi =
+      process.env.EXPO_PUBLIC_EXCHANGE_RATE_FALLBACK_API_URL ||
+      'https://api.exchangerate-api.com/v4/latest/USD';
+    for (const url of [primary, fallbackApi]) {
+      try {
+        const res = await fetch(url, { headers: { Accept: 'application/json' } });
+        if (!res.ok) continue;
+        const data = await res.json();
+        if (data?.rates && typeof data.rates === 'object') {
+          latestUnits = data.rates as Record<string, number>;
+          latestAt = Date.now();
+          return latestUnits;
+        }
+      } catch {
+        // try the next source
+      }
+    }
+    return null;
+  }
+
   async function getRate(currency: string, date: string): Promise<number> {
     const ccy = (currency || 'USD').toUpperCase();
     if (PEGGED_USD_PER_UNIT[ccy] !== undefined) return PEGGED_USD_PER_UNIT[ccy];
+    const remembered = recallRate(ccy, date);
+    if (remembered !== null) return remembered;
     if (!isIsoDate(date)) return fallbackUsdPerUnit(ccy);
 
     const { data: cached } = await client
@@ -77,7 +178,10 @@ export function createExchangeService(client: SupabaseClient) {
       .eq('date', date)
       .maybeSingle();
     const cachedRate = Number(cached?.rate_to_usd);
-    if (cachedRate > 0) return cachedRate;
+    if (cachedRate > 0) {
+      rememberRate(ccy, date, cachedRate);
+      return cachedRate;
+    }
 
     const units = await fetchHistoricalUnitsPerUsd(date, ccy);
     if (units) {
@@ -88,7 +192,10 @@ export function createExchangeService(client: SupabaseClient) {
           { currency: ccy, date, rate_to_usd: rate },
           { onConflict: 'currency,date', ignoreDuplicates: true },
         );
-      if (!insertError) return rate;
+      if (!insertError) {
+        rememberRate(ccy, date, rate);
+        return rate;
+      }
     }
 
     const { data: nearest } = await client
@@ -99,9 +206,14 @@ export function createExchangeService(client: SupabaseClient) {
       .order('date', { ascending: false })
       .limit(1);
     const nearestRate = Number(nearest?.[0]?.rate_to_usd);
-    if (nearestRate > 0) return nearestRate;
+    if (nearestRate > 0) {
+      rememberRate(ccy, date, nearestRate);
+      return nearestRate;
+    }
 
-    return fallbackUsdPerUnit(ccy);
+    const fallback = fallbackUsdPerUnit(ccy);
+    rememberRate(ccy, date, fallback);
+    return fallback;
   }
 
   async function convert(amount: number, fromCurrency: string, toCurrency: string, date: string): Promise<number> {
@@ -148,13 +260,47 @@ export function createExchangeService(client: SupabaseClient) {
       }
     }
 
-    const pending = [...missing.values()].filter((p) => !cache.has(key(p.c, p.d)));
-    const CHUNK = 5;
-    for (let i = 0; i < pending.length; i += CHUNK) {
-      const rates = await Promise.all(
-        pending.slice(i, i + CHUNK).map(async (p) => [key(p.c, p.d), await getRate(p.c, p.d)] as const),
-      );
-      rates.forEach(([k, r]) => cache.set(k, r));
+    // Session memory answers repeats instantly (screen switches, re-renders).
+    for (const [k, pair] of [...missing]) {
+      const remembered = recallRate(pair.c, pair.d);
+      if (remembered !== null) {
+        cache.set(k, remembered);
+        missing.delete(k);
+      }
+    }
+
+    // One DB round trip answers the rest via nearest-known-date.
+    if (missing.size) {
+      const dbRates = await loadDbRates();
+      for (const [k, pair] of [...missing]) {
+        const nearest = nearestDbRate(dbRates.get(pair.c), pair.d);
+        if (nearest !== null) {
+          cache.set(k, nearest);
+          rememberRate(pair.c, pair.d, nearest);
+          missing.delete(k);
+        }
+      }
+    }
+
+    // Still nothing? One live-rates call answers every remaining currency.
+    if (missing.size) {
+      const latest = await loadLatestUnitsPerUsd();
+      if (latest) {
+        for (const [k, pair] of [...missing]) {
+          const units = Number(latest[pair.c]);
+          if (units > 0) {
+            const rate = round8(1 / units);
+            cache.set(k, rate);
+            rememberRate(pair.c, pair.d, rate);
+            missing.delete(k);
+          }
+        }
+      }
+    }
+
+    // Anything left falls back to static approximations.
+    for (const [k, pair] of missing) {
+      cache.set(k, fallbackUsdPerUnit(pair.c));
     }
 
     const usdPerUnit = (currency: string, date: string): number => {

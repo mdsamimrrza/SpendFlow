@@ -8,7 +8,6 @@ import {
 } from 'react-native';
 import {
   Bell,
-  Check,
   Sliders,
   Sparkles,
   Target,
@@ -22,12 +21,14 @@ import { Card } from '@/components/ui/Card';
 import { CategoryIcon } from '@/components/ui/CategoryIcon';
 import { PressableScale } from '@/components/ui/PressableScale';
 import { Text } from '@/components/ui/Text';
+import { showToast } from '@/components/ui/Toast';
 import { useAuth } from '@/hooks/useAuth';
+import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { useLanguage } from '@/hooks/useLanguage';
 import { useTheme } from '@/hooks/useTheme';
 import { listCategories, updateCategoryBudget } from '@/services/categories';
 import { Category } from '@/types';
-import { formatMoney } from '@/utils/format';
+import { formatMoney, getMonthlyBudget } from '@/utils/format';
 
 interface CategoryBudgetFormModalProps {
   visible: boolean;
@@ -42,16 +43,16 @@ export function CategoryBudgetFormModal({
 }: CategoryBudgetFormModalProps) {
   const theme = useTheme();
   const { profile } = useAuth();
+  const { rates } = useExchangeRates();
   const { t } = useLanguage();
   const [categories, setCategories] = useState<Category[]>([]);
   const [selectedCatId, setSelectedCatId] = useState<string | null>(null);
   const [amountInput, setAmountInput] = useState('');
   const [saving, setSaving] = useState(false);
-  const [successMsg, setSuccessMsg] = useState('');
   const [alert, setAlert] = useState<{ title: string; message: string } | null>(null);
 
   const currency = profile?.preferred_currency ?? 'NPR';
-  const monthlyOverall = profile?.monthly_budget ? Number(profile.monthly_budget) : 0;
+  const monthlyOverall = getMonthlyBudget(profile, rates);
 
   useEffect(() => {
     if (visible && profile?.id) {
@@ -70,7 +71,6 @@ export function CategoryBudgetFormModal({
   function handleSelectCategory(cat: Category) {
     setSelectedCatId(cat.id);
     setAmountInput(cat.budget_monthly ? String(cat.budget_monthly) : '');
-    setSuccessMsg('');
   }
 
   function handleAddIncrement(inc: number) {
@@ -89,13 +89,12 @@ export function CategoryBudgetFormModal({
       setCategories((prev) =>
         prev.map((c) => (c.id === updated.id ? updated : c)),
       );
-      setSuccessMsg(
-        numeric
+      showToast({
+        message: numeric
           ? `Budget set to ${formatMoney(numeric, currency)}!`
           : 'Limit cleared successfully!',
-      );
+      });
       onSaved?.();
-      setTimeout(() => setSuccessMsg(''), 3000);
     } catch (err) {
       setAlert({ title: 'Error', message: err instanceof Error ? err.message : 'Failed to save category limit' });
     } finally {
@@ -502,15 +501,6 @@ export function CategoryBudgetFormModal({
                 </View>
 
                 {/* Presets Row */}
-
-                {successMsg ? (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-                    <Check size={16} color={theme.colors.success} />
-                    <Text variant="caption" style={{ color: theme.colors.success, fontWeight: '800', fontSize: 12 }}>
-                      {successMsg}
-                    </Text>
-                  </View>
-                ) : null}
               </View>
             ) : null}
 

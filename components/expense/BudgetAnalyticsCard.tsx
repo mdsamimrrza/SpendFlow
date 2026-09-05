@@ -10,7 +10,7 @@ import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
 import { useTheme } from '@/hooks/useTheme';
 import { Expense } from '@/types';
-import { formatMoney, getCycleMeta } from '@/utils/format';
+import { formatMoney, getCycleMeta, getMonthlyBudget } from '@/utils/format';
 
 interface BudgetAnalyticsCardProps {
   expenses: Expense[];
@@ -22,7 +22,7 @@ export function BudgetAnalyticsCard({ expenses, targetCurrency, flowType }: Budg
   const theme = useTheme();
   const router = useRouter();
   const { profile } = useAuth();
-  const { convert } = useExchangeRates();
+  const { convert, rates } = useExchangeRates();
   const { t } = useLanguage();
   const { isPrivacyMode } = usePrivacy();
   const { width } = useWindowDimensions();
@@ -63,7 +63,7 @@ export function BudgetAnalyticsCard({ expenses, targetCurrency, flowType }: Budg
     [currentMonthItems, convert, currency],
   );
 
-  const monthlyBudget = profile?.monthly_budget ? Number(profile.monthly_budget) : 0;
+  const monthlyBudget = getMonthlyBudget(profile, rates);
   const isBudgetSet = monthlyBudget > 0;
 
   // Daily budget calculations

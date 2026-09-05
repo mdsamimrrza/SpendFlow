@@ -1,11 +1,14 @@
 import { Platform } from 'react-native';
-import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import Constants from 'expo-constants';
+import { loadNotificationsModule } from '@/services/notificationsModule';
 import { supabase } from '@/utils/supabase';
 
 // Remote push is unsupported inside Expo Go since SDK 53 — degrade gracefully there.
 const isExpoGo = Constants.executionEnvironment === 'storeClient';
+
+// Null inside Expo Go (the module throws on import there) — guards below no-op.
+const Notifications = loadNotificationsModule();
 
 const EXPO_PUSH_ENDPOINT = 'https://exp.host/--/api/v2/push/send';
 
@@ -24,6 +27,10 @@ export async function registerPushToken(userId: string): Promise<void> {
   }
   if (!Device.isDevice) {
     console.log('[Push] Skipped: not a physical device (emulator/simulator)');
+    return;
+  }
+  if (!Notifications) {
+    console.log('[Push] Skipped: expo-notifications unavailable in this runtime');
     return;
   }
 
@@ -73,7 +80,7 @@ export async function registerPushToken(userId: string): Promise<void> {
 
 /** Removes this device's token (call on sign-out). */
 export async function unregisterPushToken(userId: string): Promise<void> {
-  if (Platform.OS === 'web' || isExpoGo) return;
+  if (Platform.OS === 'web' || isExpoGo || !Notifications) return;
   try {
     const projectId =
       (Constants.expoConfig?.extra?.eas?.projectId as string | undefined) ??
@@ -100,7 +107,7 @@ interface CrossDevicePushPayload {
  * Fire-and-forget — failures are logged, never thrown.
  */
 export async function notifyOtherDevices(payload: CrossDevicePushPayload): Promise<void> {
-  if (Platform.OS === 'web' || isExpoGo) return;
+  if (Platform.OS === 'web' || isExpoGo || !Notifications) return;
 
   try {
     const projectId =

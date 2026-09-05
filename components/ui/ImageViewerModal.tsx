@@ -107,7 +107,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.94)',
   },
   backdrop: {
-    ...(StyleSheet.absoluteFillObject as any),
+    ...(StyleSheet.absoluteFill as any),
   },
   safeArea: {
     flex: 1,

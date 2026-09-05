@@ -19,77 +19,101 @@ function normNum(v: unknown): number | null {
 }
 
 function sameUserSettings(
-  a: { monthly_budget?: unknown; cycle_start_day?: unknown; cycle_end_day?: unknown },
-  b: { monthly_budget: number | null; cycle_start_day: number; cycle_end_day: number | null },
+  a: { monthly_budget?: unknown; budget_currency?: unknown; cycle_start_day?: unknown; cycle_end_day?: unknown },
+  b: { monthly_budget: number | null; budget_currency?: string | null; cycle_start_day: number; cycle_end_day: number | null },
 ): boolean {
   return (
     normNum(a.monthly_budget) === b.monthly_budget &&
+    (a.budget_currency || null) === (b.budget_currency || null) &&
     Number(a.cycle_start_day) === b.cycle_start_day &&
     normNum(a.cycle_end_day) === b.cycle_end_day
   );
 }
 
 /**
- * Seed the history with the user's current settings (once) so dates before
- * the first recorded change still resolve. Safe to call on every app start.
+ * Seed/refresh the baseline row (1900-01-01) with the user's current settings.
+ * Always upserts so the baseline stays in sync with the latest values in `users` table.
  */
 export async function ensureUserSettingsBaseline(
   userId: string,
-  settings: { monthly_budget: number | null; cycle_start_day: number; cycle_end_day: number | null },
+  settings: { monthly_budget: number | null; budget_currency?: string | null; cycle_start_day: number; cycle_end_day: number | null },
 ): Promise<void> {
-  const { data: existing, error } = await supabase
-    .from('user_settings_history')
-    .select('id')
-    .eq('user_id', userId)
-    .limit(1);
-  if (error) throw error;
-  if (existing && existing.length > 0) return;
-
-  const { error: insertError } = await supabase.from('user_settings_history').insert({
+  const payload: Record<string, any> = {
     user_id: userId,
     effective_from: BASELINE_EFFECTIVE_FROM,
     monthly_budget: settings.monthly_budget,
     cycle_start_day: settings.cycle_start_day,
     cycle_end_day: settings.cycle_end_day,
-  });
-  if (insertError) throw insertError;
+  };
+  if (settings.budget_currency !== undefined) payload.budget_currency = settings.budget_currency;
+
+  // Upsert: insert if missing, update if exists (keeps baseline in sync with current)
+  const { error } = await supabase
+    .from('user_settings_history')
+    .upsert(payload, {
+      onConflict: 'user_id,effective_from',
+      ignoreDuplicates: false,
+    });
+  if (error) throw error;
 }
 
 /**
- * Append a history row (effective today) after the user changes their budget
- * or cycle days. Deduped against the latest row so no-op saves don't add noise.
+ * Record a settings change for today. If a row already exists for this month
+ * (same user + same effective_from month/year), UPDATE it instead of inserting
+ * a duplicate. This keeps one row per month per user.
  */
 export async function recordUserSettingsChange(
   userId: string,
-  settings: { monthly_budget: number | null; cycle_start_day: number; cycle_end_day: number | null },
+  settings: { monthly_budget: number | null; budget_currency?: string | null; cycle_start_day: number; cycle_end_day: number | null },
 ): Promise<void> {
-  const { data: latestRows, error } = await supabase
+  const today = todayISO(); // YYYY-MM-DD
+  const monthPrefix = today.slice(0, 7); // YYYY-MM
+
+  // Check if a row for this month already exists
+  const { data: existing, error: selectError } = await supabase
     .from('user_settings_history')
-    .select('monthly_budget, cycle_start_day, cycle_end_day')
+    .select('id, monthly_budget, budget_currency, cycle_start_day, cycle_end_day')
     .eq('user_id', userId)
+    .like('effective_from', `${monthPrefix}%`)
     .order('effective_from', { ascending: false })
-    .order('created_at', { ascending: false })
     .limit(1);
-  if (error) throw error;
+  if (selectError) throw selectError;
 
-  const latest = latestRows?.[0];
-  if (latest && sameUserSettings(latest, settings)) return;
+  const existingRow = existing?.[0];
+  const settingsMatch = existingRow && sameUserSettings(existingRow, settings);
 
-  const { error: insertError } = await supabase.from('user_settings_history').insert({
+  if (settingsMatch) {
+    return; // No change needed
+  }
+
+  const payload: Record<string, any> = {
     user_id: userId,
-    effective_from: todayISO(),
+    effective_from: today,
     monthly_budget: settings.monthly_budget,
     cycle_start_day: settings.cycle_start_day,
     cycle_end_day: settings.cycle_end_day,
-  });
-  if (insertError) throw insertError;
+  };
+  if (settings.budget_currency !== undefined) payload.budget_currency = settings.budget_currency;
+
+  if (existingRow) {
+    // Same month exists but values differ → UPDATE it
+    const { error: updateError } = await supabase
+      .from('user_settings_history')
+      .update(payload)
+      .eq('id', existingRow.id);
+    if (updateError) throw updateError;
+  } else {
+    // New month → INSERT
+    const { error: insertError } = await supabase.from('user_settings_history').insert(payload);
+    if (insertError) throw insertError;
+  }
 }
 
 /** Settings segments sorted oldest → newest. */
 export async function fetchUserSettingsHistory(userId: string): Promise<UserSettingsPeriod[]> {
   const { data, error } = await supabase
     .from('user_settings_history')
-    .select('effective_from, monthly_budget, cycle_start_day, cycle_end_day')
+    .select('effective_from, monthly_budget, budget_currency, cycle_start_day, cycle_end_day')
     .eq('user_id', userId)
     .order('effective_from', { ascending: true })
     .order('created_at', { ascending: true });
@@ -97,6 +121,7 @@ export async function fetchUserSettingsHistory(userId: string): Promise<UserSett
   return (data ?? []).map((row: any) => ({
     effective_from: row.effective_from,
     monthly_budget: normNum(row.monthly_budget),
+    budget_currency: row.budget_currency ?? null,
     cycle_start_day: Number(row.cycle_start_day) || 1,
     cycle_end_day: row.cycle_end_day === null || row.cycle_end_day === undefined ? null : Number(row.cycle_end_day),
   }));

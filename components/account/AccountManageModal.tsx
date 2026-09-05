@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
@@ -26,8 +27,10 @@ import {
   X,
 } from 'lucide-react-native';
 import { Button } from '@/components/ui/Button';
-import { CategoryIcon, EMOJI_TO_ICON_MAP, SELECTABLE_ICONS } from '@/components/ui/CategoryIcon';
+import { CategoryIcon, EMOJI_TO_ICON_MAP } from '@/components/ui/CategoryIcon';
+import { Select } from '@/components/ui/Select';
 import { Text } from '@/components/ui/Text';
+import { COUNTRIES, countryForCurrency, ENABLED_COUNTRY_CODES, OTHER_COUNTRY_CODE, WIZARD_COUNTRIES } from '@/constants/countries';
 import { useAuth } from '@/hooks/useAuth';
 import { useLanguage } from '@/hooks/useLanguage';
 import { useTheme } from '@/hooks/useTheme';
@@ -44,20 +47,15 @@ export const ACCOUNT_TYPES: { type: AccountType; label: string; icon: string; de
   { type: 'other', label: 'Other', icon: 'tag', defaultColor: '#64748B' },
 ];
 
-const BANK_PRESETS = [
-  { name: 'HDFC Bank', type: 'bank' as AccountType, icon: 'landmark', color: '#1E3A8A' },
-  { name: 'State Bank of India', type: 'bank' as AccountType, icon: 'landmark', color: '#0284C7' },
-  { name: 'ICICI Bank', type: 'bank' as AccountType, icon: 'landmark', color: '#DC2626' },
-  { name: 'Axis Bank', type: 'bank' as AccountType, icon: 'landmark', color: '#991B1B' },
-  { name: 'Nabil Bank', type: 'bank' as AccountType, icon: 'landmark', color: '#047857' },
-  { name: 'NIC Asia Bank', type: 'bank' as AccountType, icon: 'landmark', color: '#B91C1C' },
-  { name: 'Global IME', type: 'bank' as AccountType, icon: 'landmark', color: '#1D4ED8' },
-  { name: 'eSewa Wallet', type: 'wallet' as AccountType, icon: 'smartphone', color: '#16A34A' },
-  { name: 'Khalti Wallet', type: 'wallet' as AccountType, icon: 'smartphone', color: '#7C3AED' },
-  { name: 'Google Pay / UPI', type: 'wallet' as AccountType, icon: 'smartphone', color: '#2563EB' },
-  { name: 'Paytm Wallet', type: 'wallet' as AccountType, icon: 'smartphone', color: '#0284C7' },
-  { name: 'Physical Cash', type: 'cash' as AccountType, icon: 'banknote', color: '#10B981' },
-];
+// Preset institutions per country now live in constants/countries.ts — the
+// list below only holds the country-agnostic fallback (physical cash).
+const CASH_PRESET = { name: 'Physical Cash', type: 'cash' as AccountType, icon: 'banknote', color: '#10B981' };
+
+// Every preset name across the registry — used to detect stale preset names
+// when the user switches country (manually typed names are never cleared).
+const ALL_PRESET_NAMES = new Set(
+  COUNTRIES.flatMap((c) => [...c.banks.map((b) => b.name), ...c.wallets.map((w) => w.name)]),
+);
 
 interface AccountManageModalProps {
   visible: boolean;
@@ -84,10 +82,16 @@ export function AccountManageModal({
   const [color, setColor] = useState('#3B82F6');
   const [icon, setIcon] = useState('landmark');
   const [isDefault, setIsDefault] = useState(false);
+  // The country drives the bank/wallet dropdown AND the account currency;
+  // it defaults from the profile's preferred currency (or the account being edited).
+  const [countryCode, setCountryCode] = useState<string>(OTHER_COUNTRY_CODE);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const activeCountry = COUNTRIES.find((c) => c.code === countryCode) ?? null;
+  const activeCurrency = (activeCountry?.currency || profile?.preferred_currency || 'NPR').toUpperCase();
 
   useEffect(() => {
     setShowDeleteConfirm(false);
@@ -100,6 +104,7 @@ export function AccountManageModal({
       const rawIcon = accountToEdit.icon || 'landmark';
       setIcon(EMOJI_TO_ICON_MAP[rawIcon] || rawIcon);
       setIsDefault(accountToEdit.is_default || false);
+      setCountryCode(countryForCurrency(accountToEdit.currency)?.code ?? OTHER_COUNTRY_CODE);
     } else {
       setName('');
       setAccountType('bank');
@@ -108,15 +113,73 @@ export function AccountManageModal({
       setColor('#3B82F6');
       setIcon('landmark');
       setIsDefault(false);
+      // Start from the profile's country/currency so the preset list feels local.
+      // Only preselect it when the country is currently offered in the wizard.
+      const match = countryForCurrency(profile?.preferred_currency);
+      setCountryCode(
+        match && ENABLED_COUNTRY_CODES.includes(match.code) ? match.code : OTHER_COUNTRY_CODE,
+      );
     }
     setError(null);
-  }, [accountToEdit, visible]);
+  }, [accountToEdit, visible, profile?.preferred_currency]);
 
-  const handleApplyPreset = (preset: typeof BANK_PRESETS[0]) => {
-    setName(preset.name);
-    setAccountType(preset.type);
-    setIcon(preset.icon);
-    setColor(preset.color);
+  const handleApplyPreset = (presetName: string, presetColor: string, type: AccountType, icon: string) => {
+    setName(presetName);
+    setAccountType(type);
+    setIcon(icon);
+    setColor(presetColor);
+  };
+
+  // Institutions for the selected country, as dropdown options. The selection
+  // is derived from the name field, so edit mode highlights the right bank
+  // without extra state.
+  const institutionChoices = useMemo(() => {
+    const list: { key: string; label: string; name: string; color: string; type: AccountType; icon: string }[] = [];
+    if (activeCountry) {
+      activeCountry.banks.forEach((b) =>
+        list.push({ key: `bank:${b.name}`, label: `🏦 ${b.name}`, name: b.name, color: b.color, type: 'bank', icon: 'landmark' }),
+      );
+      activeCountry.wallets.forEach((w) =>
+        list.push({ key: `wallet:${w.name}`, label: `📱 ${w.name}`, name: w.name, color: w.color, type: 'wallet', icon: 'smartphone' }),
+      );
+    }
+    list.push({
+      key: 'cash',
+      label: `💵 ${CASH_PRESET.name}`,
+      name: CASH_PRESET.name,
+      color: CASH_PRESET.color,
+      type: CASH_PRESET.type,
+      icon: CASH_PRESET.icon,
+    });
+    return list;
+  }, [activeCountry]);
+
+  const matchedInstitution = institutionChoices.find((c) => c.name === name.trim());
+  // Non-empty name that matches no preset = the user's own custom account.
+  const institutionValue = matchedInstitution?.key ?? (name.trim() ? 'custom' : '');
+
+  const institutionOptions = [
+    ...institutionChoices.map((c) => ({ label: c.label, value: c.key })),
+    { label: t('account_custom'), value: 'custom' },
+  ];
+
+  const handleInstitutionChange = (key: string) => {
+    // "Custom" keeps the name field as the source of truth — nothing to apply.
+    if (key === 'custom') return;
+    const choice = institutionChoices.find((c) => c.key === key);
+    if (choice) handleApplyPreset(choice.name, choice.color, choice.type, choice.icon);
+  };
+
+  const countryOptions = [
+    ...WIZARD_COUNTRIES.map((c) => ({ label: `${c.flag} ${c.name}`, value: c.code })),
+    { label: `🌐 ${t('account_other_country')}`, value: OTHER_COUNTRY_CODE },
+  ];
+
+  const handleCountryChange = (code: string) => {
+    setCountryCode(code);
+    // If the name came from a previously chosen preset, clear it so it can't
+    // mismatch the new country's institution list (typed names stay untouched).
+    if (ALL_PRESET_NAMES.has(name.trim())) setName('');
   };
 
   const handleSave = async () => {
@@ -137,7 +200,8 @@ export function AccountManageModal({
       const payload: BankAccountInput = {
         name: name.trim(),
         account_type: accountType,
-        currency: profile?.preferred_currency || 'NPR',
+        currency: activeCurrency,
+        country: countryCode === OTHER_COUNTRY_CODE ? null : countryCode,
         initial_balance: balanceNum,
         color,
         icon,
@@ -178,25 +242,37 @@ export function AccountManageModal({
   const currentTypeConfig = ACCOUNT_TYPES.find((a) => a.type === accountType) || ACCOUNT_TYPES[0];
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View
-        style={{
-          flex: 1,
-          backgroundColor: 'rgba(0, 0, 0, 0.75)',
-          justifyContent: 'flex-end',
-        }}
-      >
-        <View
+    <Modal visible={visible} transparent animationType="fade" statusBarTranslucent onRequestClose={onClose}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+        <Pressable
+          onPress={onClose}
           style={{
-            maxHeight: '92%',
-            backgroundColor: theme.colors.surface,
-            borderTopLeftRadius: 28,
-            borderTopRightRadius: 28,
-            borderWidth: 1,
-            borderColor: theme.colors.border,
-            paddingBottom: 24,
+            flex: 1,
+            backgroundColor: 'rgba(0, 0, 0, 0.75)',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 20,
           }}
         >
+          <Pressable
+            onPress={(event) => event.stopPropagation()}
+            style={{
+              width: '100%',
+              maxWidth: 460,
+              maxHeight: '88%',
+              backgroundColor: theme.colors.surface,
+              borderRadius: 24,
+              borderWidth: 1,
+              borderColor: theme.colors.border,
+              paddingBottom: 24,
+              overflow: 'hidden',
+              elevation: 28,
+              shadowColor: '#000',
+              shadowOpacity: 0.28,
+              shadowRadius: 18,
+              shadowOffset: { width: 0, height: 10 },
+            }}
+          >
           {/* Header */}
           <View
             style={{
@@ -228,7 +304,7 @@ export function AccountManageModal({
                 <CategoryIcon name={icon} size={20} color="#FFFFFF" />
               </View>
               <Text variant="h3" style={{ fontWeight: '800' }}>
-                {accountToEdit ? 'Edit Account' : `Add ${currentTypeConfig.label}`}
+                {accountToEdit ? 'Edit Account' : t('transfer_add_account')}
               </Text>
             </View>
             <Pressable
@@ -264,38 +340,46 @@ export function AccountManageModal({
               </View>
             ) : null}
 
-            {/* Quick Bank Presets (When creating new account) */}
-            {!accountToEdit && (
-              <View style={{ gap: 8 }}>
-                <Text variant="label" style={{ fontWeight: '700', fontSize: 12, color: theme.colors.textMuted }}>
-                  ⚡ Quick Presets
+            {/* ── Country dropdown: drives the bank/wallet list AND the account currency ── */}
+            <Select
+              label={`🌍 ${t('account_country')}`}
+              value={countryCode}
+              options={countryOptions}
+              onChange={handleCountryChange}
+            />
+
+            {/* ── Bank / Wallet dropdown for the chosen country ── */}
+            <Select
+              label={`🏦 ${t('account_choose_bank')}`}
+              value={institutionValue}
+              options={institutionOptions}
+              onChange={handleInstitutionChange}
+            />
+
+            <Text variant="caption" muted style={{ fontSize: 11, marginTop: -10 }}>
+              {t('account_currency_label')}: {activeCurrency}
+            </Text>
+
+            {/* Currency change warning (editing an existing account) */}
+            {accountToEdit && (accountToEdit.currency || '').toUpperCase() !== activeCurrency ? (
+              <View
+                style={{
+                  backgroundColor: 'rgba(245, 158, 11, 0.12)',
+                  padding: 12,
+                  borderRadius: 12,
+                  borderWidth: 1,
+                  borderColor: 'rgba(245, 158, 11, 0.35)',
+                  gap: 4,
+                }}
+              >
+                <Text style={{ color: '#D97706', fontSize: 13, fontWeight: '800' }}>
+                  {t('account_currency_change_title')}
                 </Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-                  {BANK_PRESETS.map((p) => (
-                    <Pressable
-                      key={p.name}
-                      onPress={() => handleApplyPreset(p)}
-                      style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        gap: 6,
-                        paddingVertical: 6,
-                        paddingHorizontal: 10,
-                        borderRadius: 10,
-                        backgroundColor: theme.colors.surfaceElevated,
-                        borderWidth: 1,
-                        borderColor: name === p.name ? theme.colors.primary : theme.colors.border,
-                      }}
-                    >
-                      <CategoryIcon name={p.icon} size={14} color={p.color} />
-                      <Text style={{ fontSize: 12, fontWeight: '700', color: theme.colors.text }}>
-                        {p.name}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </ScrollView>
+                <Text style={{ color: theme.colors.text, fontSize: 12, lineHeight: 17 }}>
+                  {t('account_currency_change_note')} {(accountToEdit.currency || '').toUpperCase()} → {activeCurrency}.
+                </Text>
               </View>
-            )}
+            ) : null}
 
             {/* Account Name */}
             <View style={{ gap: 6 }}>
@@ -373,7 +457,7 @@ export function AccountManageModal({
             <View style={{ flexDirection: 'row', gap: 12 }}>
               <View style={{ flex: 1, gap: 6 }}>
                 <Text variant="label" style={{ fontWeight: '700', fontSize: 13 }}>
-                  Starting Balance ({profile?.preferred_currency || 'NPR'})
+                  Starting Balance ({activeCurrency})
                 </Text>
                 <TextInput
                   value={initialBalance}
@@ -422,45 +506,6 @@ export function AccountManageModal({
             </View>
 
 
-
-            {/* Custom Icon Picker */}
-            <View style={{ gap: 8 }}>
-              <Text variant="label" style={{ fontWeight: '700', fontSize: 13 }}>
-                Select Icon
-              </Text>
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-                {SELECTABLE_ICONS.map((item) => {
-                  const isSel = icon === item.name;
-                  return (
-                    <Pressable
-                      key={item.name}
-                      onPress={() => setIcon(item.name)}
-                      style={{
-                        width: 44,
-                        height: 44,
-                        borderRadius: 12,
-                        backgroundColor: isSel ? color : theme.colors.surfaceElevated,
-                        borderWidth: isSel ? 2 : 1,
-                        borderColor: isSel ? color : theme.colors.border,
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        shadowColor: isSel ? color : 'transparent',
-                        shadowOffset: { width: 0, height: 2 },
-                        shadowOpacity: isSel ? 0.35 : 0,
-                        shadowRadius: 4,
-                        elevation: isSel ? 2 : 0,
-                      }}
-                    >
-                      <CategoryIcon
-                        name={item.name}
-                        size={20}
-                        color={isSel ? '#FFFFFF' : theme.colors.text}
-                      />
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </View>
 
             {/* Default Account Checkbox */}
             <Pressable
@@ -604,8 +649,9 @@ export function AccountManageModal({
               )}
             </View>
           </ScrollView>
-        </View>
-      </View>
+          </Pressable>
+        </Pressable>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

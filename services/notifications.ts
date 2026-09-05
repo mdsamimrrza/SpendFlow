@@ -1,12 +1,20 @@
 import { Platform } from 'react-native';
-import * as Notifications from 'expo-notifications';
+import type { NotificationRequestInput } from 'expo-notifications';
 import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { loadNotificationsModule } from '@/services/notificationsModule';
 import { formatMoney } from '@/utils/format';
 import { supabase } from '@/utils/supabase';
 
 // Detect if running inside Expo Go (where remote push is unsupported since SDK 53)
 const isExpoGo = Constants.executionEnvironment === 'storeClient';
+
+// Null inside Expo Go — every consumer below no-ops instead of crashing.
+const Notifications = loadNotificationsModule();
+
+async function scheduleLocal(request: NotificationRequestInput): Promise<void> {
+  await Notifications?.scheduleNotificationAsync(request);
+}
 
 // ── Persist a notification record to Supabase ──────────────────────────────
 // userId is optional — if not available (e.g. on web) we skip the DB write.
@@ -39,9 +47,9 @@ export function setNotificationUserId(userId: string | null) {
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Configure notification behavior — only register handler outside Expo Go
-// to avoid the SDK 53 "push removed from Expo Go" warning
-if (!isExpoGo) {
+// Configure notification behavior — only register handler when the module
+// loaded (real builds) and we're not inside Expo Go
+if (Notifications && !isExpoGo) {
   Notifications.setNotificationHandler({
     handleNotification: async () => ({
       shouldShowAlert: true,
@@ -56,6 +64,8 @@ if (!isExpoGo) {
 // 1. Request Notification Permissions & Initialize Android Channel
 async function requestNotificationPermissions(): Promise<boolean> {
   if (Platform.OS === 'web') return false;
+  // Expo Go: the notifications module is unavailable — treat as "no permission".
+  if (!Notifications) return false;
 
   try {
     if (Platform.OS === 'android') {
@@ -166,7 +176,7 @@ export async function checkAndNotifyBudgetThreshold(
       bodyMsg = `You have used ${pct}% (${formatMoney(monthTotal, currency)}) of your ${formatMoney(monthlyBudget, currency)} budget. ${formatMoney(remaining, currency)} remaining.`;
     }
 
-    await Notifications.scheduleNotificationAsync({
+    await scheduleLocal({
       content: {
         title: currentBracket.title,
         body: bodyMsg,
@@ -241,7 +251,7 @@ export async function checkAndNotifyCategoryBudgetThreshold(
       bodyMsg = `${categoryIcon} You have used ${pct}% (${formatMoney(monthCategoryTotal, currency)}) of your ${formatMoney(categoryMonthlyBudget, currency)} ${cleanName} budget. ${formatMoney(remaining, currency)} remaining.`;
     }
 
-    await Notifications.scheduleNotificationAsync({
+    await scheduleLocal({
       content: {
         title,
         body: bodyMsg,
@@ -282,7 +292,7 @@ export async function notifyRecurringBillDue(
     const formattedAmount = formatMoney(amount, currency);
     const recurringTitle = '🔔 Recurring Bill Reminder';
     const recurringBody = `Reminder: Your recurring payment "${description}" (${formattedAmount}) is due on ${dueDate}.`;
-    await Notifications.scheduleNotificationAsync({
+    await scheduleLocal({
       content: {
         title: recurringTitle,
         body: recurringBody,
@@ -323,7 +333,7 @@ export async function notifyLargeExpense(
     const largeTitle = '💸 Large Purchase Recorded';
     const largeBody = `Recorded purchase of ${formattedAmount}${inCategoryText}.`;
 
-    await Notifications.scheduleNotificationAsync({
+    await scheduleLocal({
       content: {
         title: largeTitle,
         body: largeBody,
@@ -364,7 +374,7 @@ export async function notifyExpenseAdded(
       body = `Successfully recorded ${formattedAmount}.`;
     }
 
-    await Notifications.scheduleNotificationAsync({
+    await scheduleLocal({
       content: {
         title: '✅ Expense Recorded',
         body,

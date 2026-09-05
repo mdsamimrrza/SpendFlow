@@ -19,7 +19,7 @@ import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { useLanguage } from '@/hooks/useLanguage';
 import { useTheme } from '@/hooks/useTheme';
 import { Expense } from '@/types';
-import { formatMoney, sumExpenses, sumIncome } from '@/utils/format';
+import { formatMoney, getMonthlyBudget, sumExpenses, sumIncome } from '@/utils/format';
 
 interface IncomeExpenseBudgetCardProps {
   expenses: Expense[];
@@ -41,7 +41,7 @@ export function IncomeExpenseBudgetCard({
   const isCompact = width < 390;
 
   const currency = targetCurrency ?? profile?.preferred_currency ?? 'NPR';
-  const effectiveBudget = monthlyBudget > 0 ? monthlyBudget : profile?.monthly_budget ? Number(profile.monthly_budget) : 0;
+  const effectiveBudget = monthlyBudget > 0 ? monthlyBudget : getMonthlyBudget(profile, rates);
 
   const totalIncome = sumIncome(expenses, currency, rates);
   const totalExpense = sumExpenses(expenses, currency, rates, 'expense');
@@ -104,10 +104,10 @@ export function IncomeExpenseBudgetCard({
               borderRadius: 8,
               backgroundColor: isHealthyCashflow ? 'rgba(16, 185, 129, 0.12)' : 'rgba(239, 68, 68, 0.12)',
               borderWidth: 1,
-              borderColor: isHealthyCashflow ? '#10B981' : '#EF4444',
+              borderColor: isHealthyCashflow ? theme.colors.income : '#EF4444',
             }}
           >
-            <Text style={{ fontSize: 10.5, fontWeight: '800', color: isHealthyCashflow ? '#10B981' : '#EF4444' }}>
+            <Text style={{ fontSize: 10.5, fontWeight: '800', color: isHealthyCashflow ? theme.colors.income : '#EF4444' }}>
               {isHealthyCashflow ? `+${savingsRate}% Saved` : 'Deficit'}
             </Text>
           </View>
@@ -129,17 +129,17 @@ export function IncomeExpenseBudgetCard({
           }}
         >
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-            <Text variant="caption" style={{ fontWeight: '800', fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5, color: '#10B981' }}>
+            <Text variant="caption" style={{ fontWeight: '800', fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5, color: theme.colors.income }}>
               Income (+)
             </Text>
-            <ArrowDownRight size={14} color="#10B981" />
+            <ArrowDownRight size={14} color={theme.colors.income} />
           </View>
           <Text
             variant="h3"
             numberOfLines={1}
             adjustsFontSizeToFit
             minimumFontScale={0.7}
-            style={{ fontSize: 16, fontWeight: '800', fontVariant: ['tabular-nums'], color: '#10B981' }}
+            style={{ fontSize: 16, fontWeight: '800', fontVariant: ['tabular-nums'], color: theme.colors.income }}
           >
             {formatMoney(totalIncome, currency)}
           </Text>
@@ -239,7 +239,7 @@ export function IncomeExpenseBudgetCard({
                 style={{
                   width: `${Math.min(100, expenseToIncomeRatio)}%`,
                   height: '100%',
-                  backgroundColor: expenseToIncomeRatio > 100 ? theme.colors.danger : expenseToIncomeRatio > 80 ? theme.colors.warning : '#10B981',
+                  backgroundColor: expenseToIncomeRatio > 100 ? theme.colors.danger : expenseToIncomeRatio > 80 ? theme.colors.warning : theme.colors.income,
                   borderRadius: 4,
                 }}
               />
@@ -325,7 +325,7 @@ export function IncomeExpenseBudgetCard({
         {isOverBudget ? (
           <TrendingUp size={16} color={theme.colors.danger} />
         ) : totalIncome > 0 && isHealthyCashflow ? (
-          <TrendingDown size={16} color="#10B981" />
+          <TrendingDown size={16} color={theme.colors.income} />
         ) : (
           <Zap size={16} color={theme.colors.primary} />
         )}
@@ -340,7 +340,7 @@ export function IncomeExpenseBudgetCard({
               : totalIncome > 0 && !isHealthyCashflow
               ? theme.colors.danger
               : totalIncome > 0 && isHealthyCashflow
-              ? '#10B981'
+              ? theme.colors.income
               : theme.colors.text,
           }}
         >

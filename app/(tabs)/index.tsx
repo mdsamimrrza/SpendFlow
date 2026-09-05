@@ -20,7 +20,7 @@ import { useExpenses } from '@/hooks/useExpenses';
 import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
 import { useTheme } from '@/hooks/useTheme';
-import { currentMonthRange, getCycleMeta, getCycleLabel, isoDate, sumExpenses } from '@/utils/format';
+import { currentMonthRange, getCycleMeta, getCycleLabel, getMonthlyBudget, isoDate, sumExpenses } from '@/utils/format';
 import { CURRENCY_DETAILS } from '@/constants/app';
 
 export default function HomeScreen() {
@@ -87,7 +87,7 @@ export default function HomeScreen() {
     return sumExpenses(expenses.items.filter((expense) => expense.date === todayIso), preferredCurrency, rates);
   }, [expenses.items, preferredCurrency, rates]);
 
-  const monthlyBudget = profile?.monthly_budget ? Number(profile.monthly_budget) : 0;
+  const monthlyBudget = getMonthlyBudget(profile, rates);
 
   // Time-aware greeting
   const currentHour = new Date().getHours();

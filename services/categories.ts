@@ -81,8 +81,29 @@ export async function seedDefaultCategories(userId: string): Promise<Category[]>
   })) as Category[];
 }
 
-export async function listCategories(userId: string): Promise<Category[]> {
+/**
+ * Lists the user's categories from Supabase. `onCached` fires first with the
+ * locally cached list (when present) so callers can paint the UI instantly;
+ * the resolved value is always the authoritative server list.
+ */
+export async function listCategories(
+  userId: string,
+  onCached?: (cached: Category[]) => void,
+): Promise<Category[]> {
   if (!userId) return [];
+  try {
+    const cachedRaw = await AsyncStorage.getItem(`${CATEGORY_CACHE_PREFIX}${userId}`);
+    if (cachedRaw && onCached) {
+      const parsed = JSON.parse(cachedRaw) as Category[];
+      const enriched = parsed.map((c) => ({
+        ...c,
+        type: resolveCategoryType(c.name, c.type),
+      }));
+      if (enriched.length) onCached(enriched);
+    }
+  } catch {
+    // Cache paint is best-effort — the network fetch below still runs
+  }
   try {
     const { data, error } = await supabase
       .from('categories')

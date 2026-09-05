@@ -17,7 +17,6 @@ import * as Haptics from 'expo-haptics';
 import {
   Bell,
   Check,
-  CheckCircle2,
   ChevronRight,
   Coins,
   DollarSign,
@@ -53,6 +52,7 @@ import { CategoryBudgetFormModal } from '@/components/expense/CategoryBudgetForm
 import { PrivacyEyeButton } from '@/components/ui/PrivacyEyeButton';
 import { Text } from '@/components/ui/Text';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
+import { showToast } from '@/components/ui/Toast';
 import { useAuth } from '@/hooks/useAuth';
 import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
@@ -70,7 +70,7 @@ import { resetBudgetAlertHistory } from '@/services/notifications';
 import { Category, ThemePreference } from '@/types';
 
 export default function SettingsScreen() {
-  const { profile, refreshProfile } = useAuth();
+  const { profile, refreshProfile, patchProfile } = useAuth();
   const { language, setLanguage, t } = useLanguage();
   const { isPrivacyMode } = usePrivacy();
   const { isBiometricEnabled, isBiometricSupported, biometricTypeName, toggleBiometric } = useSecurity();
@@ -100,7 +100,6 @@ export default function SettingsScreen() {
   // Form inputs
   const [nameInput, setNameInput] = useState('');
   const [savingName, setSavingName] = useState(false);
-  const [nameSuccessMsg, setNameSuccessMsg] = useState<string | null>(null);
 
   const preferredCurrency = profile?.preferred_currency ?? 'NPR';
   const displayName = profile?.display_name || profile?.email?.split('@')[0] || 'Samim Reza';
@@ -154,7 +153,6 @@ export default function SettingsScreen() {
   async function handleSaveName() {
     if (!nameInput.trim()) return;
     setSavingName(true);
-    setNameSuccessMsg(null);
     try {
       await updateProfile({ display_name: nameInput.trim() });
       await refreshProfile(true);
@@ -163,13 +161,7 @@ export default function SettingsScreen() {
       // Tactile Haptic Confirmation
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
 
-      const msg = `Name updated to "${nameInput.trim()}"`;
-      setNameSuccessMsg(msg);
-
-      // Auto clear after 3.5 seconds
-      setTimeout(() => {
-        setNameSuccessMsg(null);
-      }, 3500);
+      showToast({ message: `Name updated to "${nameInput.trim()}"`, duration: 3500 });
     } catch (err) {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => undefined);
       Alert.alert(t('common_error'), err instanceof Error ? err.message : t('common_error'));
@@ -972,34 +964,6 @@ export default function SettingsScreen() {
         </Pressable>
       </Modal>
 
-      {/* Name Save Success Toast */}
-      {nameSuccessMsg && (
-        <View
-          style={{
-            position: 'absolute',
-            top: 80,
-            left: 16,
-            right: 16,
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 10,
-            padding: 12,
-            borderRadius: theme.radius.md,
-            backgroundColor: theme.isDark ? 'rgba(99, 102, 241, 0.2)' : '#EEF2FF',
-            borderWidth: 1.5,
-            borderColor: theme.colors.primary,
-            zIndex: 1000,
-          }}
-        >
-          <CheckCircle2 size={18} color={theme.colors.primary} />
-          <Text
-            style={{ flex: 1, fontSize: 12, fontWeight: '800', color: theme.colors.primary }}
-          >
-            {nameSuccessMsg}
-          </Text>
-        </View>
-      )}
-
       {/* ── 3. CURRENCY SELECTION MODAL ── */}
       <Modal
         visible={currencyModalOpen}
@@ -1075,10 +1039,23 @@ export default function SettingsScreen() {
                 return (
                   <Pressable
                     key={cur.code}
-                    onPress={async () => {
-                      await updateProfile({ preferred_currency: cur.code as any });
-                      await refreshProfile(true);
+                    onPress={() => {
+                      // Optimistic: apply the currency instantly and close, then
+                      // persist in the background — no waiting on network round trips.
                       setCurrencyModalOpen(false);
+                      patchProfile({ preferred_currency: cur.code as any });
+                      void (async () => {
+                        try {
+                          await updateProfile({ preferred_currency: cur.code as any });
+                          await refreshProfile(true);
+                        } catch (err) {
+                          showToast({
+                            message: err instanceof Error ? err.message : 'Could not save the currency. Please try again.',
+                            type: 'error',
+                          });
+                          await refreshProfile(true);
+                        }
+                      })();
                     }}
                     style={{
                       flexDirection: 'row',
@@ -1578,7 +1555,7 @@ export default function SettingsScreen() {
               <Pressable
                 onPress={async () => {
                   await resetBudgetAlertHistory();
-                  Alert.alert('Notifications Reset', 'Budget alert threshold history has been reset for this month.');
+                  showToast({ message: 'Budget alert threshold history has been reset for this month.' });
                 }}
                 style={({ pressed }) => ({
                   paddingVertical: 12,
@@ -1828,7 +1805,7 @@ export default function SettingsScreen() {
                             setDeleteOtpError('Email rate limit reached. Please wait before requesting another code.');
                             return;
                           }
-                          Alert.alert('Sent', 'A new 6-digit OTP code was sent to your email.');
+                          showToast({ message: 'A new 6-digit OTP code was sent to your email.' });
                         } catch (err: any) {
                           setDeleteOtpError(err?.message || 'Failed to resend OTP.');
                         } finally {

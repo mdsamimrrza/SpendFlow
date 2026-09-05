@@ -11,6 +11,16 @@ const DEFAULT_RATES: Record<string, number> = {
   INR: 83.5,
   QAR: 3.64,
   GBP: 0.79,
+  EUR: 0.92,
+  AED: 3.67,
+  SAR: 3.75,
+  CAD: 1.36,
+  AUD: 1.52,
+  JPY: 155.0,
+  SGD: 1.35,
+  MYR: 4.70,
+  THB: 36.5,
+  CNY: 7.23,
 };
 
 let inMemoryRates: Record<string, number> = { ...DEFAULT_RATES };
@@ -61,11 +71,8 @@ async function fetchExchangeRates(): Promise<Record<string, number>> {
 
     if (data && data.rates) {
       const newRates: Record<string, number> = {
-        USD: 1.0,
-        NPR: Number(data.rates.NPR) || DEFAULT_RATES.NPR,
-        INR: Number(data.rates.INR) || DEFAULT_RATES.INR,
-        QAR: Number(data.rates.QAR) || DEFAULT_RATES.QAR,
-        GBP: Number(data.rates.GBP) || DEFAULT_RATES.GBP,
+        ...DEFAULT_RATES,
+        ...data.rates,
       };
 
       inMemoryRates = newRates;

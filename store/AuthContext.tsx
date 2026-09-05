@@ -17,6 +17,8 @@ interface AuthContextValue {
   refreshSession: () => Promise<Session | null>;
   /** force=true bypasses the freshness throttle (post-save reloads, pull-to-refresh). */
   refreshProfile: (force?: boolean) => Promise<void>;
+  /** Optimistically apply profile fields in memory (persist via updateProfile separately). */
+  patchProfile: (patch: Partial<UserProfile>) => void;
   signOut: () => Promise<void>;
 }
 
@@ -230,6 +232,11 @@ export function AuthProvider({ children }: PropsWithChildren) {
     };
   }, [refreshProfile, session?.user, userId]);
 
+  /** Optimistic in-memory profile patch — saves still go through updateProfile. */
+  const patchProfile = useCallback((patch: Partial<UserProfile>) => {
+    setProfile((current) => (current ? { ...current, ...patch } : current));
+  }, []);
+
   const value = useMemo<AuthContextValue>(
     () => ({
       session,
@@ -237,9 +244,10 @@ export function AuthProvider({ children }: PropsWithChildren) {
       loading,
       refreshSession,
       refreshProfile,
+      patchProfile,
       signOut,
     }),
-    [loading, profile, refreshProfile, refreshSession, session, signOut],
+    [loading, patchProfile, profile, refreshProfile, refreshSession, session, signOut],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

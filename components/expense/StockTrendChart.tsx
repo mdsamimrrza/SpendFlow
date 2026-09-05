@@ -455,7 +455,7 @@ export function StockTrendChart({
   const VIEW_OPTIONS: { key: FlowViewMode; label: string; iconColor: string }[] = [
     { key: 'both', label: 'Cash Flow', iconColor: '#818CF8' },
     { key: 'expense', label: 'Spending Trend', iconColor: theme.colors.primary },
-    { key: 'income', label: 'Income Trend', iconColor: '#10B981' },
+    { key: 'income', label: 'Income Trend', iconColor: theme.colors.income },
   ];
 
   const currentViewLabel = VIEW_OPTIONS.find((v) => v.key === viewMode)?.label || 'Cash Flow';
@@ -499,7 +499,7 @@ export function StockTrendChart({
               opacity: pressed ? 0.8 : 1,
             })}
           >
-            <TrendingUp size={15} color={viewMode === 'income' ? '#10B981' : theme.colors.primary} />
+            <TrendingUp size={15} color={viewMode === 'income' ? theme.colors.income : theme.colors.primary} />
             <Text style={{ fontWeight: '800', fontSize: isCompact ? 13 : 14, color: theme.colors.text }}>
               {currentViewLabel}
             </Text>
@@ -643,8 +643,8 @@ export function StockTrendChart({
                   </Text>
                 </View>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-                  <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#10B981' }} />
-                  <Text style={{ fontSize: 13, fontWeight: '800', color: '#10B981' }}>
+                  <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: theme.colors.income }} />
+                  <Text style={{ fontSize: 13, fontWeight: '800', color: theme.colors.income }}>
                     +{formatMoney(currentIncomeTotal, targetCurrency)}
                   </Text>
                 </View>
@@ -660,7 +660,7 @@ export function StockTrendChart({
                 numberOfLines={1}
                 adjustsFontSizeToFit
                 minimumFontScale={0.7}
-                style={{ fontSize: isCompact ? 22 : 26, fontWeight: '800', fontVariant: ['tabular-nums'], color: '#10B981' }}
+                style={{ fontSize: isCompact ? 22 : 26, fontWeight: '800', fontVariant: ['tabular-nums'], color: theme.colors.income }}
               >
                 +{formatMoney(currentIncomeTotal, targetCurrency)}
               </Text>
@@ -702,12 +702,12 @@ export function StockTrendChart({
                   : (theme.isDark ? 'rgba(239, 68, 68, 0.18)' : 'rgba(239, 68, 68, 0.1)'),
               }}
             >
-              <Sparkles size={12} color={currentIncomeTotal >= currentExpenseTotal ? (theme.isDark ? '#10B981' : '#0F5C4D') : '#EF4444'} />
+              <Sparkles size={12} color={currentIncomeTotal >= currentExpenseTotal ? (theme.isDark ? theme.colors.income : '#0F5C4D') : '#EF4444'} />
               <Text
                 style={{
                   fontSize: 11.5,
                   fontWeight: '800',
-                  color: currentIncomeTotal >= currentExpenseTotal ? (theme.isDark ? '#10B981' : '#0F5C4D') : '#EF4444',
+                  color: currentIncomeTotal >= currentExpenseTotal ? (theme.isDark ? theme.colors.income : '#0F5C4D') : '#EF4444',
                 }}
               >
                 Net: {currentIncomeTotal >= currentExpenseTotal ? '+' : ''}{formatMoney(currentIncomeTotal - currentExpenseTotal, targetCurrency)}
@@ -795,7 +795,7 @@ export function StockTrendChart({
                 }}
               >
                 {currentIncomeTotal >= previousIncomeTotal ? (
-                  <ArrowUpRight size={12} color="#10B981" />
+                  <ArrowUpRight size={12} color={theme.colors.income} />
                 ) : (
                   <ArrowDownRight size={12} color={theme.colors.danger} />
                 )}
@@ -805,7 +805,7 @@ export function StockTrendChart({
                   style={{
                     fontWeight: '800',
                     fontSize: isCompact ? 10.5 : 11.5,
-                    color: currentIncomeTotal >= previousIncomeTotal ? '#10B981' : theme.colors.danger,
+                    color: currentIncomeTotal >= previousIncomeTotal ? theme.colors.income : theme.colors.danger,
                   }}
                 >
                   {currentIncomeTotal >= previousIncomeTotal ? '+' : '-'}{Math.abs(Math.round(((currentIncomeTotal - previousIncomeTotal) / previousIncomeTotal) * 100))}% vs prev
@@ -822,7 +822,7 @@ export function StockTrendChart({
                 borderColor: theme.colors.border,
               }}
             >
-              <Text variant="caption" style={{ fontSize: 10.5, fontWeight: '700', color: '#10B981' }}>
+              <Text variant="caption" style={{ fontSize: 10.5, fontWeight: '700', color: theme.colors.income }}>
                 ~{formatMoney(currentIncomeTotal / (filter === 'today' ? 1 : filter === 'daily' ? 7 : filter === 'weekly' ? 28 : filter === 'monthly' ? 180 : 365), targetCurrency)}/day
               </Text>
             </View>
@@ -838,8 +838,8 @@ export function StockTrendChart({
               <Stop offset="100%" stopColor={theme.colors.primary} stopOpacity="0.0" />
             </LinearGradient>
             <LinearGradient id="incomeAreaGrad" x1="0" y1="0" x2="0" y2="1">
-              <Stop offset="0%" stopColor="#10B981" stopOpacity={theme.isDark ? '0.25' : '0.15'} />
-              <Stop offset="100%" stopColor="#10B981" stopOpacity="0.0" />
+              <Stop offset="0%" stopColor={theme.colors.income} stopOpacity={theme.isDark ? '0.25' : '0.15'} />
+              <Stop offset="100%" stopColor={theme.colors.income} stopOpacity="0.0" />
             </LinearGradient>
           </Defs>
 
@@ -874,7 +874,7 @@ export function StockTrendChart({
             <Path
               d={incomePaths.linePath}
               fill="none"
-              stroke="#10B981"
+              stroke={theme.colors.income}
               strokeWidth={viewMode === 'both' ? 2 : 2.5}
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -902,14 +902,14 @@ export function StockTrendChart({
               return (
                 <React.Fragment key={`inc_${c.index}`}>
                   {isSelected ? (
-                    <Circle cx={c.x} cy={c.y} r={10} fill="#10B981" opacity={0.15} />
+                    <Circle cx={c.x} cy={c.y} r={10} fill={theme.colors.income} opacity={0.15} />
                   ) : null}
                   <Circle
                     cx={c.x}
                     cy={c.y}
                     r={isSelected ? 5 : 2.8}
-                    fill={isSelected ? '#FFFFFF' : '#10B981'}
-                    stroke="#10B981"
+                    fill={isSelected ? '#FFFFFF' : theme.colors.income}
+                    stroke={theme.colors.income}
                     strokeWidth={isSelected ? 2 : 1}
                   />
                 </React.Fragment>
@@ -990,7 +990,7 @@ export function StockTrendChart({
                       y={ty + 30}
                       fontSize={10}
                       fontWeight="bold"
-                      fill="#10B981"
+                      fill={theme.colors.income}
                       textAnchor="start"
                     >
                       🟢 Inc: +{shortMoney(incC.amount, targetCurrency)}
@@ -1012,7 +1012,7 @@ export function StockTrendChart({
                       y={ty + 15}
                       fontSize={11}
                       fontWeight="bold"
-                      fill={viewMode === 'income' ? '#10B981' : theme.colors.text}
+                      fill={viewMode === 'income' ? theme.colors.income : theme.colors.text}
                       textAnchor="middle"
                     >
                       {viewMode === 'income' ? '+' : ''}{shortMoney(viewMode === 'income' ? incC.amount : expC.amount, targetCurrency)}

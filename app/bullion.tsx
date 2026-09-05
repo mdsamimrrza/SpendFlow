@@ -713,13 +713,16 @@ export default function BullionScreen() {
               {/* Invisible Touch Hitboxes & Glowing Circle Point */}
               {chartCoords.map((c) => {
                 const isSel = selectedIndex === c.index;
-                const hitW = drawW / chartCoords.length;
+                const n = chartCoords.length;
+                const hitW = n > 1 ? drawW / (n - 1) : drawW;
+                const safeHitW = Number.isFinite(hitW) ? hitW : 1;
+                const rectX = Number.isFinite(c.x) ? c.x - safeHitW / 2 : 0;
                 return (
                   <React.Fragment key={c.point.date}>
                     <Rect
-                      x={c.x - hitW / 2}
+                      x={rectX}
                       y={padTop}
-                      width={hitW}
+                      width={safeHitW}
                       height={drawH}
                       fill="transparent"
                       onPress={() => setSelectedIndex(c.index === selectedIndex ? null : c.index)}

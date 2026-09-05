@@ -47,7 +47,7 @@ import { useTheme } from '@/hooks/useTheme';
 import { listCategories } from '@/services/categories';
 import { buildRateResolver, RateResolver } from '@/services/exchange';
 import { Category, Expense, PeriodKey } from '@/types';
-import { filterExpensesByPeriod, formatMoney, sumExpenses, sumIncome } from '@/utils/format';
+import { filterExpensesByPeriod, formatMoney, getMonthlyBudget, sumExpenses, sumIncome } from '@/utils/format';
 
 type AnalyticsSectionTab = 'overview' | 'categories' | 'habits' | 'all';
 type AnalyticsFlowType = 'expense' | 'income';
@@ -58,7 +58,7 @@ export default function AnalyticsScreen() {
   const { t } = useLanguage();
   const { isPrivacyMode } = usePrivacy();
   const theme = useTheme();
-  const { convert } = useExchangeRates();
+  const { convert, rates } = useExchangeRates();
   const { width } = useWindowDimensions();
   const isCompact = width < 390;
   const [period, setPeriod] = useState<PeriodKey>('month');
@@ -510,7 +510,7 @@ export default function AnalyticsScreen() {
           {/* 1. Income, Expense & Budget Analysis Card */}
           <IncomeExpenseBudgetCard
             expenses={filteredItems}
-            monthlyBudget={profile?.monthly_budget ? Number(profile.monthly_budget) : 0}
+            monthlyBudget={getMonthlyBudget(profile, rates)}
             targetCurrency={preferredCurrency}
           />
 

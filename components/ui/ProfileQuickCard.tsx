@@ -35,7 +35,7 @@ import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
 import { useSecurity } from '@/hooks/useSecurity';
 import { useTheme } from '@/hooks/useTheme';
-import { formatMoney } from '@/utils/format';
+import { formatMoney, getMonthlyBudget } from '@/utils/format';
 
 interface ProfileQuickCardProps {
   visible: boolean;
@@ -119,7 +119,7 @@ export function ProfileQuickCard({ visible, onClose }: ProfileQuickCardProps) {
 
   const displayName = profile?.display_name || profile?.email?.split('@')[0] || 'SpendFlow User';
   const currency = profile?.preferred_currency ?? 'NPR';
-  const monthlyBudget = profile?.monthly_budget ? Number(profile.monthly_budget) : 0;
+  const monthlyBudget = getMonthlyBudget(profile);
 
   function handleNavigate(path: string) {
     onClose();

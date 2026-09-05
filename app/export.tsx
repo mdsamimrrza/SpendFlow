@@ -18,6 +18,7 @@ import {
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Text } from '@/components/ui/Text';
+import { showToast } from '@/components/ui/Toast';
 import { PERIODS } from '@/constants/app';
 import { exportCsv, exportExcel, exportPdf } from '@/services/export';
 import { importExpensesFromCsv } from '@/services/expenses';
@@ -117,7 +118,7 @@ export default function ExportScreen() {
     try {
       const csv = await fetch(result.assets[0].uri).then((response) => response.text());
       const count = await importExpensesFromCsv(profile.id, csv);
-      Alert.alert('Import Complete', `${count} transactions were successfully imported.`);
+      showToast({ message: `${count} transactions were successfully imported.` });
       await expenses.refresh(true);
     } catch (error) {
       Alert.alert('Import Failed', error instanceof Error ? error.message : 'Could not import CSV.');
@@ -149,8 +150,7 @@ export default function ExportScreen() {
         </View>
 
         <Pressable
-          onPress={() => router.back()}
-          hitSlop={8}
+          onPress={() => router.replace('/settings')} hitSlop={8}
           style={{
             width: 36,
             height: 36,

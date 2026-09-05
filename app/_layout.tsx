@@ -14,6 +14,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useTheme } from '@/hooks/useTheme';
 import { Text } from '@/components/ui/Text';
 import { AnimatedSplashScreen } from '@/components/ui/AnimatedSplashScreen';
+import { ToastHost } from '@/components/ui/Toast';
 import { isSupabaseConfigured } from '@/utils/supabase';
 
 import { SecurityProvider } from '@/store/SecurityContext';
@@ -89,12 +90,15 @@ function RootNavigator() {
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="expense/add" options={{ presentation: 'modal' }} />
         <Stack.Screen name="expense/[id]" />
+        <Stack.Screen name="transfer" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="transfer-history" />
         <Stack.Screen name="export" options={{ presentation: 'modal' }} />
         <Stack.Screen name="bullion" />
         <Stack.Screen name="profit-loss" options={{ presentation: 'modal' }} />
       </Stack>
       <AnimatedSplashScreen visible={isLoading} />
       <BiometricLockOverlay />
+      <ToastHost />
     </View>
   );
 }

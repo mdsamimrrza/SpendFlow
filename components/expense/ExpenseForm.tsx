@@ -54,9 +54,11 @@ import { CURRENCIES, PAYMENT_METHODS } from '@/constants/app';
 import { useAuth } from '@/hooks/useAuth';
 import { notifyExpensesChanged, useExpenses } from '@/hooks/useExpenses';
 import { useLanguage } from '@/hooks/useLanguage';
+import { useTransfers } from '@/hooks/useTransfers';
 import { useTheme } from '@/hooks/useTheme';
 import { computeAccountBalances, listBankAccounts, seedDefaultAccounts } from '@/services/bankAccounts';
 import { listCategories } from '@/services/categories';
+import { convertExpense } from '@/services/exchange';
 import { getExpense, softDeleteExpense } from '@/services/expenses';
 import { uploadReceipt } from '@/services/receipts';
 import { BankAccount, Category, ExpenseInput, PaymentMethod, TransactionType } from '@/types';
@@ -97,6 +99,9 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
   const { width: screenWidth } = useWindowDimensions();
   const isCompactScreen = screenWidth < 380;
   const expenses = useExpenses(userId);
+  // Transfers move money between accounts, so they must be included in live
+  // balances for the submit() guard to see post-transfer availability.
+  const { transfers } = useTransfers(userId);
   const [categories, setCategories] = useState<Category[]>([]);
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -139,12 +144,36 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
   const [rawAmount, setRawAmount] = useState('');
   const currencyManuallySelected = useRef(false);
 
-  // Derive live balances for each account from initial_balance + all loaded transactions.
-  // Used both for the balance guard in submit() and for display on account chips.
-  const accountLiveBalances = useMemo(
-    () => computeAccountBalances(accounts, expenses.items),
-    [accounts, expenses.items],
-  );
+  // ── 12-hour numeric time entry buffers ──
+  // Seeded from form.time so the boxes are pre-filled in add-mode. In edit-mode
+  // they are re-seeded from the loaded expense's saved time (see the load
+  // effect below) — the saved expense arrives after mount, so without that
+  // re-seed the boxes would keep showing the mount-time "now".
+  const initTimeMatch = (form.time || '').match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  const [minuteRaw, setMinuteRaw] = useState(() => initTimeMatch ? initTimeMatch[2] : '');
+  const [hourRaw, setHourRaw] = useState(() => initTimeMatch ? initTimeMatch[1] : '');
+
+  // Derive live balances for each account from initial_balance + all loaded
+  // transactions. Async because every transaction is converted into the
+  // account's own currency (INR entries in an NPR account must not be summed
+  // as raw amounts). Used for the balance guard in submit() and account chips.
+  const [accountLiveBalances, setAccountLiveBalances] = useState<
+    (BankAccount & { live_balance: number })[]
+  >([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    computeAccountBalances(accounts, expenses.items, transfers)
+      .then((next) => {
+        if (!cancelled) setAccountLiveBalances(next);
+      })
+      .catch(() => {
+        // Keep the last computed balances; the submit guard still works off them
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [accounts, expenses.items, transfers]);
 
   // Account picker rows ordered by live balance: highest first, lowest last.
   const accountsByBalanceDesc = useMemo(
@@ -167,14 +196,16 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
 
   const loadCategories = async () => {
     if (!userId) return [];
-    const nextCategories = await listCategories(userId);
+    // Paint the cached list instantly, then swap in the server list.
+    const nextCategories = await listCategories(userId, (cached) => setCategories(cached));
     setCategories(nextCategories);
     return nextCategories;
   };
 
   const loadAccounts = async (autoSelectNewest = false) => {
     if (!userId) return [];
-    let nextAccounts = await listBankAccounts(userId);
+    // Paint the cached list instantly, then swap in the server list.
+    let nextAccounts = await listBankAccounts(userId, (cached) => setAccounts(cached));
     if (nextAccounts.length === 0) {
       nextAccounts = await seedDefaultAccounts(userId, profile?.preferred_currency || 'NPR');
     }
@@ -212,19 +243,25 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
     if (!expenseId) return;
     getExpense(expenseId, userId)
       .then((expense) => {
+        const savedTime = formatTimeForInput(expense.time);
         setForm({
           amount: Number(expense.amount),
           category_id: expense.category_id,
           currency: expense.currency,
           description: expense.description ?? '',
           date: expense.date,
-          time: formatTimeForInput(expense.time),
+          time: savedTime,
           payment_method: expense.payment_method,
           bank_account_id: expense.bank_account_id ?? null,
           notes: expense.notes ?? '',
           receipt_image_url: expense.receipt_image_url,
           type: expense.type || 'expense',
         });
+        // Re-seed the hour/minute boxes with the saved time so updating the
+        // entry retains it instead of overwriting it with mount-time "now".
+        const savedParts = savedTime.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+        setHourRaw(savedParts ? savedParts[1] : '');
+        setMinuteRaw(savedParts ? savedParts[2] : '');
         setRawAmount(String(expense.amount));
       })
       .catch((err) => setError(err instanceof Error ? err.message : 'Could not load this expense.'));
@@ -255,11 +292,6 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
   }
 
   // ── 12-hour numeric time entry helpers ──
-  // Initialize from the current time already stored in form.time so the boxes
-  // are pre-filled when the form opens in add-mode.
-  const initTimeMatch = (form.time || '').match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
-  const [minuteRaw, setMinuteRaw] = useState(() => initTimeMatch ? initTimeMatch[2] : '');
-  const [hourRaw, setHourRaw] = useState(() => initTimeMatch ? initTimeMatch[1] : '');
   const hourInputRef = useRef<TextInput | null>(null);
   const minuteInputRef = useRef<TextInput | null>(null);
   const scrollRef = useRef<ScrollView>(null);
@@ -412,26 +444,37 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
     if (txType === 'expense' && selectedAccountId) {
       const accountWithBalance = accountLiveBalances.find((a) => a.id === selectedAccountId);
       if (accountWithBalance) {
+        const accountCurrency = accountWithBalance.currency || 'NPR';
+        // Compare in the account's currency: the entry amount and the balance
+        // may be recorded in different currencies (e.g. INR entry, NPR account).
+        const amountInAccountCurrency = await convertExpense(
+          { currency: form.currency || 'NPR', date: form.date || isoDate(), exchange_rate_to_usd: null, amount },
+          accountCurrency,
+        ).catch(() => amount);
         let availableBalance = accountWithBalance.live_balance;
 
         // In edit mode the original expense is already baked into the live balance
-        // (it has already been deducted). Add it back so we're comparing against
-        // the balance as if this transaction hadn't been recorded yet.
+        // (it has already been deducted). Add it back — converted into the
+        // account's currency — so we compare against the balance as if this
+        // transaction hadn't been recorded yet.
         if (expenseId) {
           const original = expenses.items.find((e) => e.id === expenseId);
           if (original && original.bank_account_id === selectedAccountId && original.type === 'expense') {
-            availableBalance += Number(original.amount);
+            const originalConverted = await convertExpense(original, accountCurrency).catch(
+              () => Number(original.amount),
+            );
+            availableBalance += originalConverted;
           }
         }
 
-        if (amount > availableBalance) {
-          const shortfall = amount - availableBalance;
+        if (amountInAccountCurrency > availableBalance) {
+          const shortfall = amountInAccountCurrency - availableBalance;
           setInsufficientBalance({
             accountName: accountWithBalance.name,
             accountIcon: accountWithBalance.icon,
             accountColor: accountWithBalance.color,
             available: availableBalance,
-            required: amount,
+            required: amountInAccountCurrency,
             shortfall,
             currency: accountWithBalance.currency,
           });
@@ -610,7 +653,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
                 gap: 8,
                 borderRadius: 10,
                 backgroundColor:
-                  (form.type ?? 'expense') === 'income' ? '#10B981' : 'transparent',
+                  (form.type ?? 'expense') === 'income' ? theme.colors.income : 'transparent',
                 opacity: pressed ? 0.85 : 1,
               })}
             >
@@ -640,7 +683,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
               gap: 12,
               backgroundColor: theme.isDark ? '#111827' : theme.colors.cardHighlight,
               borderWidth: 2,
-              borderColor: (form.type ?? 'expense') === 'income' ? '#10B981' : theme.colors.primary,
+              borderColor: (form.type ?? 'expense') === 'income' ? theme.colors.income : theme.colors.primary,
             }}
           >
             {/* Currency Dropdown on Top-Right */}
@@ -651,7 +694,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
                   fontWeight: '800',
                   textTransform: 'uppercase',
                   letterSpacing: 0.8,
-                  color: (form.type ?? 'expense') === 'income' ? '#10B981' : theme.colors.primary,
+                  color: (form.type ?? 'expense') === 'income' ? theme.colors.income : theme.colors.primary,
                   fontSize: 11,
                 }}
               >
@@ -670,13 +713,13 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
                   borderRadius: theme.radius.full,
                   backgroundColor: theme.isDark ? 'rgba(99, 102, 241, 0.25)' : theme.colors.primaryLight,
                   borderWidth: 1.5,
-                  borderColor: (form.type ?? 'expense') === 'income' ? '#10B981' : theme.colors.primary,
+                  borderColor: (form.type ?? 'expense') === 'income' ? theme.colors.income : theme.colors.primary,
                 }}
               >
                 <Text
                   style={{
                     fontWeight: '800',
-                    color: (form.type ?? 'expense') === 'income' ? '#10B981' : theme.colors.primary,
+                    color: (form.type ?? 'expense') === 'income' ? theme.colors.income : theme.colors.primary,
                     fontSize: 12,
                   }}
                 >
@@ -684,7 +727,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
                 </Text>
                 <ChevronDown
                   size={14}
-                  color={(form.type ?? 'expense') === 'income' ? '#10B981' : theme.colors.primary}
+                  color={(form.type ?? 'expense') === 'income' ? theme.colors.income : theme.colors.primary}
                 />
               </PressableScale>
             </View>
@@ -696,7 +739,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
                   fontSize: 32,
                   lineHeight: 42,
                   fontWeight: '900',
-                  color: (form.type ?? 'expense') === 'income' ? '#10B981' : theme.colors.primary,
+                  color: (form.type ?? 'expense') === 'income' ? theme.colors.income : theme.colors.primary,
                   includeFontPadding: false,
                 }}
               >
@@ -1057,7 +1100,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
                           style={{
                             fontSize: 11,
                             fontWeight: '700',
-                            color: liveBalance >= 0 ? '#10B981' : theme.colors.danger,
+                            color: liveBalance >= 0 ? theme.colors.income : theme.colors.danger,
                           }}
                         >
                           Available: {formatMoney(liveBalance, selectedAccount.currency)}
@@ -1127,7 +1170,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
                               style={{
                                 fontSize: 10.5,
                                 fontWeight: '700',
-                                color: liveBalance >= 0 ? '#10B981' : theme.colors.danger,
+                                color: liveBalance >= 0 ? theme.colors.income : theme.colors.danger,
                               }}
                             >
                               Live: {formatMoney(liveBalance, acc.currency)}
@@ -1822,7 +1865,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
                     <Text style={{ fontSize: 13, fontWeight: '600', color: theme.colors.textMuted }}>
                       Available balance
                     </Text>
-                    <Text style={{ fontSize: 15, fontWeight: '800', color: '#10B981' }}>
+                    <Text style={{ fontSize: 15, fontWeight: '800', color: theme.colors.income }}>
                       {insufficientBalance
                         ? formatMoney(insufficientBalance.available, insufficientBalance.currency)
                         : '—'}
@@ -2094,7 +2137,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
                 lineHeight: 24,
                 fontWeight: '900',
                 includeFontPadding: false,
-                color: isIncome ? '#10B981' : theme.colors.primary,
+                color: isIncome ? theme.colors.income : theme.colors.primary,
                 fontVariant: ['tabular-nums'],
               }}
             >
@@ -2116,7 +2159,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
               flex: isCompactScreen ? 1.2 : 1.3,
               minWidth: 0,
               height: 50,
-              backgroundColor: isIncome ? '#10B981' : theme.colors.primary,
+              backgroundColor: isIncome ? theme.colors.income : theme.colors.primary,
             }}
           />
         </View>

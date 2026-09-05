@@ -25,7 +25,7 @@ import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
 import { useTheme } from '@/hooks/useTheme';
 import { Expense } from '@/types';
-import { formatMoney, groupByCategory } from '@/utils/format';
+import { formatMoney, getMonthlyBudget, groupByCategory } from '@/utils/format';
 
 interface FinancialHealthScoreCardProps {
   expenses: Expense[];
@@ -45,7 +45,7 @@ export function FinancialHealthScoreCard({
   const [infoModalOpen, setInfoModalOpen] = useState(false);
 
   const currency = targetCurrency ?? profile?.preferred_currency ?? 'NPR';
-  const monthlyBudget = profile?.monthly_budget ? Number(profile.monthly_budget) : 0;
+  const monthlyBudget = getMonthlyBudget(profile, rates);
 
   // Compute 0-100 Score and Smart Insights
   const healthData = useMemo(() => {

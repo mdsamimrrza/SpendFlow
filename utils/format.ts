@@ -1,5 +1,5 @@
 import { endOfMonth, format, parseISO, startOfMonth, subMonths } from 'date-fns';
-import { Expense, PeriodKey } from '@/types';
+import { Expense, PeriodKey, UserProfile } from '@/types';
 
 let globalPrivacyMode = false;
 
@@ -9,9 +9,17 @@ const DEFAULT_RATES: Record<string, number> = {
   INR: 83.5,
   QAR: 3.64,
   GBP: 0.79,
+  EUR: 0.92,
+  AED: 3.67,
+  SAR: 3.75,
+  CAD: 1.36,
+  AUD: 1.52,
+  JPY: 155.0,
+  SGD: 1.35,
+  MYR: 4.70,
 };
 
-function convertCurrency(
+export function convertCurrency(
   amount: number,
   fromCurrency = 'NPR',
   toCurrency = 'NPR',
@@ -32,6 +40,27 @@ function convertCurrency(
 
 export function setGlobalPrivacyMode(enabled: boolean) {
   globalPrivacyMode = enabled;
+}
+
+/**
+ * The user's monthly budget expressed in their preferred (display) currency.
+ * The stored figure is in profile.budget_currency (falls back to the preferred
+ * currency for legacy rows saved before budget currency was tracked), so a
+ * budget saved as 36,000 INR renders as its NPR equivalent instead of 36,000 NPR.
+ */
+export function getMonthlyBudget(
+  profile?: {
+    monthly_budget?: number | null;
+    budget_currency?: string | null;
+    preferred_currency?: string;
+  } | null,
+  rates?: Record<string, number>,
+): number {
+  const raw = profile?.monthly_budget ? Number(profile.monthly_budget) : 0;
+  if (!raw || raw <= 0) return 0;
+  const from = (profile?.budget_currency || profile?.preferred_currency || 'NPR').toUpperCase();
+  const to = (profile?.preferred_currency || 'NPR').toUpperCase();
+  return from === to ? raw : convertCurrency(raw, from, to, rates);
 }
 
 function isGlobalPrivacyMode() {

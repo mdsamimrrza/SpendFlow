@@ -79,9 +79,10 @@ export default function RecurringScreen() {
 
   async function load() {
     if (!profile?.id) return;
+    // Cache-paint first (instant), then swap in the authoritative server list.
     const [nextRules, nextCategories] = await Promise.all([
-      listRecurringRules(profile.id),
-      listCategories(profile.id),
+      listRecurringRules(profile.id, (cached) => setRules(cached)),
+      listCategories(profile.id, (cached) => setCategories(cached)),
     ]);
     setRules(nextRules);
     setCategories(nextCategories);

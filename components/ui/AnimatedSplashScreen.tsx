@@ -392,7 +392,7 @@ export function AnimatedSplashScreen({ visible, onFinish }: AnimatedSplashScreen
 
 const styles = StyleSheet.create({
   container: {
-    ...(StyleSheet.absoluteFillObject as any),
+    ...(StyleSheet.absoluteFill as any),
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 9999,

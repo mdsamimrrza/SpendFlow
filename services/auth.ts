@@ -224,14 +224,16 @@ export async function ensureProfile(): Promise<UserProfile> {
     ? dbCycleEnd
     : null;
 
+  const resolvedPreferredCurrency = localCurrency ?? cachedProfile?.preferred_currency ?? dbProfile?.preferred_currency ?? (user.user_metadata?.preferred_currency as string | undefined) ?? 'NPR';
   const result: UserProfile = {
     id: user.id,
     email: user.email,
     display_name: dbProfile?.display_name ?? cachedProfile?.display_name ?? (user.user_metadata.display_name as string | undefined) ?? (user.user_metadata.full_name as string | undefined) ?? null,
     avatar_url: dbProfile?.avatar_url ?? cachedProfile?.avatar_url ?? (user.user_metadata.avatar_url as string | undefined) ?? null,
-    preferred_currency: localCurrency ?? cachedProfile?.preferred_currency ?? dbProfile?.preferred_currency ?? (user.user_metadata?.preferred_currency as string | undefined) ?? 'NPR',
+    preferred_currency: resolvedPreferredCurrency,
     theme_preference: dbProfile?.theme_preference ?? cachedProfile?.theme_preference ?? (user.user_metadata?.theme_preference as any) ?? 'system',
     monthly_budget: finalBudget,
+    budget_currency: dbProfile?.budget_currency ?? cachedProfile?.budget_currency ?? (user.user_metadata?.budget_currency as string | undefined) ?? resolvedPreferredCurrency,
     cycle_start_day: cycleStartDay,
     cycle_end_day: cycleEndDay,
     created_at: dbProfile?.created_at ?? new Date().toISOString(),
@@ -245,6 +247,7 @@ export async function ensureProfile(): Promise<UserProfile> {
   // (best-effort: history failure must never block profile loading)
   void ensureUserSettingsBaseline(user.id, {
     monthly_budget: finalBudget ?? null,
+    budget_currency: result.budget_currency,
     cycle_start_day: cycleStartDay,
     cycle_end_day: cycleEndDay,
   }).catch(() => undefined);
@@ -252,7 +255,7 @@ export async function ensureProfile(): Promise<UserProfile> {
   return result;
 }
 
-export async function updateProfile(input: Partial<Pick<UserProfile, 'display_name' | 'preferred_currency' | 'theme_preference' | 'monthly_budget' | 'cycle_start_day' | 'cycle_end_day'>>): Promise<UserProfile> {
+export async function updateProfile(input: Partial<Pick<UserProfile, 'display_name' | 'preferred_currency' | 'theme_preference' | 'monthly_budget' | 'budget_currency' | 'cycle_start_day' | 'cycle_end_day'>>): Promise<UserProfile> {
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -300,42 +303,62 @@ export async function updateProfile(input: Partial<Pick<UserProfile, 'display_na
     ?? (await AsyncStorage.getItem(localCurrencyKey).catch(() => null))
     ?? 'NPR';
 
+  // ── Budget currency travels with the budget figure (device-local mirror) ──
+  const localBudgetCurrencyKey = `@spendflow_budget_currency_${user.id}`;
+  if (input.budget_currency !== undefined && input.budget_currency) {
+    await AsyncStorage.setItem(localBudgetCurrencyKey, input.budget_currency).catch(() => {});
+  }
+
   // ── Sync cycle window and currency to Supabase Cloud Auth Metadata ──
+  // budget_currency goes to metadata (freeform JSON — always accepted), NEVER
+  // to the users table: sending a column the remote DB doesn't have makes
+  // PostgREST reject the entire row update, which silently rolled back budget
+  // saves. The DB column from the migration stays optional.
   await supabase.auth.updateUser({
     data: {
       cycle_start_day: resolvedCycle,
       cycle_end_day: resolvedCycleEnd,
       preferred_currency: resolvedCurrency,
+      ...(input.budget_currency !== undefined ? { budget_currency: input.budget_currency } : {}),
     },
   }).catch(() => undefined);
 
   // cycle_start_day and cycle_end_day now also go to the DB (not stripped)
-  const { preferred_currency: _stripCurrency, ...supabaseInput } = input;
-
   let dbProfile: UserProfile | null = null;
   try {
-    const { data, error } = await supabase
+    const updatePayload: Record<string, any> = {
+      updated_at: new Date().toISOString(),
+    };
+    if (input.display_name !== undefined) updatePayload.display_name = input.display_name;
+    if (input.theme_preference !== undefined) updatePayload.theme_preference = input.theme_preference;
+    if (input.monthly_budget !== undefined) updatePayload.monthly_budget = input.monthly_budget;
+    if (input.preferred_currency !== undefined) updatePayload.preferred_currency = input.preferred_currency;
+    if (input.cycle_start_day !== undefined) updatePayload.cycle_start_day = resolvedCycle;
+    if (input.cycle_end_day !== undefined) updatePayload.cycle_end_day = resolvedCycleEnd;
+
+    const { data: updated } = await supabase
       .from('users')
-      .update({
-        ...supabaseInput,
-        cycle_start_day: resolvedCycle,
-        cycle_end_day: resolvedCycleEnd,
-        updated_at: new Date().toISOString(),
-      })
+      .update(updatePayload)
       .eq('id', user.id)
       .select('*')
       .single();
-    if (!error && data) {
-      dbProfile = data as UserProfile;
-      // Append-only history so past reports can reconstruct the budget/cycle
-      // values that were active at the time (deduped against the latest row).
+
+    if (updated) {
+      dbProfile = updated as UserProfile;
+
       if (
         input.monthly_budget !== undefined ||
+        input.budget_currency !== undefined ||
         input.cycle_start_day !== undefined ||
         input.cycle_end_day !== undefined
       ) {
+        // budget_currency lives in AsyncStorage + auth metadata, not users table
+        const effectiveBudgetCurrency = input.budget_currency ?? 
+          (await AsyncStorage.getItem(`@spendflow_budget_currency_${user.id}`).catch(() => null)) ??
+          resolvedCurrency;
         void recordUserSettingsChange(user.id, {
           monthly_budget: dbProfile.monthly_budget ?? null,
+          budget_currency: effectiveBudgetCurrency,
           cycle_start_day: resolvedCycle,
           cycle_end_day: resolvedCycleEnd,
         }).catch(() => undefined);
@@ -348,6 +371,8 @@ export async function updateProfile(input: Partial<Pick<UserProfile, 'display_na
   const localBudgetRaw = await AsyncStorage.getItem(`@spendflow_monthly_budget_${user.id}`).catch(() => null);
   const localBudget = localBudgetRaw ? Number(localBudgetRaw) : null;
 
+  const localBudgetCurrency = await AsyncStorage.getItem(localBudgetCurrencyKey).catch(() => null);
+
   const result: UserProfile = {
     id: user.id,
     email: user.email ?? '',
@@ -356,6 +381,7 @@ export async function updateProfile(input: Partial<Pick<UserProfile, 'display_na
     preferred_currency: resolvedCurrency,
     theme_preference: dbProfile?.theme_preference ?? input.theme_preference ?? 'system',
     monthly_budget: dbProfile?.monthly_budget ?? input.monthly_budget ?? localBudget,
+    budget_currency: input.budget_currency ?? localBudgetCurrency ?? dbProfile?.budget_currency ?? resolvedCurrency,
     cycle_start_day: resolvedCycle,
     cycle_end_day: resolvedCycleEnd,
     created_at: dbProfile?.created_at ?? new Date().toISOString(),

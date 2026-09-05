@@ -4,10 +4,11 @@ import { useRouter } from 'expo-router';
 import { format } from 'date-fns';
 import * as Haptics from 'expo-haptics';
 import Svg, { Path, Circle, Line, Defs, LinearGradient, Stop, Text as SvgText } from 'react-native-svg';
-import { Calendar, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Scale, Sliders, TrendingDown, TrendingUp, Wallet, X } from 'lucide-react-native';
+import { Calendar, CalendarDays, ChevronLeft, ChevronRight, Scale, Sliders, TrendingDown, TrendingUp, Wallet, X } from 'lucide-react-native';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Text } from '@/components/ui/Text';
+import { showToast } from '@/components/ui/Toast';
 import { CalendarModal, DateRange } from '@/components/ui/CalendarModal';
 import { useAuth } from '@/hooks/useAuth';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
@@ -18,12 +19,14 @@ import { useTheme } from '@/hooks/useTheme';
 import { updateProfile } from '@/services/auth';
 import { resetBudgetAlertHistory } from '@/services/notifications';
 import { fetchUserSettingsHistory } from '@/services/settingsHistory';
-import { currentMonthRange, formatMoney, getSafeMonthDate, sumExpenses, sumIncome } from '@/utils/format';
+import { currentMonthRange, formatMoney, getMonthlyBudget, getSafeMonthDate, sumExpenses, sumIncome } from '@/utils/format';
 import { UserSettingsPeriod } from '@/types';
 
 interface MonthRow {
   key: string;
   label: string;
+  /** Internal key using full unclipped cycle dates — used for cross-segment merge only, not displayed. */
+  cycleKey?: string;
   from: string;
   to: string;
   income: number;
@@ -31,6 +34,10 @@ interface MonthRow {
   net: number;
   /** Monthly budget that was active during this cycle (null = none set). */
   budget: number | null;
+  /** True if this period is an explicitly configured custom cycle. */
+  isCustom?: boolean;
+  /** Key for custom cycle (full unclipped dates) — used for internal tracking. */
+  customCycleKey?: string;
 }
 
 function toISO(date: Date) {
@@ -65,7 +72,6 @@ export default function ProfitLossScreen() {
 
   const [budgetInput, setBudgetInput] = useState('');
   const [savingBudget, setSavingBudget] = useState(false);
-  const [budgetSuccessMsg, setBudgetSuccessMsg] = useState<string | null>(null);
   const [selectedChartIdx, setSelectedChartIdx] = useState<number | null>(null);
   const [chartViewMode, setChartViewMode] = useState<'all' | 'income' | 'expense' | 'net'>('all');
 
@@ -74,11 +80,14 @@ export default function ProfitLossScreen() {
   const [cycleCalendarOpen, setCycleCalendarOpen] = useState(false);
   const [cycleCalendarMode, setCycleCalendarMode] = useState<'range' | 'single-start' | 'single-end'>('range');
   const [cycleSettingsOpen, setCycleSettingsOpen] = useState(false);
-  const [cycleSuccessMsg, setCycleSuccessMsg] = useState<string | null>(null);
 
   const cycleStartDay = profile?.cycle_start_day ?? 1;
   const cycleEndDayRaw = Number(profile?.cycle_end_day);
   const cycleEndDay = cycleEndDayRaw >= 1 && cycleEndDayRaw <= 31 ? cycleEndDayRaw : null;
+  /** True when the user hasn't customised the cycle (starts on the 1st, no explicit end day).
+   *  In that case calendar months are the natural grouping; otherwise the paycheck-cycle
+   *  builder is used so the graph matches the user's salary cadence exactly. */
+  const isDefaultCycle = cycleStartDay === 1 && cycleEndDay === null;
   const cycleLabel = `${cycleStartDay} – ${cycleEndDay !== null ? cycleEndDay : t('pl_last_day') || 'Last day'}`;
 
   const [modalStartDay, setModalStartDay] = useState(String(cycleStartDay));
@@ -101,8 +110,12 @@ export default function ProfitLossScreen() {
   }, [cycleStartDay, cycleEndDay]);
 
   useEffect(() => {
-    setBudgetInput(profile?.monthly_budget ? String(profile.monthly_budget) : '');
-  }, [profile?.monthly_budget]);
+    // Prefill with the budget converted into the display currency — editing and
+    // re-saving re-bases the stored figure (with budget_currency) to this currency.
+    const displayBudget = getMonthlyBudget(profile, rates);
+    setBudgetInput(displayBudget > 0 ? String(displayBudget) : '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile?.monthly_budget, profile?.budget_currency]);
 
   const from = range.startDate ?? toISO(new Date(now.getFullYear(), 0, 1));
   const to = range.endDate ?? toISO(now);
@@ -144,35 +157,386 @@ export default function ProfitLossScreen() {
   // back then. Falls back to a single segment from the current profile when
   // history is unavailable (offline / migration not applied yet).
   const settingsPeriods = useMemo<UserSettingsPeriod[]>(() => {
-    if (settingsHistory.length > 0) return settingsHistory;
+    if (settingsHistory.length > 0) {
+      // Prepend a DEFAULT baseline (start=1, end=null = calendar month) for the
+      // period before the user ever changed their cycle. This prevents custom
+      // cycle settings from being retroactively applied to past months that
+      // were recorded before any customisation existed.
+      const first = settingsHistory[0];
+      return [
+        {
+          effective_from: '1900-01-01',
+          monthly_budget: first.monthly_budget,
+          budget_currency: first.budget_currency,
+          cycle_start_day: 1,    // Default: calendar month starts on 1st
+          cycle_end_day: null,   // Default: ends on last day of month
+        },
+        ...settingsHistory,
+      ];
+    }
     return [
       {
         effective_from: '1900-01-01',
         monthly_budget: profile?.monthly_budget ?? null,
+        budget_currency: profile?.budget_currency,
         cycle_start_day: cycleStartDay,
         cycle_end_day: cycleEndDay,
       },
     ];
-  }, [settingsHistory, profile?.monthly_budget, cycleStartDay, cycleEndDay]);
+  }, [settingsHistory, profile?.monthly_budget, profile?.budget_currency, cycleStartDay, cycleEndDay]);
 
   const todayISO = toISO(new Date());
 
-  // ── Cycle-row builder shared by the Month-by-Month breakdown and the stock
-  // graph: walks the settings periods, generates each period's paycheck-cycle
-  // windows inside [rangeStartISO, rangeEndISO] (clamped at today), and sums
-  // the transactions falling in every window.
-  const buildCycleRows = useCallback(
+  // ── Cycle-row builder: supports both paycheck cycles and calendar months ──
+  // ── Calendar month rows (for chart) ──────────────────────────────────────
+  const buildCalendarMonthRows = useCallback(
     (rangeStartISO: string, rangeEndISO: string): MonthRow[] => {
       if (!rangeStartISO || !rangeEndISO || rangeStartISO > rangeEndISO) return [];
 
       const parseISO = (iso: string) =>
         new Date(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)) - 1, Number(iso.slice(8, 10)));
-      const today = parseISO(todayISO);
       const rangeStart = parseISO(rangeStartISO);
-      const rangeEnd = parseISO(rangeEndISO) < today ? parseISO(rangeEndISO) : today;
+      const rangeEnd = parseISO(rangeEndISO);
       if (rangeStart > rangeEnd) return [];
 
       const rows: MonthRow[] = [];
+      let cursor = new Date(rangeStart.getFullYear(), rangeStart.getMonth(), 1);
+      while (cursor <= rangeEnd) {
+        const cStart = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
+        const cEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
+        if (cStart > rangeEnd) break;
+        if (cEnd >= rangeStart && cEnd >= cStart) {
+          const bucketFrom = cStart > rangeStart ? cStart : rangeStart;
+          const bucketTo = cEnd < rangeEnd ? cEnd : rangeEnd;
+          const bucketFromISO = toISO(bucketFrom);
+          const bucketToISO = toISO(bucketTo);
+          const items = expenses.items.filter((e) => e.date >= bucketFromISO && e.date <= bucketToISO);
+          const income = sumIncome(items, currency, rates);
+          const expense = sumExpenses(items, currency, rates);
+
+          const convertedPeriodBudget = getMonthlyBudget(
+            {
+              monthly_budget: profile?.monthly_budget ?? null,
+              budget_currency: profile?.budget_currency,
+              preferred_currency: currency,
+            },
+            rates,
+          );
+
+          rows.push({
+            key: bucketToISO,
+            label: format(cEnd, 'MMM yyyy'),
+            from: bucketFromISO,
+            to: bucketToISO,
+            income,
+            expense,
+            net: income - expense,
+            budget: convertedPeriodBudget > 0 ? convertedPeriodBudget : null,
+          });
+        }
+        cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+      }
+      return rows;
+    },
+    [expenses.items, currency, rates, todayISO],
+  );
+
+  // ── Chart rows ─────────────────────────────────────────────────────────────
+  // IMPORTANT:
+  // Calendar months are always the default.
+  //
+  // Only the EXACT month where an explicitly configured custom cycle starts
+  // is replaced with that ONE custom cycle.
+  //
+  // No recurring cycles.
+  // No overlap engine.
+  // No rebuilding the whole timeline.
+  // No removing neighbouring months.
+  const buildChartRows = useCallback(
+    (rangeStartISO: string, rangeEndISO: string): MonthRow[] => {
+      if (!rangeStartISO || !rangeEndISO || rangeStartISO > rangeEndISO) return [];
+
+      const parseISO = (iso: string) =>
+        new Date(
+          Number(iso.slice(0, 4)),
+          Number(iso.slice(5, 7)) - 1,
+          Number(iso.slice(8, 10)),
+        );
+
+      const rangeStart = parseISO(rangeStartISO);
+      // IMPORTANT: The chart must respect the user's selected calendar range
+      // exactly, including future months. Future months simply contain zero data.
+      // Do NOT clamp the chart to today; doing that hides selected months such as
+      // Oct/Nov and makes the custom-cycle exception look like it removed them.
+      const rangeEnd = parseISO(rangeEndISO);
+      if (rangeStart > rangeEnd) return [];
+
+      // 1) Always start with normal calendar months.
+      const normalMonths: MonthRow[] = [];
+      let cursor = new Date(rangeStart.getFullYear(), rangeStart.getMonth(), 1);
+
+      while (cursor <= rangeEnd) {
+        const monthStart = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
+        const monthEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
+        const bucketFrom = monthStart > rangeStart ? monthStart : rangeStart;
+        const bucketTo = monthEnd < rangeEnd ? monthEnd : rangeEnd;
+
+        if (bucketFrom <= bucketTo) {
+          const bucketFromISO = toISO(bucketFrom);
+          const bucketToISO = toISO(bucketTo);
+          const items = expenses.items.filter(
+            (e) => e.date >= bucketFromISO && e.date <= bucketToISO,
+          );
+          const income = sumIncome(items, currency, rates);
+          const expense = sumExpenses(items, currency, rates);
+          const convertedPeriodBudget = getMonthlyBudget(
+            {
+              monthly_budget: profile?.monthly_budget ?? null,
+              budget_currency: profile?.budget_currency,
+              preferred_currency: currency,
+            },
+            rates,
+          );
+
+          normalMonths.push({
+            key: bucketToISO,
+            label: format(monthStart, 'MMM'),
+            from: bucketFromISO,
+            to: bucketToISO,
+            income,
+            expense,
+            net: income - expense,
+            budget: convertedPeriodBudget > 0 ? convertedPeriodBudget : null,
+            isCustom: false,
+          });
+        }
+
+        cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+      }
+
+      // Helper: the custom cycle that CONTAINS the anchor date.
+      // Example: anchor 1 Sep + cycle 31 -> 29 = 31 Aug -> 29 Sep.
+      const getCycleStartContaining = (anchor: Date, startDay: number) => {
+        if (anchor.getDate() >= startDay) {
+          return getSafeMonthDate(anchor.getFullYear(), anchor.getMonth(), startDay);
+        }
+        return getSafeMonthDate(anchor.getFullYear(), anchor.getMonth() - 1, startDay);
+      };
+
+      const getCycleEnd = (cycleStart: Date, startDay: number, endDay: number | null) => {
+        if (endDay !== null && endDay >= 1 && endDay <= 31) {
+          const nextMonth = endDay < startDay;
+          return getSafeMonthDate(
+            cycleStart.getFullYear(),
+            cycleStart.getMonth() + (nextMonth ? 1 : 0),
+            endDay,
+          );
+        }
+        const nextStart = getSafeMonthDate(
+          cycleStart.getFullYear(),
+          cycleStart.getMonth() + 1,
+          startDay,
+        );
+        return new Date(nextStart.getFullYear(), nextStart.getMonth(), nextStart.getDate() - 1);
+      };
+
+      type ExplicitCustom = {
+        period: UserSettingsPeriod;
+        cycleStart: Date;
+        cycleEnd: Date;
+      };
+
+      const explicitCustoms: ExplicitCustom[] = [];
+
+      // Real history entries only. The 1900 entry is an internal fallback and is
+      // NOT a real customisation date.
+      const realCustomSettings = settingsPeriods.filter((period) => {
+        const isCustom = period.cycle_start_day !== 1 || period.cycle_end_day !== null;
+        return isCustom && period.effective_from !== '1900-01-01';
+      });
+
+      if (realCustomSettings.length > 0) {
+        // Each explicitly saved custom setting contributes exactly one cycle:
+        // the cycle containing its effective_from date. Never extrapolate it.
+        realCustomSettings.forEach((period) => {
+          const anchor = parseISO(period.effective_from);
+          const cycleStart = getCycleStartContaining(anchor, period.cycle_start_day);
+          const cycleEnd = getCycleEnd(cycleStart, period.cycle_start_day, period.cycle_end_day);
+
+          if (cycleEnd >= rangeStart && cycleStart <= rangeEnd) {
+            explicitCustoms.push({ period, cycleStart, cycleEnd });
+          }
+        });
+      } else if (cycleStartDay !== 1 || cycleEndDay !== null) {
+        // No real settings-history row exists yet.
+        // IMPORTANT: the selected chart range must NEVER decide which month is
+        // custom. rangeEnd may be months in the future, so anchoring to rangeEnd
+        // would incorrectly create a future cycle (for example 31 Oct – 29 Nov).
+        //
+        // In this fallback case, the only reliable active custom cycle is the one
+        // containing TODAY. Future customisations are handled by real
+        // settingsHistory rows above via their own effective_from dates.
+        const activeAnchor = parseISO(todayISO);
+        const fallbackPeriod: UserSettingsPeriod = {
+          effective_from: todayISO,
+          monthly_budget: profile?.monthly_budget ?? null,
+          budget_currency: profile?.budget_currency,
+          cycle_start_day: cycleStartDay,
+          cycle_end_day: cycleEndDay,
+        };
+        const cycleStart = getCycleStartContaining(activeAnchor, cycleStartDay);
+        const cycleEnd = getCycleEnd(cycleStart, cycleStartDay, cycleEndDay);
+
+        // Only insert the current custom cycle when it actually intersects the
+        // selected chart range. Otherwise leave the selected range as normal
+        // calendar months.
+        if (cycleEnd >= rangeStart && cycleStart <= rangeEnd) {
+          explicitCustoms.push({ period: fallbackPeriod, cycleStart, cycleEnd });
+        }
+      }
+
+      // 2) Replace only the normal calendar rows occupied by each ONE explicit
+      // custom cycle. No recurring custom timeline is generated.
+      const finalRows = normalMonths.filter((month) => {
+        return !explicitCustoms.some((custom) => {
+          const customFrom = toISO(custom.cycleStart);
+          const customTo = toISO(custom.cycleEnd);
+          return !(month.to < customFrom || month.from > customTo);
+        });
+      });
+
+      explicitCustoms.forEach((custom) => {
+        const dataFrom = custom.cycleStart > rangeStart ? custom.cycleStart : rangeStart;
+        const dataTo = custom.cycleEnd < rangeEnd ? custom.cycleEnd : rangeEnd;
+        if (dataFrom > dataTo) return;
+
+        const fromISO = toISO(dataFrom);
+        const toISODate = toISO(dataTo);
+        const items = expenses.items.filter(
+          (e) => e.date >= fromISO && e.date <= toISODate,
+        );
+        const income = sumIncome(items, currency, rates);
+        const expense = sumExpenses(items, currency, rates);
+        const convertedPeriodBudget = getMonthlyBudget(
+          {
+            monthly_budget: custom.period.monthly_budget ?? profile?.monthly_budget ?? null,
+            budget_currency: custom.period.budget_currency ?? profile?.budget_currency,
+            preferred_currency: currency,
+          },
+          rates,
+        );
+
+        finalRows.push({
+          key: `${toISO(custom.cycleStart)}__${toISO(custom.cycleEnd)}`,
+          label: `${format(custom.cycleStart, 'd MMM')} – ${format(custom.cycleEnd, 'd MMM')}`,
+          from: fromISO,
+          to: toISODate,
+          income,
+          expense,
+          net: income - expense,
+          budget: convertedPeriodBudget > 0 ? convertedPeriodBudget : null,
+          isCustom: true,
+          customCycleKey: `${toISO(custom.cycleStart)}__${toISO(custom.cycleEnd)}`,
+        });
+      });
+
+      return finalRows.sort((a, b) => a.from.localeCompare(b.from));
+    },
+    [
+      settingsPeriods,
+      expenses.items,
+      currency,
+      rates,
+      profile?.monthly_budget,
+      profile?.budget_currency,
+      cycleStartDay,
+      cycleEndDay,
+      todayISO,
+    ],
+  );
+
+  // ── Paycheck cycle rows (for Month by Month) ────────────────────────────
+  const buildPaycheckCycleRows = useCallback(
+    (rangeStartISO: string, rangeEndISO: string): MonthRow[] => {
+      if (!rangeStartISO || !rangeEndISO || rangeStartISO > rangeEndISO) return [];
+
+      const parseISO = (iso: string) =>
+        new Date(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)) - 1, Number(iso.slice(8, 10)));
+      const rangeStart = parseISO(rangeStartISO);
+      const rangeEnd = parseISO(rangeEndISO);
+      if (rangeStart > rangeEnd) return [];
+
+      const rows: MonthRow[] = [];
+
+      function getCycleStartForDate(date: Date, period: UserSettingsPeriod): Date {
+        const { cycle_start_day } = period;
+        const year = date.getFullYear();
+        const month = date.getMonth();
+        const day = date.getDate();
+        const startDay = cycle_start_day;
+        if (day >= startDay) {
+          return getSafeMonthDate(year, month, startDay);
+        }
+        return getSafeMonthDate(year, month - 1, startDay);
+      }
+
+      function getCycleEndForDate(cycleStart: Date, period: UserSettingsPeriod): Date {
+        const { cycle_start_day, cycle_end_day } = period;
+        if (cycle_end_day !== null && cycle_end_day >= 1 && cycle_end_day <= 31) {
+          const endDay = cycle_end_day;
+          const nextMonth = endDay < cycle_start_day;
+          const year = nextMonth ? (cycleStart.getMonth() + 1 === 12 ? cycleStart.getFullYear() + 1 : cycleStart.getFullYear()) : cycleStart.getFullYear();
+          const month = nextMonth ? (cycleStart.getMonth() + 1) % 12 : cycleStart.getMonth();
+          return getSafeMonthDate(year, month, endDay);
+        }
+        const nextStart = getNextCycleStart(cycleStart, period);
+        return new Date(nextStart.getFullYear(), nextStart.getMonth(), nextStart.getDate() - 1);
+      }
+
+      function getNextCycleStart(cycleStart: Date, period: UserSettingsPeriod): Date {
+        const { cycle_start_day, cycle_end_day } = period;
+        if (cycle_end_day !== null && cycle_end_day >= 1 && cycle_end_day <= 31) {
+          const endDay = cycle_end_day;
+          const nextMonth = endDay < cycle_start_day;
+          const year = nextMonth ? (cycleStart.getMonth() + 1 === 12 ? cycleStart.getFullYear() + 1 : cycleStart.getFullYear()) : cycleStart.getFullYear();
+          const month = nextMonth ? (cycleStart.getMonth() + 1) % 12 : cycleStart.getMonth();
+          return getSafeMonthDate(year, month, cycle_start_day);
+        }
+        return new Date(cycleStart.getFullYear(), cycleStart.getMonth() + 1, cycle_start_day);
+      }
+
+      function addRow(bucketFrom: Date, bucketTo: Date, period: UserSettingsPeriod, cycleStart: Date, cycleEnd: Date) {
+        const bucketFromISO = toISO(bucketFrom);
+        const bucketToISO = toISO(bucketTo);
+        const items = expenses.items.filter((e) => e.date >= bucketFromISO && e.date <= bucketToISO);
+        const income = sumIncome(items, currency, rates);
+        const expense = sumExpenses(items, currency, rates);
+
+        const convertedPeriodBudget = getMonthlyBudget(
+          {
+            monthly_budget: period.monthly_budget,
+            budget_currency: period.budget_currency || profile?.budget_currency || currency,
+            preferred_currency: currency,
+          },
+          rates,
+        );
+
+        // Label: for custom cycles show full unclipped cycle name; for calendar months use MMM yyyy
+        const label = `${format(cycleStart, 'd MMM')} – ${format(cycleEnd, 'd MMM')}`;
+        const cycleKey = `${toISO(cycleStart)}__${toISO(cycleEnd)}`;
+
+        rows.push({
+          key: bucketToISO,
+          label,
+          cycleKey,
+          from: bucketFromISO,
+          to: bucketToISO,
+          income,
+          expense,
+          net: income - expense,
+          budget: convertedPeriodBudget > 0 ? convertedPeriodBudget : null,
+        });
+      }
 
       settingsPeriods.forEach((period, idx) => {
         const periodStart = parseISO(period.effective_from);
@@ -182,99 +546,85 @@ export default function ProfitLossScreen() {
             : null;
         const periodEnd = nextPeriodStart
           ? new Date(
-              nextPeriodStart.getFullYear(),
-              nextPeriodStart.getMonth(),
-              nextPeriodStart.getDate() - 1,
-            )
-          : today;
+            nextPeriodStart.getFullYear(),
+            nextPeriodStart.getMonth(),
+            nextPeriodStart.getDate() - 1,
+          )
+          : rangeEnd;
         if (periodStart > rangeEnd) return;
 
         const segStart = periodStart > rangeStart ? periodStart : rangeStart;
         const segEnd = periodEnd < rangeEnd ? periodEnd : rangeEnd;
         if (segStart > segEnd) return;
 
-        const calendarCycle =
-          period.cycle_start_day === 1 && (period.cycle_end_day === null || period.cycle_end_day === 1);
-
-        const cycleWindow = (year: number, month: number) => {
-          if (calendarCycle) {
-            return { cStart: new Date(year, month, 1), cEnd: new Date(year, month + 1, 0) };
+        let cycleStart = getCycleStartForDate(segStart, period);
+        if (cycleStart < periodStart) {
+          cycleStart = getCycleStartForDate(periodStart, period);
+        }
+        while (cycleStart <= segEnd) {
+          const cycleEnd = getCycleEndForDate(cycleStart, period);
+          if (cycleStart > segEnd) break;
+          const bucketFrom = cycleStart > segStart ? cycleStart : segStart;
+          const bucketTo = cycleEnd < segEnd ? cycleEnd : segEnd;
+          if (bucketFrom <= bucketTo) {
+            addRow(bucketFrom, bucketTo, period, cycleStart, cycleEnd);
           }
-          const cStart = getSafeMonthDate(year, month, period.cycle_start_day);
-          let cEnd: Date;
-          if (period.cycle_end_day !== null && period.cycle_end_day >= 1 && period.cycle_end_day <= 31) {
-            cEnd = getSafeMonthDate(
-              year,
-              period.cycle_end_day < period.cycle_start_day ? month + 1 : month,
-              period.cycle_end_day,
-            );
-          } else {
-            const nextStart = getSafeMonthDate(year, month + 1, period.cycle_start_day);
-            cEnd = new Date(nextStart.getFullYear(), nextStart.getMonth(), nextStart.getDate() - 1);
-          }
-          return { cStart, cEnd };
-        };
-
-        // Start a couple of months back so the cycle containing segStart is caught
-        let cursor = new Date(segStart.getFullYear(), segStart.getMonth() - 2, 1);
-
-        while (true) {
-          const { cStart, cEnd } = cycleWindow(cursor.getFullYear(), cursor.getMonth());
-          if (cStart > segEnd) break;
-          if (cEnd >= segStart && cEnd >= cStart) {
-            const bucketFrom = cStart > segStart ? cStart : segStart;
-            const bucketTo = cEnd < segEnd ? cEnd : segEnd;
-            const bucketFromISO = toISO(bucketFrom);
-            const bucketToISO = toISO(bucketTo);
-            const items = expenses.items.filter((e) => e.date >= bucketFromISO && e.date <= bucketToISO);
-            const income = sumIncome(items, currency, rates);
-            const expense = sumExpenses(items, currency, rates);
-
-            rows.push({
-              key: bucketToISO,
-              label: format(bucketTo, 'MMMM yyyy'),
-              from: bucketFromISO,
-              to: bucketToISO,
-              income,
-              expense,
-              net: income - expense,
-              budget: period.monthly_budget,
-            });
-          }
-          cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+          cycleStart = getNextCycleStart(cycleStart, period);
         }
       });
 
-      return rows;
+      // Merge rows that belong to the same custom cycle using the unclipped cycleKey
+      const merged: MonthRow[] = [];
+      for (const row of rows) {
+        const last = merged[merged.length - 1];
+        const sameCycle = last && (row as any).cycleKey && (row as any).cycleKey === (last as any).cycleKey;
+        if (sameCycle) {
+          last.income += row.income;
+          last.expense += row.expense;
+          last.net += row.net;
+          last.to = row.to;
+          last.key = row.key;
+          // Update display label to reflect the merged full range
+          last.label = `${last.from.slice(8, 10)} ${format(new Date(last.from), 'MMM')} – ${row.to.slice(8, 10)} ${format(new Date(row.to), 'MMM')}`;
+        } else {
+          merged.push(row);
+        }
+      }
+
+      return merged.reverse();
     },
     [settingsPeriods, expenses.items, currency, rates, todayISO],
   );
 
-  // ── Month-by-month breakdown: every cycle since the first transaction ──
-  const firstExpenseDate = useMemo(() => {
-    if (expenses.items.length === 0) return null;
-    return expenses.items.reduce((min, e) => (e.date < min ? e.date : min), expenses.items[0].date);
-  }, [expenses.items]);
-
+  // ── Month-by-month breakdown: cycles within the calendar range picker ──
+  // Uses default calendar months when no custom cycle is set; custom paycheck
+  // cycles otherwise — both views stay in sync with the graph.
   const monthRows = useMemo<MonthRow[]>(
-    () => (firstExpenseDate ? buildCycleRows(firstExpenseDate, todayISO).reverse() : []),
-    [buildCycleRows, firstExpenseDate, todayISO],
+    () => {
+      const rows = isDefaultCycle
+        ? buildCalendarMonthRows(from, to)
+        : buildPaycheckCycleRows(from, to);
+      return rows.filter((r) => r.income > 0 || r.expense > 0);
+    },
+    [isDefaultCycle, buildCalendarMonthRows, buildPaycheckCycleRows, from, to],
   );
 
-  // Reset pagination to page 1 on cycle setting change
+  // Reset pagination to page 1 when range or cycle settings change
   useEffect(() => {
     setCurrentPage(1);
-  }, [cycleStartDay, cycleEndDay]);
+  }, [from, to, cycleStartDay, cycleEndDay]);
 
   // Drop any selected chart point when the calendar range changes
   useEffect(() => {
     setSelectedChartIdx(null);
   }, [from, to]);
 
-  // Stock-graph series: paycheck-cycle buckets (with the settings active in
-  // each period) clamped to the calendar range picker above — the chart spans
-  // exactly what the filter shows.
-  const rangeChartRows = useMemo<MonthRow[]>(() => buildCycleRows(from, to), [buildCycleRows, from, to]);
+  // Stock-graph series: normal calendar months by default; ONLY explicitly configured
+  // custom periods (from settings history) use custom cycle logic.
+  const rangeChartRows = useMemo<MonthRow[]>(
+    () => buildChartRows(from, to),
+    [buildChartRows, from, to],
+  );
 
   const totalPages = Math.ceil(monthRows.length / ITEMS_PER_PAGE) || 1;
   const paginatedMonthRows = useMemo(() => {
@@ -283,11 +633,10 @@ export default function ProfitLossScreen() {
   }, [monthRows, currentPage]);
 
   const hasData = itemsInRange.length > 0;
-  const monthlyBudget = profile?.monthly_budget ? Number(profile.monthly_budget) : 0;
+  const monthlyBudget = getMonthlyBudget(profile, rates);
 
   async function handleSetCycleWindow(startDay: number, endDay: number | null) {
     setUpdatingCycle(true);
-    setCycleSuccessMsg(null);
     try {
       await updateProfile({ cycle_start_day: startDay, cycle_end_day: endDay });
       await refreshProfile(true);
@@ -296,13 +645,10 @@ export default function ProfitLossScreen() {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
 
       const endLabel = endDay !== null ? `Day ${endDay}` : 'Auto (Day - 1)';
-      const msg = `Paycheck Cycle updated! Active range: Day ${startDay} → ${endLabel}.`;
-      setCycleSuccessMsg(msg);
-
-      // Auto clear after 4.5 seconds
-      setTimeout(() => {
-        setCycleSuccessMsg(null);
-      }, 4500);
+      showToast({
+        message: `Paycheck Cycle updated! Active range: Day ${startDay} → ${endLabel}.`,
+        duration: 4500,
+      });
     } catch (err) {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => undefined);
       Alert.alert(
@@ -359,25 +705,23 @@ export default function ProfitLossScreen() {
 
   async function handleSaveBudget() {
     setSavingBudget(true);
-    setBudgetSuccessMsg(null);
     try {
       const numeric = budgetInput.trim() ? Number(budgetInput.replace(/[^0-9.]/g, '')) : null;
-      await updateProfile({ monthly_budget: numeric });
+      // The figure is entered in the display currency — record it as the
+      // budget's currency so other screens can convert it correctly.
+      await updateProfile({ monthly_budget: numeric, budget_currency: numeric ? currency : null });
       await resetBudgetAlertHistory();
       await refreshProfile(true);
 
       // Tactile Haptic Confirmation
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
 
-      const msg = numeric
-        ? `Monthly budget saved: ${formatMoney(numeric, currency)}`
-        : 'Monthly budget cleared!';
-      setBudgetSuccessMsg(msg);
-
-      // Auto clear after 3.5 seconds
-      setTimeout(() => {
-        setBudgetSuccessMsg(null);
-      }, 3500);
+      showToast({
+        message: numeric
+          ? `Monthly budget saved: ${formatMoney(numeric, currency)}`
+          : 'Monthly budget cleared!',
+        duration: 3500,
+      });
     } catch (err) {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => undefined);
       Alert.alert(
@@ -514,7 +858,7 @@ export default function ProfitLossScreen() {
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
           <Pressable
-            onPress={() => router.dismiss()}
+            onPress={() => router.dismiss(1)}
             hitSlop={8}
             style={{
               width: 36,
@@ -595,9 +939,9 @@ export default function ProfitLossScreen() {
         const pts = rangeChartRows.slice();
         const n = pts.length;
 
-        const incomes  = pts.map((r) => r.income);
+        const incomes = pts.map((r) => r.income);
         const expenses = pts.map((r) => r.expense);
-        const nets     = pts.map((r) => r.net);
+        const nets = pts.map((r) => r.net);
 
         const allVals = chartViewMode === 'income' ? incomes : chartViewMode === 'expense' ? expenses : chartViewMode === 'net' ? nets : [...incomes, ...expenses, ...nets];
         const maxVal = Math.max(...allVals, 1);
@@ -605,7 +949,10 @@ export default function ProfitLossScreen() {
         const valRange = Math.max(maxVal - minVal, 1);
 
         const toX = (i: number) => padL + (n <= 1 ? drawW / 2 : (i / (n - 1)) * drawW);
-        const toY = (v: number) => padTop + ((maxVal - v) / valRange) * drawH;
+        const toY = (v: number) => {
+          const val = Number.isFinite(v) ? v : 0;
+          return padTop + ((maxVal - val) / valRange) * drawH;
+        };
 
         const buildPath = (vals: number[]) => {
           if (vals.length === 0) return '';
@@ -618,9 +965,9 @@ export default function ProfitLossScreen() {
           return d;
         };
 
-        const incPath  = buildPath(incomes);
-        const expPath  = buildPath(expenses);
-        const netPath  = buildPath(nets);
+        const incPath = buildPath(incomes);
+        const expPath = buildPath(expenses);
+        const netPath = buildPath(nets);
 
         const incArea = incPath ? `${incPath} L ${toX(n - 1)},${chartH - padBot} L ${toX(0)},${chartH - padBot} Z` : '';
         const expArea = expPath ? `${expPath} L ${toX(n - 1)},${chartH - padBot} L ${toX(0)},${chartH - padBot} Z` : '';
@@ -819,19 +1166,19 @@ export default function ProfitLossScreen() {
                         strokeWidth={1}
                         strokeDasharray="3,3"
                       />
-                      {(chartViewMode === 'all' || chartViewMode === 'income') && (
+                      {(chartViewMode === 'all' || chartViewMode === 'income') && Number.isFinite(incomes[selectedChartIdx]) && (
                         <Circle cx={toX(selectedChartIdx)} cy={toY(incomes[selectedChartIdx])} r={5} fill="#FFFFFF" stroke={theme.colors.income} strokeWidth={2.5} />
                       )}
-                      {(chartViewMode === 'all' || chartViewMode === 'expense') && (
+                      {(chartViewMode === 'all' || chartViewMode === 'expense') && Number.isFinite(expenses[selectedChartIdx]) && (
                         <Circle cx={toX(selectedChartIdx)} cy={toY(expenses[selectedChartIdx])} r={5} fill="#FFFFFF" stroke={theme.colors.danger} strokeWidth={2.5} />
                       )}
-                      {(chartViewMode === 'all' || chartViewMode === 'net') && (
+                      {(chartViewMode === 'all' || chartViewMode === 'net') && Number.isFinite(nets[selectedChartIdx]) && (
                         <Circle cx={toX(selectedChartIdx)} cy={toY(nets[selectedChartIdx])} r={5} fill="#FFFFFF" stroke={theme.colors.primary} strokeWidth={2.5} />
                       )}
                     </>
                   )}
 
-                  {/* Month X-Axis Labels */}
+                  {/* Month X-Axis Labels — use cycle label (custom or calendar) */}
                   {pts.map((row, i) => {
                     const step = Math.ceil(n / 6);
                     if (i % step !== 0 && i !== n - 1) return null;
@@ -845,7 +1192,7 @@ export default function ProfitLossScreen() {
                         textAnchor="middle"
                         fontWeight={selectedChartIdx === i ? '800' : '600'}
                       >
-                        {format(new Date(row.key), 'MMM')}
+                        {row.label}
                       </SvgText>
                     );
                   })}
@@ -1032,54 +1379,6 @@ export default function ProfitLossScreen() {
           )}
         </View>
 
-        {/* Success Confirmation Toast Banner */}
-        {cycleSuccessMsg && (
-          <View
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 10,
-              padding: 12,
-              borderRadius: theme.radius.md,
-              backgroundColor: theme.isDark ? 'rgba(16, 185, 129, 0.2)' : '#ECFDF5',
-              borderWidth: 1.5,
-              borderColor: theme.colors.income,
-            }}
-          >
-            <CheckCircle2 size={18} color={theme.colors.income} />
-            <Text
-              style={{ flex: 1, fontSize: 12, fontWeight: '800', color: theme.colors.income, includeFontPadding: false }}
-              numberOfLines={2}
-            >
-              {cycleSuccessMsg}
-            </Text>
-          </View>
-        )}
-
-        {/* Budget Save Success Toast */}
-        {budgetSuccessMsg && (
-          <View
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 10,
-              padding: 12,
-              borderRadius: theme.radius.md,
-              backgroundColor: theme.isDark ? 'rgba(99, 102, 241, 0.2)' : '#EEF2FF',
-              borderWidth: 1.5,
-              borderColor: theme.colors.primary,
-            }}
-          >
-            <CheckCircle2 size={18} color={theme.colors.primary} />
-            <Text
-              style={{ flex: 1, fontSize: 12, fontWeight: '800', color: theme.colors.primary, includeFontPadding: false }}
-              numberOfLines={2}
-            >
-              {budgetSuccessMsg}
-            </Text>
-          </View>
-        )}
-
         {/* Two Professional Action Buttons */}
         <View style={{ flexDirection: 'row', gap: 8 }}>
           {/* Button 1: Calendar Range Picker */}
@@ -1155,7 +1454,7 @@ export default function ProfitLossScreen() {
           </Text>
           {monthRows.length > 0 && (
             <Text variant="caption" muted style={{ fontSize: 11, fontWeight: '700', includeFontPadding: false }}>
-              {monthRows.length} {monthRows.length === 1 ? 'cycle' : 'cycles'} total
+              {monthRows.length} {monthRows.length === 1 ? 'cycle' : 'cycles'} in range
             </Text>
           )}
         </View>

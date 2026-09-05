@@ -1,5 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { AccountType, BankAccount, BankAccountInput, Expense } from '@/types';
+import { AccountType, BankAccount, BankAccountInput, Expense, Transfer } from '@/types';
+import { buildRateResolver } from '@/services/exchange';
+import { countryForCurrency } from '@/constants/countries';
 import { supabase } from '@/utils/supabase';
 
 const ACCOUNTS_CACHE_PREFIX = '@spendflow_cached_accounts_';
@@ -25,8 +27,17 @@ export async function setCachedBankAccounts(userId: string, accounts: BankAccoun
   }
 }
 
-export async function listBankAccounts(userId: string): Promise<BankAccount[]> {
+/**
+ * Lists the user's accounts from Supabase. `onCached` fires first with the
+ * locally cached list (when present) so callers can paint the UI instantly;
+ * the resolved value is always the authoritative server list.
+ */
+export async function listBankAccounts(
+  userId: string,
+  onCached?: (cached: BankAccount[]) => void,
+): Promise<BankAccount[]> {
   const cached = await getCachedBankAccounts(userId);
+  if (onCached && cached.length > 0) onCached(cached);
   try {
     const { data, error } = await supabase
       .from('bank_accounts')
@@ -77,6 +88,7 @@ export async function createBankAccount(userId: string, input: BankAccountInput)
     name: input.name.trim(),
     account_type: desiredType,
     currency: input.currency || 'NPR',
+    country: input.country ?? null,
     initial_balance: Number(input.initial_balance || 0),
     current_balance: Number(input.initial_balance || 0),
     color: input.color || '#3B82F6',
@@ -138,6 +150,7 @@ export async function updateBankAccount(
   if (input.name !== undefined) payload.name = input.name.trim();
   if (input.account_type !== undefined) payload.account_type = input.account_type;
   if (input.currency !== undefined) payload.currency = input.currency;
+  if (input.country !== undefined) payload.country = input.country;
   if (input.initial_balance !== undefined) payload.initial_balance = Number(input.initial_balance);
   if (input.color !== undefined) payload.color = input.color;
   if (input.icon !== undefined) payload.icon = input.icon;
@@ -252,6 +265,7 @@ export async function seedDefaultAccounts(userId: string, currency = 'NPR'): Pro
       name: 'Main Bank Account',
       account_type: 'bank',
       currency,
+      country: countryForCurrency(currency)?.code ?? null,
       initial_balance: 0,
       color: '#10B981',
       icon: 'landmark',
@@ -261,6 +275,7 @@ export async function seedDefaultAccounts(userId: string, currency = 'NPR'): Pro
       name: 'Cash Wallet',
       account_type: 'cash',
       currency,
+      country: countryForCurrency(currency)?.code ?? null,
       initial_balance: 0,
       color: '#10B981',
       icon: 'banknote',
@@ -286,26 +301,73 @@ export async function seedDefaultAccounts(userId: string, currency = 'NPR'): Pro
 }
 
 /**
- * Calculates live balances for all accounts by summing initial balance + Income - Expenses
+ * Calculates live balances for all accounts: initial balance + Income − Expenses,
+ * plus account-to-account transfers (source loses amount + fee, target receives
+ * the converted amount). Currency-aware: every transaction is converted into its
+ * account's own currency before summing, using the row's recorded
+ * exchange_rate_to_usd snapshot when present (falls back to historical/current
+ * rates via the exchange service). Accounts holding transactions in multiple
+ * currencies (e.g. an NPR account fed INR entries) therefore no longer mix raw
+ * amounts as if they were one currency. Transfer amounts need no conversion —
+ * `amount`/`fee` are recorded in the source account's currency and
+ * `converted_amount` in the target's, both locked at transfer time.
  */
-export function computeAccountBalances(accounts: BankAccount[], expenses: Expense[]): (BankAccount & { live_balance: number })[] {
-  return accounts.map((account) => {
-    let balance = Number(account.initial_balance || 0);
+export async function computeAccountBalances(
+  accounts: BankAccount[],
+  expenses: Expense[],
+  transfers: Transfer[] = [],
+): Promise<(BankAccount & { live_balance: number })[]> {
+  if (!accounts.length) return [];
+  if (!expenses.length && !transfers.length) {
+    return accounts.map((account) => ({ ...account, live_balance: Number(account.initial_balance || 0) }));
+  }
 
-    expenses.forEach((expense) => {
-      if (expense.bank_account_id === account.id && !expense.deleted_at) {
-        const amt = Number(expense.amount) || 0;
-        if (expense.type === 'income') {
-          balance += amt;
-        } else {
-          balance -= amt;
-        }
-      }
-    });
+  const accountById = new Map(accounts.map((account) => [account.id, account]));
 
-    return {
-      ...account,
-      live_balance: balance,
-    };
-  });
+  // Group non-deleted transactions by the account's currency so one rate
+  // resolver serves every conversion into that target currency.
+  const txByTargetCurrency = new Map<string, { accountId: string; tx: Expense }[]>();
+  for (const tx of expenses) {
+    if (tx.deleted_at) continue;
+    const account = tx.bank_account_id ? accountById.get(tx.bank_account_id) : undefined;
+    if (!account) continue;
+    const target = (account.currency || 'NPR').toUpperCase();
+    const bucket = txByTargetCurrency.get(target);
+    if (bucket) bucket.push({ accountId: account.id, tx });
+    else txByTargetCurrency.set(target, [{ accountId: account.id, tx }]);
+  }
+
+  const signedTotals = new Map<string, number>();
+  for (const [targetCurrency, entries] of txByTargetCurrency) {
+    const resolver = await buildRateResolver(
+      entries.map(({ tx }) => tx),
+      targetCurrency,
+    );
+    for (const { accountId, tx } of entries) {
+      const converted =
+        resolver.convert(Number(tx.amount) || 0, tx.currency || 'NPR', targetCurrency, tx.date) || 0;
+      const delta = tx.type === 'income' ? converted : -converted;
+      signedTotals.set(accountId, (signedTotals.get(accountId) || 0) + delta);
+    }
+  }
+
+  // Transfers move money between accounts at the rate locked on the row:
+  // the source account loses amount + fee, the target receives converted_amount.
+  for (const transfer of transfers) {
+    if (transfer.deleted_at) continue;
+    const fromDelta = -(Number(transfer.amount) || 0) + -(Number(transfer.fee) || 0);
+    signedTotals.set(
+      transfer.from_account_id,
+      (signedTotals.get(transfer.from_account_id) || 0) + fromDelta,
+    );
+    signedTotals.set(
+      transfer.to_account_id,
+      (signedTotals.get(transfer.to_account_id) || 0) + (Number(transfer.converted_amount) || 0),
+    );
+  }
+
+  return accounts.map((account) => ({
+    ...account,
+    live_balance: Number(account.initial_balance || 0) + (signedTotals.get(account.id) || 0),
+  }));
 }

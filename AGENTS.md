@@ -1,7 +1,7 @@
 # SpendFlow Developer & Agent Rules
 
 ## 1. Core Framework & Versioning
-- **Expo SDK 54**: Always reference the exact versioned Expo docs at <https://docs.expo.dev/versions/v54.0.0/> before writing code or modifying configs.
+- **Expo SDK 57**: Always reference the exact versioned Expo docs at <https://docs.expo.dev/versions/v57.0.0/> before writing code or modifying configs.
 - **React Native 0.81+ & React 19**: Strictly maintain type safety across all screens, services, hooks, and components (`npx tsc --noEmit` must pass with 0 errors).
 
 ---

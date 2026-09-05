@@ -159,7 +159,7 @@ function ExpenseDetailModal({
                     style={{
                       fontSize: 32,
                       fontWeight: '800',
-                      color: isIncome ? '#10B981' : (theme.isDark ? '#EF4444' : '#DC2626'),
+                      color: isIncome ? theme.colors.income : (theme.isDark ? '#EF4444' : '#DC2626'),
                       maxWidth: '100%',
                     }}
                   >
