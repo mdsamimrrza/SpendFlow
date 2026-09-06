@@ -226,21 +226,28 @@ export const ExpenseItem = React.memo(function ExpenseItem({ expense, onDelete, 
               </Text>
             </View>
 
-            {/* Amount Display */}
+            {/* Amount Display — NBSP keeps the sign glued to the amount so
+                Android never wraps it onto a second line (the old "-" bug). */}
             <View style={{ alignItems: 'flex-end', gap: 2 }}>
               <Text
                 variant="label"
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.8}
                 style={{
                   fontVariant: ['tabular-nums'],
                   fontSize: 16,
+                  lineHeight: 20,
+                  includeFontPadding: false,
                   fontWeight: '900',
                   color: expense.type === 'income' ? theme.colors.income : theme.colors.text,
                 }}
               >
-                {expense.type === 'income' ? '+' : '-'} {formatMoney(convertedAmount, preferredCurrency)}
+                {`${expense.type === 'income' ? '+' : '-'}\u00A0${formatMoney(convertedAmount, preferredCurrency).replace(/ /g, '\u00A0')}`}
               </Text>
               {isDifferentCurrency ? (
                 <Text
+                  numberOfLines={1}
                   style={{
                     fontSize: 11,
                     fontWeight: '600',
@@ -248,7 +255,7 @@ export const ExpenseItem = React.memo(function ExpenseItem({ expense, onDelete, 
                     fontVariant: ['tabular-nums'],
                   }}
                 >
-                  ({expense.type === 'income' ? '+' : '-'}{formatMoney(Number(expense.amount), expense.currency)})
+                  {`(${expense.type === 'income' ? '+' : '-'}\u00A0${formatMoney(Number(expense.amount), expense.currency).replace(/ /g, '\u00A0')})`}
                 </Text>
               ) : null}
             </View>
