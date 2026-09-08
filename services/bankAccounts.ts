@@ -83,17 +83,23 @@ async function addCreatedAccountToCache(userId: string, account: BankAccount, is
 
 export async function createBankAccount(userId: string, input: BankAccountInput): Promise<BankAccount> {
   const desiredType = input.account_type || 'bank';
+  const initialBalance = Number(input.initial_balance || 0);
+  if (!Number.isFinite(initialBalance)) {
+    throw new Error('Enter a valid opening balance.');
+  }
+  const rawLast4 = input.account_number_last4?.trim() || null;
+  const last4 = rawLast4 && /^\d{1,4}$/.test(rawLast4) ? rawLast4 : null;
   const newAccount: Partial<BankAccount> = {
     user_id: userId,
-    name: input.name.trim(),
+    name: input.name.trim().slice(0, 100),
     account_type: desiredType,
-    currency: input.currency || 'NPR',
+    currency: (input.currency || 'NPR').toUpperCase().slice(0, 3),
     country: input.country ?? null,
-    initial_balance: Number(input.initial_balance || 0),
-    current_balance: Number(input.initial_balance || 0),
+    initial_balance: initialBalance,
+    current_balance: initialBalance,
     color: input.color || '#3B82F6',
     icon: input.icon || 'landmark',
-    account_number_last4: input.account_number_last4?.trim() || null,
+    account_number_last4: last4,
     is_default: Boolean(input.is_default),
   };
 
@@ -147,14 +153,22 @@ export async function updateBankAccount(
     updated_at: new Date().toISOString(),
   };
 
-  if (input.name !== undefined) payload.name = input.name.trim();
+  if (input.name !== undefined) payload.name = input.name.trim().slice(0, 100);
   if (input.account_type !== undefined) payload.account_type = input.account_type;
-  if (input.currency !== undefined) payload.currency = input.currency;
+  if (input.currency !== undefined) payload.currency = input.currency.toUpperCase().slice(0, 3);
   if (input.country !== undefined) payload.country = input.country;
-  if (input.initial_balance !== undefined) payload.initial_balance = Number(input.initial_balance);
+  if (input.initial_balance !== undefined) {
+    if (!Number.isFinite(Number(input.initial_balance))) {
+      throw new Error('Enter a valid opening balance.');
+    }
+    payload.initial_balance = Number(input.initial_balance);
+  }
   if (input.color !== undefined) payload.color = input.color;
   if (input.icon !== undefined) payload.icon = input.icon;
-  if (input.account_number_last4 !== undefined) payload.account_number_last4 = input.account_number_last4?.trim() || null;
+  if (input.account_number_last4 !== undefined) {
+    const rawLast4 = input.account_number_last4?.trim() || null;
+    payload.account_number_last4 = rawLast4 && /^\d{1,4}$/.test(rawLast4) ? rawLast4 : null;
+  }
   if (input.is_default !== undefined) payload.is_default = input.is_default;
 
   // If setting this account as default, unmark other default accounts
@@ -169,6 +183,7 @@ export async function updateBankAccount(
     .from('bank_accounts')
     .update(payload)
     .eq('id', id)
+    .eq('user_id', userId)
     .select('*')
     .single();
 
@@ -179,7 +194,8 @@ export async function updateBankAccount(
       const { error: retryError } = await supabase
         .from('bank_accounts')
         .update(fallbackPayload)
-        .eq('id', id);
+        .eq('id', id)
+        .eq('user_id', userId);
       if (retryError) throw retryError;
     } else {
       throw error;
@@ -207,14 +223,16 @@ export async function deleteBankAccount(id: string, userId: string): Promise<voi
   const { error: unlinkTxError } = await supabase
     .from('expenses')
     .update({ bank_account_id: null })
-    .eq('bank_account_id', id);
+    .eq('bank_account_id', id)
+    .eq('user_id', userId);
   if (unlinkTxError) throw unlinkTxError;
 
   // 2. Unlink any recurring rules
   const { error: unlinkRuleError } = await supabase
     .from('recurring_rules')
     .update({ bank_account_id: null })
-    .eq('bank_account_id', id);
+    .eq('bank_account_id', id)
+    .eq('user_id', userId);
   if (unlinkRuleError) throw unlinkRuleError;
 
   // 3. Try hard delete first, fallback to soft delete

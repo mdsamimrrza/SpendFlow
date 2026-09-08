@@ -11,6 +11,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
+import { useReceiptUrl } from '@/hooks/useReceiptUrl';
 import { useTheme } from '@/hooks/useTheme';
 import { CategoryIcon } from '@/components/ui/CategoryIcon';
 import { Expense } from '@/types';
@@ -31,6 +32,9 @@ function ExpenseDetailModal({
   const { convert } = useExchangeRates();
   const { t } = useLanguage();
   const [fullImageModalUrl, setFullImageModalUrl] = useState<string | null>(null);
+
+  // Receipts live in a private bucket — resolve stored path/URL to a signed URL.
+  const receiptUrl = useReceiptUrl(expense?.receipt_image_url);
 
   if (!expense) return null;
 
@@ -289,7 +293,7 @@ function ExpenseDetailModal({
                         }}
                       >
                         <Image
-                          source={{ uri: expense.receipt_image_url }}
+                          source={{ uri: receiptUrl || expense.receipt_image_url }}
                           style={{ width: '100%', height: 160 }}
                           resizeMode="cover"
                         />

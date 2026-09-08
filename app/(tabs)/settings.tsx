@@ -9,7 +9,6 @@ import {
   RefreshControl,
   ScrollView,
   Switch,
-  TextInput,
   View,
 } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -31,10 +30,8 @@ import {
   LayoutGrid,
   Lock,
   LogOut,
-  Mail,
   Moon,
   Palette,
-  ShieldAlert,
   ShieldCheck,
   Sparkles,
   Sun,
@@ -48,6 +45,7 @@ import {
   X,
 } from 'lucide-react-native';
 import { Avatar } from '@/components/ui/Avatar';
+import { DeleteAccountModal } from '@/components/account/DeleteAccountModal';
 import { CategoryBudgetFormModal } from '@/components/expense/CategoryBudgetFormModal';
 import { PrivacyEyeButton } from '@/components/ui/PrivacyEyeButton';
 import { Text } from '@/components/ui/Text';
@@ -58,13 +56,9 @@ import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
 import { useSecurity } from '@/hooks/useSecurity';
 import { useTheme } from '@/hooks/useTheme';
-import {
-  deleteAccount,
-  sendDeleteAccountOtp,
-  signOut,
-  updateProfile,
-  verifyDeleteAccountOtpAndWipe,
-} from '@/services/auth';
+import { CURRENCIES, CURRENCY_DETAILS } from '@/constants/app';
+import { WIZARD_COUNTRIES } from '@/constants/countries';
+import { signOut, updateProfile } from '@/services/auth';
 import { listCategories } from '@/services/categories';
 import { resetBudgetAlertHistory } from '@/services/notifications';
 import { Category, ThemePreference } from '@/types';
@@ -89,17 +83,9 @@ export default function SettingsScreen() {
   const [notificationsModalOpen, setNotificationsModalOpen] = useState(false);
   const [showCategoryBudgets, setShowCategoryBudgets] = useState(false);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
-  const [deleteOtpStep, setDeleteOtpStep] = useState<'confirm' | 'otp_input'>('confirm');
-  const [deleteOtpCode, setDeleteOtpCode] = useState('');
-  const [sendingDeleteOtp, setSendingDeleteOtp] = useState(false);
-  const [verifyingDeleteOtp, setVerifyingDeleteOtp] = useState(false);
-  const [deleteOtpError, setDeleteOtpError] = useState('');
   const [signOutModalOpen, setSignOutModalOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
 
-  // Form inputs
-  const [nameInput, setNameInput] = useState('');
-  const [savingName, setSavingName] = useState(false);
 
   const preferredCurrency = profile?.preferred_currency ?? 'NPR';
   const displayName = profile?.display_name || profile?.email?.split('@')[0] || 'Samim Reza';
@@ -113,13 +99,12 @@ export default function SettingsScreen() {
     .map((n) => n[0].toUpperCase())
     .join('') || 'SR';
 
-  const CURRENCY_OPTIONS = [
-    { code: 'INR', label: 'Indian Rupee', symbol: '₹', flag: '🇮🇳' },
-    { code: 'NPR', label: 'Nepalese Rupee', symbol: 'Rs.', flag: '🇳🇵' },
-    { code: 'USD', label: 'US Dollar', symbol: '$', flag: '🇺🇸' },
-    { code: 'QAR', label: 'Qatari Riyal', symbol: '﷼', flag: '🇶🇦' },
-    { code: 'GBP', label: 'British Pound', symbol: '£', flag: '🇬🇧' },
-  ];
+  const CURRENCY_OPTIONS = CURRENCIES.map((code) => ({
+    code,
+    label: CURRENCY_DETAILS[code].label,
+    symbol: CURRENCY_DETAILS[code].symbol,
+    flag: CURRENCY_DETAILS[code].flag,
+  }));
 
   const currentCurrencyObj = CURRENCY_OPTIONS.find((c) => c.code === preferredCurrency) || CURRENCY_OPTIONS[0];
 
@@ -130,12 +115,6 @@ export default function SettingsScreen() {
         .catch(() => setCategories([]));
     }
   }, [profile?.id]);
-
-  useEffect(() => {
-    if (profile?.display_name) {
-      setNameInput(profile.display_name);
-    }
-  }, [profile?.display_name]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -149,26 +128,6 @@ export default function SettingsScreen() {
       setRefreshing(false);
     }
   };
-
-  async function handleSaveName() {
-    if (!nameInput.trim()) return;
-    setSavingName(true);
-    try {
-      await updateProfile({ display_name: nameInput.trim() });
-      await refreshProfile(true);
-      setEditProfileModalOpen(false);
-
-      // Tactile Haptic Confirmation
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
-
-      showToast({ message: `Name updated to "${nameInput.trim()}"`, duration: 3500 });
-    } catch (err) {
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => undefined);
-      Alert.alert(t('common_error'), err instanceof Error ? err.message : t('common_error'));
-    } finally {
-      setSavingName(false);
-    }
-  }
 
   function handleSignOut() {
     setSignOutModalOpen(true);
@@ -300,7 +259,7 @@ export default function SettingsScreen() {
 
           {/* Edit Button Pill */}
           <Pressable
-            onPress={() => setEditProfileModalOpen(true)}
+            onPress={() => router.push('/profile' as any)}
             style={({ pressed }) => ({
               paddingHorizontal: 14,
               paddingVertical: 7,
@@ -836,273 +795,182 @@ export default function SettingsScreen() {
           MODALS & BOTTOM SHEETS
          ══════════════════════════════════════════════ */}
 
-      {/* ── 2. EDIT PROFILE NAME MODAL ── */}
-      <Modal
-        visible={editProfileModalOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setEditProfileModalOpen(false)}
-      >
-        <Pressable
-          onPress={() => setEditProfileModalOpen(false)}
-          style={{
-            flex: 1,
-            backgroundColor: 'rgba(0,0,0,0.6)',
-            justifyContent: 'center',
-            alignItems: 'center',
-            padding: 24,
-          }}
-        >
-          <Pressable
-            onPress={(e) => e.stopPropagation()}
-            style={{
-              width: '100%',
-              maxWidth: 360,
-              backgroundColor: theme.colors.surface,
-              borderRadius: 20,
-              padding: 20,
-              gap: 16,
-              borderWidth: 1,
-              borderColor: theme.colors.border,
-            }}
-          >
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                <View
+{/* ── 3. CURRENCY SELECTION MODAL ── */}
+              <Modal
+                visible={currencyModalOpen}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setCurrencyModalOpen(false)}
+              >
+                <Pressable
+                  onPress={() => setCurrencyModalOpen(false)}
                   style={{
-                    width: 36,
-                    height: 36,
-                    borderRadius: 10,
-                    backgroundColor: theme.isDark ? 'rgba(129, 140, 248, 0.15)' : '#DCE9E3',
-                    alignItems: 'center',
+                    flex: 1,
+                    backgroundColor: 'rgba(0,0,0,0.6)',
                     justifyContent: 'center',
+                    alignItems: 'center',
+                    padding: 24,
                   }}
                 >
-                  <User size={18} color={theme.colors.primary} />
-                </View>
-                <View>
-                  <Text variant="h3" style={{ fontWeight: '800', fontSize: 16 }}>
-                    Edit Profile
-                  </Text>
-                  <Text variant="caption" muted style={{ fontSize: 11 }}>
-                    Update your account display name
-                  </Text>
-                </View>
-              </View>
-
-              <Pressable
-                onPress={() => setEditProfileModalOpen(false)}
-                style={{
-                  width: 28,
-                  height: 28,
-                  borderRadius: 14,
-                  backgroundColor: theme.colors.surfaceElevated,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
-                <X size={15} color={theme.colors.text} />
-              </Pressable>
-            </View>
-
-            <View style={{ gap: 8 }}>
-              <Text variant="label" style={{ fontSize: 12 }}>
-                Full Name
-              </Text>
-              <TextInput
-                value={nameInput}
-                onChangeText={setNameInput}
-                placeholder="Enter your name"
-                placeholderTextColor={theme.colors.textMuted}
-                style={{
-                  height: 48,
-                  borderRadius: theme.radius.md,
-                  borderWidth: 1.5,
-                  borderColor: theme.colors.border,
-                  backgroundColor: theme.colors.surfaceElevated,
-                  paddingHorizontal: 14,
-                  fontSize: 16,
-                  fontWeight: '600',
-                  color: theme.colors.text,
-                }}
-              />
-            </View>
-
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 4 }}>
-              <Pressable
-                onPress={() => setEditProfileModalOpen(false)}
-                style={{
-                  flex: 1,
-                  paddingVertical: 12,
-                  borderRadius: theme.radius.md,
-                  backgroundColor: theme.colors.surfaceElevated,
-                  borderWidth: 1,
-                  borderColor: theme.colors.border,
-                  alignItems: 'center',
-                }}
-              >
-                <Text style={{ fontWeight: '700', color: theme.colors.text }}>Cancel</Text>
-              </Pressable>
-
-              <Pressable
-                onPress={handleSaveName}
-                disabled={savingName}
-                style={{
-                  flex: 1,
-                  paddingVertical: 12,
-                  borderRadius: theme.radius.md,
-                  backgroundColor: theme.colors.primary,
-                  alignItems: 'center',
-                }}
-              >
-                <Text style={{ fontWeight: '800', color: '#FFFFFF' }}>
-                  {savingName ? 'Saving...' : 'Save Name'}
-                </Text>
-              </Pressable>
-            </View>
-          </Pressable>
-        </Pressable>
-      </Modal>
-
-      {/* ── 3. CURRENCY SELECTION MODAL ── */}
-      <Modal
-        visible={currencyModalOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setCurrencyModalOpen(false)}
-      >
-        <Pressable
-          onPress={() => setCurrencyModalOpen(false)}
-          style={{
-            flex: 1,
-            backgroundColor: 'rgba(0,0,0,0.6)',
-            justifyContent: 'center',
-            alignItems: 'center',
-            padding: 24,
-          }}
-        >
-          <Pressable
-            onPress={(e) => e.stopPropagation()}
-            style={{
-              width: '100%',
-              maxWidth: 360,
-              backgroundColor: theme.colors.surface,
-              borderRadius: 20,
-              padding: 20,
-              gap: 16,
-              borderWidth: 1,
-              borderColor: theme.colors.border,
-            }}
-          >
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                <View
-                  style={{
-                    width: 36,
-                    height: 36,
-                    borderRadius: 10,
-                    backgroundColor: theme.isDark ? 'rgba(129, 140, 248, 0.15)' : '#DCE9E3',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                >
-                  <DollarSign size={18} color={theme.colors.primary} />
-                </View>
-                <View>
-                  <Text variant="h3" style={{ fontWeight: '800', fontSize: 16 }}>
-                    Select Currency
-                  </Text>
-                  <Text variant="caption" muted style={{ fontSize: 11 }}>
-                    Primary display currency for accounts
-                  </Text>
-                </View>
-              </View>
-
-              <Pressable
-                onPress={() => setCurrencyModalOpen(false)}
-                style={{
-                  width: 28,
-                  height: 28,
-                  borderRadius: 14,
-                  backgroundColor: theme.colors.surfaceElevated,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
-                <X size={15} color={theme.colors.text} />
-              </Pressable>
-            </View>
-
-            <View style={{ gap: 8 }}>
-              {CURRENCY_OPTIONS.map((cur) => {
-                const isSelected = preferredCurrency === cur.code;
-                return (
                   <Pressable
-                    key={cur.code}
-                    onPress={() => {
-                      // Optimistic: apply the currency instantly and close, then
-                      // persist in the background — no waiting on network round trips.
-                      setCurrencyModalOpen(false);
-                      patchProfile({ preferred_currency: cur.code as any });
-                      void (async () => {
-                        try {
-                          await updateProfile({ preferred_currency: cur.code as any });
-                          await refreshProfile(true);
-                        } catch (err) {
-                          showToast({
-                            message: err instanceof Error ? err.message : 'Could not save the currency. Please try again.',
-                            type: 'error',
-                          });
-                          await refreshProfile(true);
-                        }
-                      })();
-                    }}
+                    onPress={(e) => e.stopPropagation()}
                     style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: 12,
-                      borderRadius: theme.radius.md,
-                      borderWidth: 1.5,
-                      borderColor: isSelected ? theme.colors.primary : theme.colors.border,
-                      backgroundColor: isSelected
-                        ? (theme.isDark ? 'rgba(129, 140, 248, 0.16)' : '#DCE9E3')
-                        : theme.colors.surfaceElevated,
+                      width: '100%',
+                      maxWidth: 360,
+                      backgroundColor: theme.colors.surface,
+                      borderRadius: 20,
+                      padding: 20,
+                      gap: 16,
+                      borderWidth: 1,
+                      borderColor: theme.colors.border,
                     }}
                   >
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                      <Text style={{ fontSize: 20 }}>{cur.flag}</Text>
-                      <View>
-                        <Text style={{ fontWeight: '800', fontSize: 14, color: isSelected ? theme.colors.primary : theme.colors.text }}>
-                          {cur.code} · {cur.symbol}
-                        </Text>
-                        <Text variant="caption" muted style={{ fontSize: 11 }}>
-                          {cur.label}
-                        </Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                        <View
+                          style={{
+                            width: 36,
+                            height: 36,
+                            borderRadius: 10,
+                            backgroundColor: theme.isDark ? 'rgba(129, 140, 248, 0.15)' : '#DCE9E3',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                        >
+                          <DollarSign size={18} color={theme.colors.primary} />
+                        </View>
+                        <View>
+                          <Text variant="h3" style={{ fontWeight: '800', fontSize: 16 }}>
+                            Select Currency
+                          </Text>
+                          <Text variant="caption" muted style={{ fontSize: 11 }}>
+                            Primary display currency for accounts
+                          </Text>
+                        </View>
                       </View>
-                    </View>
 
-                    {isSelected ? (
-                      <View
+                      <Pressable
+                        onPress={() => setCurrencyModalOpen(false)}
                         style={{
-                          width: 22,
-                          height: 22,
-                          borderRadius: 11,
-                          backgroundColor: theme.colors.primary,
+                          width: 28,
+                          height: 28,
+                          borderRadius: 14,
+                          backgroundColor: theme.colors.surfaceElevated,
                           alignItems: 'center',
                           justifyContent: 'center',
                         }}
                       >
-                        <Check size={13} color="#FFFFFF" />
+                        <X size={15} color={theme.colors.text} />
+                      </Pressable>
+                    </View>
+
+                    {/* Current selection badge */}
+                    <View
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: 10,
+                        borderRadius: 10,
+                        backgroundColor: theme.colors.primaryLight,
+                        borderWidth: 1,
+                        borderColor: theme.colors.primary,
+                      }}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                        <Text style={{ fontSize: 20 }}>{currentCurrencyObj.flag}</Text>
+                        <View>
+                          <Text style={{ fontWeight: '800', fontSize: 13, color: theme.colors.primary }}>
+                            {currentCurrencyObj.code} · {currentCurrencyObj.symbol}
+                          </Text>
+                          <Text variant="caption" muted style={{ fontSize: 10 }}>
+                            {currentCurrencyObj.label}
+                          </Text>
+                        </View>
                       </View>
-                    ) : null}
+                      <Text style={{ fontSize: 9, fontWeight: '700', color: theme.colors.primary }}>Current</Text>
+                    </View>
+
+                    {/* Horizontal chips - scrollable */}
+                    <View style={{ gap: 8 }}>
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                        {CURRENCY_OPTIONS.map((cur) => {
+                          const isSelected = preferredCurrency === cur.code;
+                          const country = WIZARD_COUNTRIES.find(c => c.currency === cur.code);
+                          return (
+                            <Pressable
+                              key={cur.code}
+                              onPress={() => {
+                                setCurrencyModalOpen(false);
+                                patchProfile({ preferred_currency: cur.code as any });
+                                void (async () => {
+                                  try {
+                                    // Currency change must NEVER touch the stored budget —
+                                    // the figure stays in its original budget_currency and is
+                                    // only DISPLAYED converted (getMonthlyBudget). Re-basing
+                                    // here used to drift the number on every round trip and
+                                    // spam user_settings_history with conversion noise.
+                                    const updated = await updateProfile({ preferred_currency: cur.code as any });
+                                    patchProfile(updated);
+                                  } catch (err) {
+                                    showToast({
+                                      message: err instanceof Error ? err.message : 'Could not save the currency. Please try again.',
+                                      type: 'error',
+                                    });
+                                    await refreshProfile(true);
+                                  }
+                                })();
+                              }}
+                              style={{
+                                flexDirection: 'column',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: 2,
+                                paddingHorizontal: 12,
+                                paddingVertical: 10,
+                                borderRadius: 14,
+                                borderWidth: 1.5,
+                                borderColor: isSelected ? theme.colors.primary : theme.colors.border,
+                                backgroundColor: isSelected
+                                  ? (theme.isDark ? 'rgba(129, 140, 248, 0.2)' : '#DCE9E3')
+                                  : theme.colors.surfaceElevated,
+                                minWidth: 90,
+                              }}
+                            >
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                                <Text style={{ fontSize: 15 }}>{cur.flag}</Text>
+                                <Text
+                                  style={{
+                                    fontSize: 11.5,
+                                    fontWeight: isSelected ? '800' : '600',
+                                    color: isSelected ? theme.colors.primary : theme.colors.text,
+                                  }}
+                                >
+                                  {cur.code}
+                                </Text>
+                                {isSelected && <Text style={{ fontSize: 8, color: theme.colors.primary, fontWeight: '900' }}>✓</Text>}
+                              </View>
+                              {country && (
+                                <Text
+                                  style={{
+                                    fontSize: 9,
+                                    color: theme.colors.textMuted,
+                                    textAlign: 'center',
+                                  }}
+                                  numberOfLines={1}
+                                  ellipsizeMode="tail"
+                                >
+                                  {country.name}
+                                </Text>
+                              )}
+                            </Pressable>
+                          );
+                        })}
+                      </View>
+                    </View>
                   </Pressable>
-                );
-              })}
-            </View>
-          </Pressable>
-        </Pressable>
-      </Modal>
+                </Pressable>
+              </Modal>
 
       {/* ── 4. APPEARANCE & DARK MODE MODAL ── */}
       <Modal
@@ -1585,304 +1453,13 @@ export default function SettingsScreen() {
         }}
       />
 
-      {/* ── 7. PERMANENT DELETE ACCOUNT & DATA OTP MODAL ── */}
-      <Modal
+      {/* ── 7. PERMANENT DELETE ACCOUNT & DATA (EMAIL OTP) ── */}
+      <DeleteAccountModal
         visible={deleteModalOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={() => !sendingDeleteOtp && !verifyingDeleteOtp && setDeleteModalOpen(false)}
-      >
-        <Pressable
-          onPress={() => !sendingDeleteOtp && !verifyingDeleteOtp && setDeleteModalOpen(false)}
-          style={{
-            flex: 1,
-            backgroundColor: 'rgba(0,0,0,0.72)',
-            justifyContent: 'center',
-            alignItems: 'center',
-            padding: 20,
-          }}
-        >
-          <Pressable
-            onPress={(e) => e.stopPropagation()}
-            style={{
-              width: '100%',
-              maxWidth: 370,
-              backgroundColor: theme.colors.surface,
-              borderRadius: 24,
-              padding: 22,
-              gap: 16,
-              borderWidth: 1,
-              borderColor: theme.colors.border,
-              shadowColor: '#000000',
-              shadowOffset: { width: 0, height: 10 },
-              shadowOpacity: 0.35,
-              shadowRadius: 20,
-              elevation: 10,
-            }}
-          >
-            {deleteOtpStep === 'confirm' ? (
-              <>
-                {/* STEP 1: WARNING & REQUEST OTP */}
-                <View style={{ alignItems: 'center', gap: 12, paddingTop: 4 }}>
-                  <View
-                    style={{
-                      width: 54,
-                      height: 54,
-                      borderRadius: 27,
-                      backgroundColor: theme.isDark ? 'rgba(239, 68, 68, 0.18)' : '#FEE2E2',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      borderWidth: 1.5,
-                      borderColor: theme.isDark ? 'rgba(239, 68, 68, 0.4)' : '#FCA5A5',
-                    }}
-                  >
-                    <ShieldAlert size={28} color={theme.colors.danger} />
-                  </View>
-
-                  <View style={{ gap: 6, alignItems: 'center' }}>
-                    <Text variant="h2" style={{ fontWeight: '900', fontSize: 19, textAlign: 'center', color: theme.colors.text }}>
-                      Delete Account & Data?
-                    </Text>
-                    <Text muted style={{ fontSize: 13, textAlign: 'center', lineHeight: 18 }}>
-                      This will permanently wipe all transactions, subscriptions, custom categories, and profile data.
-                    </Text>
-                  </View>
-
-                  {/* Security Target Email Box */}
-                  <View
-                    style={{
-                      width: '100%',
-                      paddingVertical: 10,
-                      paddingHorizontal: 12,
-                      borderRadius: 12,
-                      backgroundColor: theme.colors.surfaceElevated,
-                      borderWidth: 1,
-                      borderColor: theme.colors.border,
-                      alignItems: 'center',
-                      gap: 2,
-                    }}
-                  >
-                    <Text variant="caption" muted style={{ fontSize: 11, fontWeight: '600' }}>
-                      Security OTP will be sent to:
-                    </Text>
-                    <Text style={{ fontSize: 13, fontWeight: '800', color: theme.colors.text }}>
-                      {userEmail}
-                    </Text>
-                  </View>
-
-                  {deleteOtpError ? (
-                    <Text style={{ fontSize: 12, color: theme.colors.danger, textAlign: 'center', fontWeight: '600' }}>
-                      {deleteOtpError}
-                    </Text>
-                  ) : null}
-                </View>
-
-                {/* Actions */}
-                <View style={{ flexDirection: 'row', gap: 10, marginTop: 4 }}>
-                  <Pressable
-                    onPress={() => setDeleteModalOpen(false)}
-                    disabled={sendingDeleteOtp}
-                    style={{
-                      flex: 1,
-                      paddingVertical: 13,
-                      borderRadius: theme.radius.md,
-                      backgroundColor: theme.colors.surfaceElevated,
-                      borderWidth: 1,
-                      borderColor: theme.colors.border,
-                      alignItems: 'center',
-                    }}
-                  >
-                    <Text style={{ fontWeight: '700', color: theme.colors.text }}>Cancel</Text>
-                  </Pressable>
-
-                  <Pressable
-                    onPress={async () => {
-                      if (!userEmail) return;
-                      setSendingDeleteOtp(true);
-                      setDeleteOtpError('');
-                      try {
-                        const res = await sendDeleteAccountOtp(userEmail);
-                        if (res?.rateLimited) {
-                          setDeleteOtpError('Email rate limit reached. Please wait before requesting another delete code.');
-                          return;
-                        }
-                        setDeleteOtpStep('otp_input');
-                      } catch (err: any) {
-                        setDeleteOtpError(err?.message || 'Failed to send OTP to your email. Please try again.');
-                      } finally {
-                        setSendingDeleteOtp(false);
-                      }
-                    }}
-                    disabled={sendingDeleteOtp}
-                    style={{
-                      flex: 1.4,
-                      paddingVertical: 13,
-                      borderRadius: theme.radius.md,
-                      backgroundColor: theme.colors.danger,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      opacity: sendingDeleteOtp ? 0.7 : 1,
-                    }}
-                  >
-                    <Text style={{ fontWeight: '800', color: '#FFFFFF' }}>
-                      {sendingDeleteOtp ? 'Sending...' : 'Send OTP to Email'}
-                    </Text>
-                  </Pressable>
-                </View>
-              </>
-            ) : (
-              <>
-                {/* STEP 2: ENTER EMAIL OTP & CONFIRM */}
-                <View style={{ alignItems: 'center', gap: 12, paddingTop: 4 }}>
-                  <View
-                    style={{
-                      width: 54,
-                      height: 54,
-                      borderRadius: 27,
-                      backgroundColor: theme.isDark ? 'rgba(99, 102, 241, 0.2)' : 'rgba(79, 70, 229, 0.1)',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      borderWidth: 1.5,
-                      borderColor: theme.colors.primary,
-                    }}
-                  >
-                    <Mail size={26} color={theme.colors.primary} />
-                  </View>
-
-                  <View style={{ gap: 4, alignItems: 'center' }}>
-                    <Text variant="h2" style={{ fontWeight: '900', fontSize: 19, textAlign: 'center', color: theme.colors.text }}>
-                      Check Your Email
-                    </Text>
-                    <Text muted style={{ fontSize: 12.5, textAlign: 'center', lineHeight: 18 }}>
-                      Enter the 6-digit security code sent to{'\n'}
-                      <Text style={{ fontWeight: '800', color: theme.colors.text }}>{userEmail}</Text>
-                    </Text>
-                  </View>
-
-                  {/* 6-Digit OTP Text Input */}
-                  <TextInput
-                    value={deleteOtpCode}
-                    onChangeText={(val) => {
-                      setDeleteOtpCode(val.replace(/\D/g, '').slice(0, 6));
-                      if (deleteOtpError) setDeleteOtpError('');
-                    }}
-                    placeholder="• • • • • •"
-                    placeholderTextColor={theme.colors.textMuted}
-                    keyboardType="number-pad"
-                    maxLength={6}
-                    autoFocus
-                    style={{
-                      width: '100%',
-                      height: 52,
-                      borderRadius: 14,
-                      backgroundColor: theme.colors.surfaceElevated,
-                      borderWidth: 1.5,
-                      borderColor: deleteOtpError ? theme.colors.danger : theme.colors.primary,
-                      fontSize: 24,
-                      fontWeight: '900',
-                      letterSpacing: 8,
-                      textAlign: 'center',
-                      color: theme.colors.text,
-                    }}
-                  />
-
-                  {deleteOtpError ? (
-                    <Text style={{ fontSize: 12, color: theme.colors.danger, textAlign: 'center', fontWeight: '600' }}>
-                      {deleteOtpError}
-                    </Text>
-                  ) : null}
-
-                  {/* Resend Link (only when not rate-limited) */}
-                  {true ? (
-                    <Pressable
-                      onPress={async () => {
-                        if (!userEmail) return;
-                        setSendingDeleteOtp(true);
-                        setDeleteOtpError('');
-                        try {
-                          const res = await sendDeleteAccountOtp(userEmail);
-                          if (res?.rateLimited) {
-                            setDeleteOtpError('Email rate limit reached. Please wait before requesting another code.');
-                            return;
-                          }
-                          showToast({ message: 'A new 6-digit OTP code was sent to your email.' });
-                        } catch (err: any) {
-                          setDeleteOtpError(err?.message || 'Failed to resend OTP.');
-                        } finally {
-                          setSendingDeleteOtp(false);
-                        }
-                      }}
-                      disabled={sendingDeleteOtp}
-                      hitSlop={8}
-                    >
-                      <Text variant="caption" muted style={{ fontSize: 12, textDecorationLine: 'underline', color: theme.colors.primary }}>
-                        {sendingDeleteOtp ? 'Resending...' : "Didn't receive email? Resend code"}
-                      </Text>
-                    </Pressable>
-                  ) : null}
-                </View>
-
-                {/* Actions */}
-                <View style={{ flexDirection: 'row', gap: 10, marginTop: 4 }}>
-                  <Pressable
-                    onPress={() => {
-                      setDeleteOtpStep('confirm');
-                      setDeleteOtpCode('');
-                      setDeleteOtpError('');
-                    }}
-                    disabled={verifyingDeleteOtp}
-                    style={{
-                      flex: 1,
-                      paddingVertical: 13,
-                      borderRadius: theme.radius.md,
-                      backgroundColor: theme.colors.surfaceElevated,
-                      borderWidth: 1,
-                      borderColor: theme.colors.border,
-                      alignItems: 'center',
-                    }}
-                  >
-                    <Text style={{ fontWeight: '700', color: theme.colors.text }}>Back</Text>
-                  </Pressable>
-
-                  <Pressable
-                    onPress={async () => {
-                      if (!deleteOtpCode.trim() || deleteOtpCode.trim().length < 6) {
-                        setDeleteOtpError('Please enter the 6-digit code.');
-                        return;
-                      }
-                      setVerifyingDeleteOtp(true);
-                      setDeleteOtpError('');
-                      try {
-                        await verifyDeleteAccountOtpAndWipe(userEmail, deleteOtpCode);
-                        setDeleteModalOpen(false);
-                        router.replace('/(auth)' as any);
-                      } catch (err: any) {
-                        setDeleteOtpError(err?.message || 'Invalid or expired OTP code');
-                      } finally {
-                        setVerifyingDeleteOtp(false);
-                      }
-                    }}
-                    disabled={verifyingDeleteOtp || deleteOtpCode.length < 6}
-                    style={{
-                      flex: 1.6,
-                      paddingVertical: 13,
-                      borderRadius: theme.radius.md,
-                      backgroundColor: theme.colors.danger,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      opacity: verifyingDeleteOtp || deleteOtpCode.length < 6 ? 0.6 : 1,
-                    }}
-                  >
-                    <Text style={{ fontWeight: '800', color: '#FFFFFF', fontSize: 13.5 }}>
-                      {verifyingDeleteOtp ? 'Wiping Data...' : 'Verify & Delete'}
-                    </Text>
-                  </Pressable>
-                </View>
-              </>
-            )}
-          </Pressable>
-        </Pressable>
-      </Modal>
+        onClose={() => setDeleteModalOpen(false)}
+        email={userEmail}
+        onDeleted={() => router.replace('/(auth)' as any)}
+      />
 
       {/* ── 8. SIGN OUT CONFIRMATION MODAL ── */}
       <Modal

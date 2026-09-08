@@ -273,7 +273,7 @@ export const COUNTRIES: CountryData[] = [
  * app's supported currencies (CURRENCIES in constants/app.ts). The full
  * registry above stays intact; widen this list to expose more countries.
  */
-export const ENABLED_COUNTRY_CODES = ['NP', 'IN', 'QA', 'US', 'GB'];
+export const ENABLED_COUNTRY_CODES = ['NP', 'IN', 'QA', 'AE', 'SA', 'US', 'GB', 'MY', 'KR', 'JP', 'AU', 'CA'];
 
 export const WIZARD_COUNTRIES: CountryData[] = COUNTRIES.filter((c) =>
   ENABLED_COUNTRY_CODES.includes(c.code),

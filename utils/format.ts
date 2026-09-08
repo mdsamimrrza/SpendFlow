@@ -1,4 +1,5 @@
 import { endOfMonth, format, parseISO, startOfMonth, subMonths } from 'date-fns';
+import { CURRENCY_DETAILS } from '@/constants/app';
 import { Expense, PeriodKey, UserProfile } from '@/types';
 
 let globalPrivacyMode = false;
@@ -17,6 +18,7 @@ const DEFAULT_RATES: Record<string, number> = {
   JPY: 155.0,
   SGD: 1.35,
   MYR: 4.70,
+  KRW: 1350.0,
 };
 
 export function convertCurrency(
@@ -70,18 +72,7 @@ function isGlobalPrivacyMode() {
 export function formatMoney(amount: number, currency = 'NPR', isPrivate?: boolean) {
   const shouldMask = isPrivate !== undefined ? isPrivate : globalPrivacyMode;
   if (shouldMask) {
-    const symbol =
-      currency === 'NPR'
-        ? 'Rs.'
-        : currency === 'INR'
-        ? '₹'
-        : currency === 'USD'
-        ? '$'
-        : currency === 'QAR'
-        ? '﷼'
-        : currency === 'GBP'
-        ? '£'
-        : currency;
+    const symbol = CURRENCY_DETAILS[(currency || 'NPR') as keyof typeof CURRENCY_DETAILS]?.symbol ?? currency;
     return `${symbol} ••••••`;
   }
 

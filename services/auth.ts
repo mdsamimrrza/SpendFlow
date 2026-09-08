@@ -1,13 +1,42 @@
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
 import { UserProfile } from '@/types';
+import { ONBOARDING_CURRENCY_KEY } from '@/constants/app';
 import { supabase } from '@/utils/supabase';
 import { seedDefaultCategories } from './categories';
+import { deleteUserReceipts } from './receipts';
 import { ensureUserSettingsBaseline, recordUserSettingsChange } from './settingsHistory';
 
 WebBrowser.maybeCompleteAuthSession();
+
+/**
+ * Removes this user's financial data from device storage. Called on sign-out
+ * so a shared device never keeps the previous user's expense/account caches on
+ * disk. Non-sensitive device preferences (theme, language, biometric flag,
+ * onboarding state) are intentionally kept.
+ */
+async function clearUserCaches(userId: string | null): Promise<void> {
+  const keys = ['@spendflow_cached_profile'];
+  if (userId) {
+    keys.push(
+      `${'@spendflow_expense_cache_'}${userId}`,
+      `${'@spendflow_cached_accounts_'}${userId}`,
+      `${'@spendflow_cached_transfers_'}${userId}`,
+      `${'@spendflow_cached_recurring_rules_'}${userId}`,
+      `${'@spendflow_categories_'}${userId}`,
+      `@spendflow_monthly_budget_${userId}`,
+      `@spendflow_budget_currency_${userId}`,
+      `@spendflow_currency_${userId}`,
+      `@spendflow_cycle_start_day_${userId}`,
+      `@spendflow_cycle_end_day_${userId}`,
+      `@spendflow_accounts_seeded_${userId}`,
+    );
+  }
+  await AsyncStorage.multiRemove(keys).catch(() => {});
+}
 
 export async function signInWithEmail(email: string, password: string) {
   const { data, error } = await supabase.auth.signInWithPassword({
@@ -107,12 +136,210 @@ export async function signInWithGoogle() {
 }
 
 export async function signOut() {
-  await AsyncStorage.multiRemove([
-    '@spendflow_cached_profile',
-  ]).catch(() => {});
+  const {
+    data: { user },
+  } = await supabase.auth.getUser().catch(() => ({ data: { user: null } }));
+  await clearUserCaches(user?.id ?? null);
   const { error } = await supabase.auth.signOut();
   if (error) throw error;
 }
+
+export async function signOutAllDevices() {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser().catch(() => ({ data: { user: null } }));
+  await clearUserCaches(user?.id ?? null);
+  // scope 'global' revokes every refresh token issued for this account,
+  // signing this device AND any other device out of Supabase Auth.
+  const { error } = await supabase.auth.signOut({ scope: 'global' });
+  if (error) throw error;
+}
+
+function decodeBase64ToArrayBuffer(base64: string): ArrayBuffer {
+  // Remove possible data URL prefix (e.g. data:image/jpeg;base64,)
+  const cleanBase64 = base64.includes(',') ? base64.split(',')[1] : base64;
+  const binaryString = atob(cleanBase64);
+  const len = binaryString.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes.buffer;
+}
+
+async function persistAvatarUrl(userId: string, avatarUrl: string | null) {
+  try {
+    await supabase
+      .from('users')
+      .update({ avatar_url: avatarUrl, updated_at: new Date().toISOString() })
+      .eq('id', userId);
+  } catch {
+    // users table fallback — auth metadata below still carries the URL
+  }
+
+  // Metadata syncs the avatar across every device of the account
+  await supabase.auth.updateUser({ data: { avatar_url: avatarUrl } }).catch(() => undefined);
+
+  // Merge into the cached profile so the next cold start shows the new avatar
+  const cachedRaw = await AsyncStorage.getItem('@spendflow_cached_profile').catch(() => null);
+  if (cachedRaw) {
+    try {
+      const cached = JSON.parse(cachedRaw) as UserProfile;
+      if (cached.id === userId) {
+        await AsyncStorage.setItem(
+          '@spendflow_cached_profile',
+          JSON.stringify({ ...cached, avatar_url: avatarUrl }),
+        ).catch(() => {});
+      }
+    } catch {
+      // Ignore invalid cached profile data
+    }
+  }
+}
+
+export async function uploadAvatar(asset: {
+  uri: string;
+  fileName?: string | null;
+  mimeType?: string | null;
+  base64?: string | null;
+}): Promise<string> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error('No authenticated user found.');
+
+  const extension = asset.fileName?.split('.').pop()?.toLowerCase() || 'jpg';
+  const path = `${user.id}/avatar-${Date.now()}.${extension}`;
+  const contentType = asset.mimeType || (extension === 'png' ? 'image/png' : 'image/jpeg');
+
+  let fileData: ArrayBuffer | Blob;
+  if (asset.base64) {
+    // 1. base64 already provided by ImagePicker
+    fileData = decodeBase64ToArrayBuffer(asset.base64);
+  } else if (Platform.OS === 'web') {
+    // 2. Web browser: fetch blob
+    const response = await fetch(asset.uri);
+    fileData = await response.blob();
+  } else {
+    // 3. Android / iOS: read local file URI
+    const base64 = await FileSystem.readAsStringAsync(asset.uri, { encoding: 'base64' });
+    fileData = decodeBase64ToArrayBuffer(base64);
+  }
+
+  // The avatars bucket is the only target. The old fallback into the public
+  // `receipts` bucket was removed — that bucket is now private and its
+  // objects can no longer be served via public URLs.
+  const { error } = await supabase.storage.from('avatars').upload(path, fileData, {
+    contentType,
+    upsert: false,
+  });
+
+  if (error) {
+    throw new Error(`Avatar upload failed: ${error.message}`);
+  }
+
+  const { data } = supabase.storage.from('avatars').getPublicUrl(path);
+  const publicUrl = data.publicUrl;
+
+  await persistAvatarUrl(user.id, publicUrl);
+  return publicUrl;
+}
+
+export async function removeAvatar(): Promise<void> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error('No authenticated user found.');
+  // Best-effort removal of the stored avatar objects (per-user folder).
+  try {
+    const { data } = await supabase.storage.from('avatars').list(user.id, { limit: 100 });
+    const files = (data ?? []).map((item) => `${user.id}/${item.name}`);
+    if (files.length > 0) await supabase.storage.from('avatars').remove(files);
+  } catch {
+    // Storage cleanup is best-effort; the URL is cleared below regardless.
+  }
+  await persistAvatarUrl(user.id, null);
+}
+
+export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user?.email) throw new Error('No authenticated user found.');
+
+  // Verify the current password first — updateUser({ password }) alone would
+  // let any unlocked device silently reset the credential.
+  const { error: verifyError } = await supabase.auth.signInWithPassword({
+    email: user.email,
+    password: currentPassword,
+  });
+  if (verifyError) {
+    throw new Error(verifyError.message === 'Invalid login credentials'
+      ? 'Current password is incorrect.'
+      : verifyError.message);
+  }
+
+  const { error } = await supabase.auth.updateUser({ password: newPassword });
+  if (error) throw error;
+}
+
+export async function sendEmailChangeOtp(currentEmail: string): Promise<{ rateLimited?: boolean }> {
+  return sendDeleteAccountOtp(currentEmail);
+}
+
+async function applyEmailChange(newEmail: string): Promise<{ confirmationPending: boolean }> {
+  const { data, error } = await supabase.auth.updateUser({ email: newEmail.trim() });
+  if (error) throw error;
+  // When "Confirm email changes" is enabled server-side, Supabase keeps the
+  // old address active and reports the pending one via new_email.
+  const confirmationPending = Boolean((data.user as { new_email?: string } | null)?.new_email);
+  return { confirmationPending };
+}
+
+/**
+ * Two-step email change: an OTP is first sent to the CURRENT address and must
+ * be verified here before the new address is submitted to Supabase. Only after
+ * the owner proves control of the old inbox does updateUser({ email }) run.
+ */
+export async function verifyEmailChangeOtpAndChangeEmail(
+  currentEmail: string,
+  token: string,
+  newEmail: string,
+): Promise<{ confirmationPending: boolean }> {
+  const cleanEmail = currentEmail.trim();
+  const cleanToken = token.trim();
+
+  // 1. Standard email OTP verification
+  try {
+    const { error } = await supabase.auth.verifyOtp({
+      email: cleanEmail,
+      token: cleanToken,
+      type: 'email',
+    });
+    if (!error) {
+      return await applyEmailChange(newEmail);
+    }
+  } catch {
+    // Continue fallback
+  }
+
+  // 2. Magiclink verification fallback
+  try {
+    const { error: recoveryError } = await supabase.auth.verifyOtp({
+      email: cleanEmail,
+      token: cleanToken,
+      type: 'magiclink',
+    });
+    if (!recoveryError) {
+      return await applyEmailChange(newEmail);
+    }
+  } catch {
+    // Continue fallback
+  }
+
+  throw new Error('Invalid or expired OTP code. Please try again.');
+}
+
 
 export async function ensureProfile(): Promise<UserProfile> {
   // Check active session first to avoid network 403 Forbidden errors when logged out
@@ -179,7 +406,16 @@ export async function ensureProfile(): Promise<UserProfile> {
 
   // ── Device-local currency (per-device, never synced to Supabase) ──────────
   const localCurrencyKey = `@spendflow_currency_${user.id}`;
-  const localCurrency = await AsyncStorage.getItem(localCurrencyKey).catch(() => null);
+  let localCurrency = await AsyncStorage.getItem(localCurrencyKey).catch(() => null);
+  // First login from this device: adopt the currency chosen during onboarding
+  // so the country picked before signing up sticks for this device.
+  if (!localCurrency) {
+    const onboardingCurrency = await AsyncStorage.getItem(ONBOARDING_CURRENCY_KEY).catch(() => null);
+    if (onboardingCurrency) {
+      localCurrency = onboardingCurrency;
+      await AsyncStorage.setItem(localCurrencyKey, onboardingCurrency).catch(() => {});
+    }
+  }
   // ─────────────────────────────────────────────────────────────────────────
 
   // 1. Check user_metadata (Supabase Auth cloud metadata synced on every device)
@@ -373,6 +609,19 @@ export async function updateProfile(input: Partial<Pick<UserProfile, 'display_na
 
   const localBudgetCurrency = await AsyncStorage.getItem(localBudgetCurrencyKey).catch(() => null);
 
+  // Preserve the budget's own currency when this save didn't touch it —
+  // falling back to the display currency here used to silently rewrite
+  // budget_currency on every plain currency change, which killed the
+  // budget_currency → preferred_currency conversion in getMonthlyBudget.
+  let cachedBudgetCurrency: string | null | undefined;
+  try {
+    const cachedRaw = await AsyncStorage.getItem('@spendflow_cached_profile');
+    const cached = cachedRaw ? (JSON.parse(cachedRaw) as UserProfile) : null;
+    if (cached?.id === user.id) cachedBudgetCurrency = cached.budget_currency ?? undefined;
+  } catch {
+    // Ignore invalid cached profile data
+  }
+
   const result: UserProfile = {
     id: user.id,
     email: user.email ?? '',
@@ -381,7 +630,7 @@ export async function updateProfile(input: Partial<Pick<UserProfile, 'display_na
     preferred_currency: resolvedCurrency,
     theme_preference: dbProfile?.theme_preference ?? input.theme_preference ?? 'system',
     monthly_budget: dbProfile?.monthly_budget ?? input.monthly_budget ?? localBudget,
-    budget_currency: input.budget_currency ?? localBudgetCurrency ?? dbProfile?.budget_currency ?? resolvedCurrency,
+    budget_currency: input.budget_currency ?? localBudgetCurrency ?? cachedBudgetCurrency ?? resolvedCurrency,
     cycle_start_day: resolvedCycle,
     cycle_end_day: resolvedCycleEnd,
     created_at: dbProfile?.created_at ?? new Date().toISOString(),
@@ -403,6 +652,20 @@ export async function deleteAccount() {
     } = await supabase.auth.getUser();
 
     if (user) {
+      // 0. Purge private storage (receipts + avatars) before row deletion
+      try {
+        await deleteUserReceipts(user.id);
+      } catch (e) {
+        console.warn('Could not delete receipt files:', e);
+      }
+      try {
+        const { data: avatarFiles } = await supabase.storage.from('avatars').list(user.id, { limit: 100 });
+        const files = (avatarFiles ?? []).map((item) => `${user.id}/${item.name}`);
+        if (files.length > 0) await supabase.storage.from('avatars').remove(files);
+      } catch {
+        // best-effort
+      }
+
       // 1. Delete user transactions
       try {
         await supabase.from('expenses').delete().eq('user_id', user.id);
@@ -415,6 +678,39 @@ export async function deleteAccount() {
         await supabase.from('recurring_rules').delete().eq('user_id', user.id);
       } catch (e) {
         console.warn('Could not delete recurring_rules:', e);
+      }
+
+      // 2b. Delete transfers, bank accounts, device tokens, notifications and
+      // settings history — previously left orphaned after account deletion.
+      try {
+        await supabase.from('transfers').delete().eq('user_id', user.id);
+      } catch (e) {
+        console.warn('Could not delete transfers:', e);
+      }
+      try {
+        await supabase.from('bank_accounts').delete().eq('user_id', user.id);
+      } catch (e) {
+        console.warn('Could not delete bank_accounts:', e);
+      }
+      try {
+        await supabase.from('device_tokens').delete().eq('user_id', user.id);
+      } catch (e) {
+        console.warn('Could not delete device_tokens:', e);
+      }
+      try {
+        await supabase.from('notifications').delete().eq('user_id', user.id);
+      } catch (e) {
+        console.warn('Could not delete notifications:', e);
+      }
+      try {
+        await supabase.from('user_settings_history').delete().eq('user_id', user.id);
+      } catch (e) {
+        console.warn('Could not delete user_settings_history:', e);
+      }
+      try {
+        await supabase.from('category_budget_history').delete().eq('user_id', user.id);
+      } catch (e) {
+        console.warn('Could not delete category_budget_history:', e);
       }
 
       // 3. Delete user categories

@@ -151,13 +151,14 @@ export async function listCategories(
  * Returns null on error or when the category does not exist — callers treat
  * null as "no category data" exactly like the previous full-list find-miss.
  */
-export async function getCategoryById(categoryId: string): Promise<Category | null> {
+export async function getCategoryById(categoryId: string, userId?: string | null): Promise<Category | null> {
   if (!categoryId) return null;
-  const { data, error } = await supabase
+  let query = supabase
     .from('categories')
     .select('*')
-    .eq('id', categoryId)
-    .maybeSingle();
+    .eq('id', categoryId);
+  if (userId) query = query.eq('user_id', userId);
+  const { data, error } = await query.maybeSingle();
   if (error || !data) return null;
   const category = data as Category;
   return { ...category, type: resolveCategoryType(category.name, category.type) };
@@ -174,7 +175,8 @@ export async function createCategory(
   }
 ): Promise<Category> {
   const categoryType = input.type || 'expense';
-  const trimmedName = input.name.trim();
+  const trimmedName = input.name.trim().slice(0, 100);
+  if (!trimmedName) throw new Error('Category name cannot be empty.');
 
   // ── Case-insensitive duplicate check before hitting the DB ──────────────
   const { data: existingCats } = await supabase
@@ -237,7 +239,11 @@ export async function updateCategory(
   userId?: string
 ): Promise<Category> {
   const updates: Record<string, any> = {};
-  if (input.name !== undefined) updates.name = input.name.trim();
+  if (input.name !== undefined) {
+    const trimmed = input.name.trim().slice(0, 100);
+    if (!trimmed) throw new Error('Category name cannot be empty.');
+    updates.name = trimmed;
+  }
   if (input.icon !== undefined) updates.icon = input.icon;
   if (input.color !== undefined) updates.color = input.color;
   if (input.budget_monthly !== undefined) updates.budget_monthly = input.budget_monthly;
@@ -265,12 +271,12 @@ export async function updateCategory(
 
   // Single update attempt (the legacy no-type retry was removed after the
   // production categories.type column was verified to exist).
-  const res1 = await supabase
+  let updateQuery = supabase
     .from('categories')
     .update({ ...updates, type: input.type })
-    .eq('id', categoryId)
-    .select('*')
-    .single();
+    .eq('id', categoryId);
+  if (userId) updateQuery = updateQuery.eq('user_id', userId);
+  const res1 = await updateQuery.select('*').single();
 
   if (res1.error) {
     if (res1.error.code === '23505') {
@@ -328,8 +334,10 @@ export async function deleteCategory(categoryId: string, userId?: string): Promi
       if (otherCats && otherCats.length > 0) {
         const fallback = otherCats.find((c) => c.name.toLowerCase().includes('other')) || otherCats[0];
         if (fallback?.id) {
-          await supabase.from('expenses').update({ category_id: fallback.id }).eq('category_id', categoryId);
-          await supabase.from('recurring_rules').update({ category_id: fallback.id }).eq('category_id', categoryId);
+          // Reassignments stay inside the requesting user's rows (RLS enforces
+          // this; the explicit user scope is defense in depth).
+          await supabase.from('expenses').update({ category_id: fallback.id }).eq('category_id', categoryId).eq('user_id', userId);
+          await supabase.from('recurring_rules').update({ category_id: fallback.id }).eq('category_id', categoryId).eq('user_id', userId);
         }
       }
     } catch {
@@ -338,7 +346,9 @@ export async function deleteCategory(categoryId: string, userId?: string): Promi
   }
 
   // 3. Delete category from database
-  const { error } = await supabase.from('categories').delete().eq('id', categoryId);
+  let deleteQuery = supabase.from('categories').delete().eq('id', categoryId);
+  if (userId) deleteQuery = deleteQuery.eq('user_id', userId);
+  const { error } = await deleteQuery;
   if (error) {
     if (error.code === '23503') {
       throw new Error('Please reassign transactions linked to this category before deleting it.');
@@ -353,12 +363,15 @@ export async function deleteCategory(categoryId: string, userId?: string): Promi
 }
 
 export async function updateCategoryBudget(categoryId: string, budgetMonthly: number | null, userId?: string) {
-  const { data, error } = await supabase
+  if (budgetMonthly !== null && (!Number.isFinite(budgetMonthly) || budgetMonthly < 0)) {
+    throw new Error('Enter a valid budget amount.');
+  }
+  let updateQuery = supabase
     .from('categories')
     .update({ budget_monthly: budgetMonthly })
-    .eq('id', categoryId)
-    .select('*')
-    .single();
+    .eq('id', categoryId);
+  if (userId) updateQuery = updateQuery.eq('user_id', userId);
+  const { data, error } = await updateQuery.select('*').single();
 
   if (error) throw error;
 

@@ -155,12 +155,24 @@ function validate(rates: ParsedRates): { ok: true } | { ok: false; reason: strin
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
+  // Only trusted callers may invoke this function: the pg_cron trigger and
+  // manual maintenance, both of which present the service-role key as a
+  // Bearer token. Any anonymous request is rejected before any work runs.
+  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+  const authHeader = req.headers.get('Authorization') ?? '';
+  const presentedKey = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+  if (!presentedKey || presentedKey !== serviceKey) {
+    return new Response(JSON.stringify({ ok: false, error: 'unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
   const url = new URL(req.url);
   const force = url.searchParams.get('force') === 'true';
   const today = kathmanduToday();
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
   const restHeaders = {
     apikey: serviceKey,
     Authorization: `Bearer ${serviceKey}`,

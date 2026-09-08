@@ -452,9 +452,13 @@ export function StockTrendChart({
 
   const isCompact = width < 390;
 
+  // Expense series color: indigo in dark mode (original look); rust in light
+  // mode, where primary (deep teal) vs income (deep emerald) are both greens.
+  const expenseColor = theme.isDark ? theme.colors.primary : theme.colors.danger;
+
   const VIEW_OPTIONS: { key: FlowViewMode; label: string; iconColor: string }[] = [
     { key: 'both', label: 'Cash Flow', iconColor: '#818CF8' },
-    { key: 'expense', label: 'Spending Trend', iconColor: theme.colors.primary },
+    { key: 'expense', label: 'Spending Trend', iconColor: expenseColor },
     { key: 'income', label: 'Income Trend', iconColor: theme.colors.income },
   ];
 
@@ -637,7 +641,7 @@ export function StockTrendChart({
             <View style={{ gap: 2 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-                  <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: theme.colors.primary }} />
+                  <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: expenseColor }} />
                   <Text style={{ fontSize: 13, fontWeight: '800', color: theme.colors.text }}>
                     {formatMoney(currentExpenseTotal, targetCurrency)}
                   </Text>
@@ -650,7 +654,7 @@ export function StockTrendChart({
                 </View>
               </View>
               <Text variant="caption" muted style={{ fontSize: 10.5 }}>
-                🟣 Expenses vs 🟢 Inflow ({periodName(filter)})
+                {theme.isDark ? '🟣' : '🔴'} Expenses vs 🟢 Inflow ({periodName(filter)})
               </Text>
             </View>
           ) : viewMode === 'income' ? (
@@ -675,7 +679,7 @@ export function StockTrendChart({
                 numberOfLines={1}
                 adjustsFontSizeToFit
                 minimumFontScale={0.7}
-                style={{ fontSize: isCompact ? 22 : 26, fontWeight: '800', fontVariant: ['tabular-nums'] }}
+                style={{ fontSize: isCompact ? 22 : 26, fontWeight: '800', fontVariant: ['tabular-nums'], color: theme.isDark ? theme.colors.text : theme.colors.danger }}
               >
                 {formatMoney(currentExpenseTotal, targetCurrency)}
               </Text>
@@ -834,8 +838,8 @@ export function StockTrendChart({
         <Svg width="100%" height={chartHeight} viewBox={`0 0 ${chartWidth} ${chartHeight}`}>
           <Defs>
             <LinearGradient id="expenseAreaGrad" x1="0" y1="0" x2="0" y2="1">
-              <Stop offset="0%" stopColor={theme.colors.primary} stopOpacity={theme.isDark ? '0.25' : '0.15'} />
-              <Stop offset="100%" stopColor={theme.colors.primary} stopOpacity="0.0" />
+              <Stop offset="0%" stopColor={expenseColor} stopOpacity={theme.isDark ? '0.25' : '0.15'} />
+              <Stop offset="100%" stopColor={expenseColor} stopOpacity="0.0" />
             </LinearGradient>
             <LinearGradient id="incomeAreaGrad" x1="0" y1="0" x2="0" y2="1">
               <Stop offset="0%" stopColor={theme.colors.income} stopOpacity={theme.isDark ? '0.25' : '0.15'} />
@@ -889,7 +893,7 @@ export function StockTrendChart({
             <Path
               d={expensePaths.linePath}
               fill="none"
-              stroke={theme.colors.primary}
+              stroke={expenseColor}
               strokeWidth={viewMode === 'both' ? 2 : 2.5}
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -922,14 +926,14 @@ export function StockTrendChart({
               return (
                 <React.Fragment key={`exp_${c.index}`}>
                   {isSelected ? (
-                    <Circle cx={c.x} cy={c.y} r={10} fill={theme.colors.primary} opacity={0.15} />
+                    <Circle cx={c.x} cy={c.y} r={10} fill={expenseColor} opacity={0.15} />
                   ) : null}
                   <Circle
                     cx={c.x}
                     cy={c.y}
                     r={isSelected ? 5 : 2.8}
-                    fill={isSelected ? '#FFFFFF' : theme.colors.primary}
-                    stroke={theme.colors.primary}
+                    fill={isSelected ? '#FFFFFF' : expenseColor}
+                    stroke={expenseColor}
                     strokeWidth={isSelected ? 2 : 1}
                   />
                 </React.Fragment>
@@ -942,7 +946,7 @@ export function StockTrendChart({
               y1={paddingY - 10}
               x2={expenseCoords[selectedIndex].x}
               y2={chartHeight - paddingBottom}
-              stroke={theme.colors.primary}
+              stroke={expenseColor}
               strokeWidth={1}
               strokeDasharray="3,3"
               opacity={0.5}
@@ -980,10 +984,10 @@ export function StockTrendChart({
                       y={ty + 15}
                       fontSize={10}
                       fontWeight="bold"
-                      fill={theme.colors.primary}
+                      fill={expenseColor}
                       textAnchor="start"
                     >
-                      🟣 Exp: {shortMoney(expC.amount, targetCurrency)}
+                      {theme.isDark ? '🟣' : '🔴'} Exp: {shortMoney(expC.amount, targetCurrency)}
                     </SvgText>
                     <SvgText
                       x={tx + 10}

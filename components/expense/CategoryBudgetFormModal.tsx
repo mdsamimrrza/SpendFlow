@@ -84,7 +84,7 @@ export function CategoryBudgetFormModal({
     try {
       const raw = amountInput.trim().replace(/[^0-9.]/g, '');
       const numeric = raw && Number(raw) > 0 ? Number(raw) : null;
-      const updated = await updateCategoryBudget(selectedCatId, numeric);
+      const updated = await updateCategoryBudget(selectedCatId, numeric, profile?.id);
 
       setCategories((prev) =>
         prev.map((c) => (c.id === updated.id ? updated : c)),
@@ -104,7 +104,7 @@ export function CategoryBudgetFormModal({
 
   async function handleClearSingle(catId: string) {
     try {
-      const updated = await updateCategoryBudget(catId, null);
+      const updated = await updateCategoryBudget(catId, null, profile?.id);
       setCategories((prev) =>
         prev.map((c) => (c.id === updated.id ? updated : c)),
       );

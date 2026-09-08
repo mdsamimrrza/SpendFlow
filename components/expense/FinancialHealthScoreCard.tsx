@@ -393,9 +393,10 @@ export function FinancialHealthScoreCard({
               strokeDashoffset={strokeDashoffset}
               strokeLinecap="round"
               fill="transparent"
-              rotation={-90}
-              originX={48}
-              originY={48}
+              // Standard SVG rotate around the arc center — `rotation`/`originX`/
+              // `originY` become a kebab-case `transform-origin` DOM attribute on
+              // web, which React DOM rejects.
+              transform="rotate(-90 48 48)"
             />
           </Svg>
 

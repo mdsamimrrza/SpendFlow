@@ -59,12 +59,21 @@ export async function createRecurringRule(userId: string, input: {
   frequency: RecurringFrequency;
   next_due_date: string;
 }) {
+  const amount = Number(input.amount);
+  if (!Number.isFinite(amount) || amount <= 0 || amount > 1_000_000_000_000) {
+    throw new Error('Enter a valid amount greater than zero.');
+  }
+  if (typeof input.next_due_date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(input.next_due_date)) {
+    throw new Error('Enter a valid next due date.');
+  }
   const snapshot = await getRate(input.currency || 'USD', input.next_due_date).catch(() => undefined);
   const { data, error } = await supabase
     .from('recurring_rules')
     .insert({
       user_id: userId,
       ...input,
+      amount,
+      description: input.description?.trim().slice(0, 500) || null,
       is_active: true,
       ...(snapshot ? { exchange_rate_to_usd: snapshot, base_currency: 'USD' } : {}),
     })
@@ -87,13 +96,25 @@ export async function updateRecurringRule(
     next_due_date: string;
     is_active: boolean;
   }>,
+  userId?: string | null,
 ) {
-  const { data, error } = await supabase
+  if (input.amount !== undefined) {
+    const amount = Number(input.amount);
+    if (!Number.isFinite(amount) || amount <= 0 || amount > 1_000_000_000_000) {
+      throw new Error('Enter a valid amount greater than zero.');
+    }
+    input = { ...input, amount };
+  }
+  if (input.description !== undefined) {
+    input = { ...input, description: input.description?.trim().slice(0, 500) || null };
+  }
+  // Ownership is enforced by RLS; the explicit user scope is defense in depth.
+  let query = supabase
     .from('recurring_rules')
     .update(input)
-    .eq('id', id)
-    .select(selection)
-    .single();
+    .eq('id', id);
+  if (userId) query = query.eq('user_id', userId);
+  const { data, error } = await query.select(selection).single();
   if (error) throw error;
   if (data) {
     await scheduleRecurringReminder(data as RecurringRule);
@@ -120,8 +141,10 @@ async function scheduleRecurringReminder(rule: RecurringRule) {
   }
 }
 
-export async function deleteRecurringRule(id: string) {
-  const { error } = await supabase.from('recurring_rules').delete().eq('id', id);
+export async function deleteRecurringRule(id: string, userId?: string | null) {
+  let query = supabase.from('recurring_rules').delete().eq('id', id);
+  if (userId) query = query.eq('user_id', userId);
+  const { error } = await query;
   if (error) throw error;
 }
 

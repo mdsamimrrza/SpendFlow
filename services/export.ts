@@ -27,6 +27,16 @@ function generateExportFileName(expenses: Expense[], ext: 'pdf' | 'xlsx' | 'csv'
   return `SpendFlow-Statement-${todayStr}.${ext}`;
 }
 
+/** Escapes user-controlled text before it is embedded in the PDF's HTML. */
+function escapeHtml(value: unknown): string {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
 function rowsToCsv(rows: string[][]) {
   return rows.map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(',')).join('\n');
 }
@@ -160,7 +170,7 @@ export async function exportExcel(expenses: Expense[], currency = 'NPR') {
   const summaryRows = [
     [{ value: 'Category' }, { value: 'Total' }, { value: 'Share %' }],
     ...summary.map((item) => [
-      { value: `${item.icon} ${item.label}` },
+      { value: `${escapeHtml(item.icon)} ${escapeHtml(item.label)}` },
       { value: formatMoney(item.total, currency) },
       { value: `${totalAmount > 0 ? Math.round((item.total / totalAmount) * 100) : 0}%` },
     ]),
@@ -227,8 +237,8 @@ export async function exportPdf(expenses: Expense[], profile?: UserProfile | nul
         <tr>
           <td>
             <div style="display: flex; align-items: center; gap: 8px;">
-              <span style="font-size: 16px;">${item.icon}</span>
-              <span style="font-weight: 600; color: #1E293B;">${item.label}</span>
+              <span style="font-size: 16px;">${escapeHtml(item.icon)}</span>
+              <span style="font-weight: 600; color: #1E293B;">${escapeHtml(item.label)}</span>
             </div>
           </td>
           <td style="text-align: right; font-weight: 700; color: #0F172A;">${formatMoney(item.total, currency)}</td>
@@ -249,22 +259,22 @@ export async function exportPdf(expenses: Expense[], profile?: UserProfile | nul
       const categoryName = e.categories?.name ?? 'Uncategorized';
       const categoryIcon = e.categories?.icon ?? '💳';
       const desc = e.description || e.notes || '—';
-      const subNotes = e.description && e.notes ? `<div style="font-size: 11px; color: #64748B;">${e.notes}</div>` : '';
+      const subNotes = e.description && e.notes ? `<div style="font-size: 11px; color: #64748B;">${escapeHtml(e.notes)}</div>` : '';
 
       return `
         <tr style="background-color: ${index % 2 === 0 ? '#FFFFFF' : '#F8FAFC'};">
           <td style="color: #94A3B8; font-size: 11px; font-weight: 600;">#${index + 1}</td>
           <td style="font-weight: 600; color: #334155; white-space: nowrap;">${e.date} ${e.time ? `<span style="font-size: 11px; color: #94A3B8;">${e.time}</span>` : ''}</td>
           <td>
-            <span style="font-size: 13px;">${categoryIcon}</span>
-            <span style="font-weight: 600; color: #1E293B;">${categoryName}</span>
+            <span style="font-size: 13px;">${escapeHtml(categoryIcon)}</span>
+            <span style="font-weight: 600; color: #1E293B;">${escapeHtml(categoryName)}</span>
           </td>
           <td>
-            <div style="font-weight: 500; color: #334155;">${desc}</div>
+            <div style="font-weight: 500; color: #334155;">${escapeHtml(desc)}</div>
             ${subNotes}
           </td>
           <td>
-            <span style="display: inline-block; padding: 2px 8px; border-radius: 4px; background-color: #F1F5F9; font-size: 11px; font-weight: 600; color: #475569; text-transform: uppercase;">${e.payment_method}</span>
+            <span style="display: inline-block; padding: 2px 8px; border-radius: 4px; background-color: #F1F5F9; font-size: 11px; font-weight: 600; color: #475569; text-transform: uppercase;">${escapeHtml(e.payment_method)}</span>
           </td>
           <td style="text-align: right; font-weight: 800; color: #0F5C4D; white-space: nowrap;">${formatMoney(Number(e.amount), e.currency || currency)}</td>
         </tr>
@@ -406,8 +416,8 @@ export async function exportPdf(expenses: Expense[], profile?: UserProfile | nul
           <h1 class="brand-title">SpendFlow</h1>
           <div class="brand-subtitle">Official Financial Statement</div>
           <div style="margin-top: 10px; font-size: 12px; font-weight: 700; color: #1E293B;">
-            Account Holder: <span style="color: #0F5C4D;">${userName}</span>
-            ${userEmail ? `<span style="font-weight: 400; color: #64748B;"> (${userEmail})</span>` : ''}
+            Account Holder: <span style="color: #0F5C4D;">${escapeHtml(userName)}</span>
+            ${userEmail ? `<span style="font-weight: 400; color: #64748B;"> (${escapeHtml(userEmail)})</span>` : ''}
           </div>
         </div>
         <div class="meta-box">

@@ -60,7 +60,8 @@ import { computeAccountBalances, listBankAccounts, seedDefaultAccounts } from '@
 import { listCategories } from '@/services/categories';
 import { convertExpense } from '@/services/exchange';
 import { getExpense, softDeleteExpense } from '@/services/expenses';
-import { uploadReceipt } from '@/services/receipts';
+import { deleteReceipt, uploadReceipt } from '@/services/receipts';
+import { useReceiptUrl } from '@/hooks/useReceiptUrl';
 import { BankAccount, Category, ExpenseInput, PaymentMethod, TransactionType } from '@/types';
 import { currentFormattedTime, formatMoney, formatTimeForInput, isoDate, parseTimeInput } from '@/utils/format';
 
@@ -140,6 +141,10 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
     receipt_image_url: null,
     type: 'expense',
   });
+
+  // Receipts live in a private bucket — the stored value is a storage path
+  // (or legacy URL/local URI) that must be resolved to a signed URL to render.
+  const receiptPreviewUrl = useReceiptUrl(form.receipt_image_url);
 
   const [rawAmount, setRawAmount] = useState('');
   const currencyManuallySelected = useRef(false);
@@ -1658,7 +1663,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
                 <View style={{ position: 'relative', borderRadius: theme.radius.md, overflow: 'hidden', borderWidth: 1, borderColor: theme.colors.border }}>
                   <Pressable onPress={() => setImageViewerOpen(true)}>
                     <Image
-                      source={{ uri: form.receipt_image_url }}
+                      source={{ uri: receiptPreviewUrl || form.receipt_image_url || undefined }}
                       style={{ width: '100%', height: 180, backgroundColor: theme.colors.surfaceElevated }}
                       resizeMode="cover"
                     />
@@ -1681,7 +1686,12 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
                   </View>
 
                   <Pressable
-                    onPress={() => setForm((prev) => ({ ...prev, receipt_image_url: null }))}
+                    onPress={() => {
+                      // Best-effort removal of the private storage object; the
+                      // form value is cleared regardless.
+                      void deleteReceipt(form.receipt_image_url);
+                      setForm((prev) => ({ ...prev, receipt_image_url: null }));
+                    }}
                     style={{
                       position: 'absolute',
                       top: 8,

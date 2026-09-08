@@ -9,12 +9,18 @@ const PEGGED_USD_PER_UNIT: Record<string, number> = {
 };
 
 // Last-resort approximation when neither DB cache nor the API can answer.
+// Pegged currencies (QAR/AED/SAR) are resolved by PEGGED_USD_PER_UNIT instead.
 const FALLBACK_UNITS_PER_USD: Record<string, number> = {
   USD: 1,
   NPR: 133.5,
   INR: 83.5,
   QAR: 3.64,
   GBP: 0.79,
+  MYR: 4.70,
+  KRW: 1350.0,
+  JPY: 155.0,
+  AUD: 1.52,
+  CAD: 1.36,
 };
 
 // ── Session rate memory ─────────────────────────────────────────────────────
@@ -78,9 +84,10 @@ function isIsoDate(date: string): boolean {
 
 export function createExchangeService(client: SupabaseClient) {
   async function fetchHistoricalUnitsPerUsd(date: string, currency: string): Promise<number | null> {
-    const accessKey =
-      process.env.EXCHANGE_RATE_HOST_ACCESS_KEY ||
-      process.env.EXPO_PUBLIC_EXCHANGE_RATE_HOST_ACCESS_KEY;
+    // Server-side only. This module is also imported by the backfill script,
+    // which runs in Node with real secrets. The EXPO_PUBLIC_ fallback was
+    // removed — provider API keys must never be bundled into the client.
+    const accessKey = process.env.EXCHANGE_RATE_HOST_ACCESS_KEY;
     const url = new URL(`https://api.exchangerate.host/${date}`);
     url.searchParams.set('base', 'USD');
     url.searchParams.set('symbols', currency);
@@ -96,9 +103,11 @@ export function createExchangeService(client: SupabaseClient) {
     }
   }
 
-  // One query serves the whole exchange_rates table (only this app writes to
-  // it, so it stays small), with a short TTL so back-to-back resolver builds
-  // — e.g. an NPR account and an INR account — share a single round trip.
+  // One query serves the whole exchange_rates table (writes are restricted to
+  // trusted server-side processes, so it stays small), with a short TTL so
+  // back-to-back resolver builds — e.g. an NPR account and an INR account —
+  // share a single round trip. The limit bounds the payload if the table ever
+  // grows unexpectedly.
   let dbRatesAt = 0;
   let dbRatesByCurrency = new Map<string, { date: string; rate: number }[]>();
   async function loadDbRates(): Promise<Map<string, { date: string; rate: number }[]>> {
@@ -106,7 +115,8 @@ export function createExchangeService(client: SupabaseClient) {
     const { data, error } = await client
       .from('exchange_rates')
       .select('currency, date, rate_to_usd')
-      .order('date', { ascending: true });
+      .order('date', { ascending: true })
+      .limit(2000);
     if (!error && data) {
       const byCurrency = new Map<string, { date: string; rate: number }[]>();
       for (const row of data as { currency: string; date: string; rate_to_usd: number | null }[]) {
@@ -186,16 +196,19 @@ export function createExchangeService(client: SupabaseClient) {
     const units = await fetchHistoricalUnitsPerUsd(date, ccy);
     if (units) {
       const rate = round8(1 / units);
-      const { error: insertError } = await client
+      // Writing the fetched rate to the shared table is best-effort — normal
+      // users no longer have INSERT permission on exchange_rates (trusted
+      // server-side processes own that data). A denied write resolves as an
+      // error result, never a throw, and must not stop the client from using
+      // the rate it already resolved.
+      await client
         .from('exchange_rates')
         .upsert(
           { currency: ccy, date, rate_to_usd: rate },
           { onConflict: 'currency,date', ignoreDuplicates: true },
         );
-      if (!insertError) {
-        rememberRate(ccy, date, rate);
-        return rate;
-      }
+      rememberRate(ccy, date, rate);
+      return rate;
     }
 
     const { data: nearest } = await client

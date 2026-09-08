@@ -163,7 +163,7 @@ export default function RecurringScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
-              await deleteRecurringRule(ruleId);
+              await deleteRecurringRule(ruleId, profile?.id);
               setSelectedRule(null);
               closeFormModal();
               await load();
@@ -194,7 +194,7 @@ export default function RecurringScreen() {
           frequency,
           next_due_date: nextDueDate,
           payment_method: paymentMethod,
-        });
+        }, profile.id);
       } else {
         // CREATE NEW RECURRING RULE
         await createRecurringRule(profile.id, {
@@ -227,7 +227,7 @@ export default function RecurringScreen() {
 
   async function toggleRuleActive(rule: RecurringRule) {
     try {
-      await updateRecurringRule(rule.id, { is_active: !rule.is_active });
+      await updateRecurringRule(rule.id, { is_active: !rule.is_active }, profile?.id);
       await load();
     } catch (error) {
       Alert.alert('Error', 'Failed to update recurring status');

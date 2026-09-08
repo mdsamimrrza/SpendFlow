@@ -47,14 +47,31 @@ export async function ensureUserSettingsBaseline(
   };
   if (settings.budget_currency !== undefined) payload.budget_currency = settings.budget_currency;
 
-  // Upsert: insert if missing, update if exists (keeps baseline in sync with current)
-  const { error } = await supabase
+  // Select-then-update/insert instead of a native upsert: older projects lack
+  // the UNIQUE(user_id, effective_from) constraint that ON CONFLICT requires,
+  // so `.upsert(..., { onConflict: 'user_id,effective_from' })` fails there
+  // with 42P10. Same pattern recordUserSettingsChange already uses.
+  const { data: existing, error: selectError } = await supabase
     .from('user_settings_history')
-    .upsert(payload, {
-      onConflict: 'user_id,effective_from',
-      ignoreDuplicates: false,
-    });
-  if (error) throw error;
+    .select('id')
+    .eq('user_id', userId)
+    .eq('effective_from', BASELINE_EFFECTIVE_FROM)
+    .limit(1);
+  if (selectError) throw selectError;
+
+  const existingId = existing?.[0]?.id;
+  if (existingId) {
+    const { error: updateError } = await supabase
+      .from('user_settings_history')
+      .update(payload)
+      .eq('id', existingId);
+    if (updateError) throw updateError;
+  } else {
+    const { error: insertError } = await supabase
+      .from('user_settings_history')
+      .insert(payload);
+    if (insertError) throw insertError;
+  }
 }
 
 /**

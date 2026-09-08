@@ -43,12 +43,15 @@ async function getCycleStartDay(userId?: string): Promise<number> {
     if (userId) {
       const raw = await AsyncStorage.getItem(`@spendflow_cycle_start_day_${userId}`);
       const day = Number(raw);
-      if (day >= 2 && day <= 28) return day;
+      // Match services/auth.ts updateProfile validation (2–31). The old 28 cap
+      // made starts on the 29th–31st silently fall back to calendar month in
+      // background budget checks while the UI showed the custom cycle.
+      if (day >= 2 && day <= 31) return day;
     }
     const profileJson = await AsyncStorage.getItem('@spendflow_cached_profile');
     if (profileJson) {
       const day = Number(JSON.parse(profileJson)?.cycle_start_day);
-      if (day >= 2 && day <= 28) return day;
+      if (day >= 2 && day <= 31) return day;
     }
   } catch {
     // Ignore cache parse error
@@ -102,7 +105,7 @@ async function triggerExpenseNotifications(
     if (userId && categoryId) {
       // Single-row lookup — the previous full listCategories() fetch pulled and
       // re-cached every category just to inspect one budget on each save.
-      const targetCat = await getCategoryById(categoryId);
+      const targetCat = await getCategoryById(categoryId, userId);
       if (targetCat && targetCat.budget_monthly && Number(targetCat.budget_monthly) > 0) {
         const catMonthItems = monthItems.filter((item) => item.category_id === categoryId);
         const catMonthTotal = sumExpenses(catMonthItems, currency);
@@ -217,7 +220,7 @@ export function useExpenses(userId?: string, filters?: ExpenseFilters, sort: Sor
 
   const save = useCallback(async (input: ExpenseInput, id?: string) => {
     if (!userId) throw new Error('No user found.');
-    if (id) await updateExpense(id, input);
+    if (id) await updateExpense(id, input, userId);
     else {
       await createExpense(userId, input);
       // Fire-and-forget: alert the user's OTHER signed-in devices about this new entry

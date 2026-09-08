@@ -33,7 +33,14 @@ function applyExpenseFilters(query: any, page = 0, filters?: ExpenseFilters, sor
   if (filters?.maxAmount !== undefined) q = q.lte('amount', filters.maxAmount);
   if (filters?.paymentMethod && filters.paymentMethod !== 'All') q = q.eq('payment_method', filters.paymentMethod);
   if (filters?.type && filters.type !== 'All') q = q.eq('type', filters.type);
-  if (filters?.search) q = q.or(`description.ilike.%${filters.search}%,notes.ilike.%${filters.search}%`);
+  if (filters?.search) {
+    // The search text must never reach PostgREST raw: a value like
+    // `%",category_id.in.(x)` could forge extra filter conditions. Stripping
+    // the characters that carry logic-tree meaning and double-quoting the
+    // value keeps it a single literal ilike pattern.
+    const pattern = `%${filters.search.replace(/[\\"]/g, '')}%`;
+    q = q.or(`description.ilike."${pattern}",notes.ilike."${pattern}"`);
+  }
   if (sort === 'amount_asc' || sort === 'amount_desc') q = q.order('amount', { ascending: sort === 'amount_asc' });
   else q = q.order('date', { ascending: sort === 'date_asc' }).order('created_at', { ascending: false });
   return q;
@@ -140,7 +147,9 @@ export async function getExpense(id: string, userId?: string | null) {
   }
   let requestError: unknown = null;
   try {
-    const { data, error } = await supabase.from('expenses').select(selection).eq('id', id).is('deleted_at', null).single();
+    let query = supabase.from('expenses').select(selection).eq('id', id).is('deleted_at', null);
+    if (userId) query = query.eq('user_id', userId);
+    const { data, error } = await query.single();
     if (!error && data) return data as unknown as Expense;
     requestError = error;
   } catch (error) {
@@ -159,20 +168,57 @@ function isValidUUID(str?: string | null): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
 }
 
+// ── Server-side input validation ────────────────────────────────────────────
+// Monetary values are security-sensitive: NaN/Infinity/negative amounts and
+// malformed dates must be rejected before they reach PostgREST, independent
+// of what the UI allows.
+const MAX_AMOUNT = 1_000_000_000_000;
+const MAX_DESCRIPTION_LENGTH = 500;
+const MAX_NOTES_LENGTH = 2000;
+const MAX_CSV_IMPORT_ROWS = 1000;
+
+function validateAmount(amount: unknown): number {
+  const value = Number(amount);
+  if (!Number.isFinite(value) || value <= 0 || value > MAX_AMOUNT) {
+    throw new Error('Enter a valid amount greater than zero.');
+  }
+  return value;
+}
+
+function validateDate(date: unknown): string {
+  if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(new Date(`${date}T00:00:00Z`).getTime())) {
+    throw new Error('Enter a valid transaction date.');
+  }
+  return date;
+}
+
+function cleanText(value: string | null | undefined, maxLength: number): string | null {
+  if (value === null || value === undefined) return null;
+  const trimmed = String(value).trim();
+  if (!trimmed) return null;
+  return trimmed.slice(0, maxLength);
+}
+
 export async function createExpense(userId: string, input: ExpenseInput) {
   const transactionType = input.type || 'expense';
   const sanitizedBankAccountId = isValidUUID(input.bank_account_id) ? input.bank_account_id : null;
+  const amount = validateAmount(input.amount);
+  const date = validateDate(input.date);
   const sanitizedInput = {
     ...input,
     bank_account_id: sanitizedBankAccountId,
+    description: cleanText(input.description, MAX_DESCRIPTION_LENGTH),
+    notes: cleanText(input.notes, MAX_NOTES_LENGTH),
   };
 
-  const snapshot = await getRate(input.currency || 'USD', input.date).catch(() => undefined);
+  const snapshot = await getRate(input.currency || 'USD', date).catch(() => undefined);
 
   const values = {
     ...sanitizedInput,
     type: transactionType,
     user_id: userId,
+    amount,
+    date,
     ...(snapshot ? { exchange_rate_to_usd: snapshot, base_currency: 'USD' } : {}),
   };
   const result = await supabase.from('expenses').insert(values).select(selection).single();
@@ -181,42 +227,48 @@ export async function createExpense(userId: string, input: ExpenseInput) {
   return result.data as unknown as Expense;
 }
 
-export async function updateExpense(id: string, input: ExpenseInput) {
+export async function updateExpense(id: string, input: ExpenseInput, userId?: string | null) {
   const transactionType = input.type || 'expense';
   const sanitizedBankAccountId = isValidUUID(input.bank_account_id) ? input.bank_account_id : null;
+  const amount = validateAmount(input.amount);
+  const date = validateDate(input.date);
   const sanitizedInput = {
     ...input,
     bank_account_id: sanitizedBankAccountId,
+    description: cleanText(input.description, MAX_DESCRIPTION_LENGTH),
+    notes: cleanText(input.notes, MAX_NOTES_LENGTH),
   };
 
   const existing = await supabase.from('expenses').select('date, currency').eq('id', id).maybeSingle();
   const dateChanged = Boolean(
     existing.data &&
-      (existing.data.date !== input.date || existing.data.currency !== input.currency),
+      (existing.data.date !== date || existing.data.currency !== input.currency),
   );
   const snapshot = dateChanged
-    ? await getRate(input.currency || 'USD', input.date).catch(() => undefined)
+    ? await getRate(input.currency || 'USD', date).catch(() => undefined)
     : undefined;
   const snapshotFields = snapshot
     ? { exchange_rate_to_usd: snapshot, base_currency: 'USD' }
     : {};
 
-  let updatedData: any = null;
-  const res1 = await supabase
+  // Ownership is enforced by RLS; the explicit user_id scope is defense in
+  // depth so a compromised client context can never touch another user's row.
+  let updateQuery = supabase
     .from('expenses')
-    .update({ ...sanitizedInput, ...snapshotFields, type: transactionType, updated_at: new Date().toISOString() })
-    .eq('id', id)
-    .select(selection)
-    .single();
+    .update({ ...sanitizedInput, ...snapshotFields, type: transactionType, amount, date, updated_at: new Date().toISOString() })
+    .eq('id', id);
+  if (userId) updateQuery = updateQuery.eq('user_id', userId);
+
+  const res1 = await updateQuery.select(selection).single();
 
   if (res1.error) throw res1.error;
-  updatedData = res1.data;
-
-  return updatedData as Expense;
+  return res1.data as unknown as Expense;
 }
 
 export async function softDeleteExpense(id: string, userId?: string | null) {
-  const { error } = await supabase.from('expenses').update({ deleted_at: new Date().toISOString() }).eq('id', id);
+  let deleteQuery = supabase.from('expenses').update({ deleted_at: new Date().toISOString() }).eq('id', id);
+  if (userId) deleteQuery = deleteQuery.eq('user_id', userId);
+  const { error } = await deleteQuery;
   if (error) throw error;
 
   if (!userId) return; // cache pruning requires a user scope
@@ -270,20 +322,21 @@ export async function importExpensesFromCsv(userId: string, csv: string) {
     const cells = parseCsvLine(line);
     const date = cells[dateIndex];
     const amount = Number(cells[amountIndex]);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(amount) || amount <= 0) throw new Error(`Invalid date or amount on CSV row ${rowIndex + 2}.`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(amount) || amount <= 0 || amount > MAX_AMOUNT) throw new Error(`Invalid date or amount on CSV row ${rowIndex + 2}.`);
     const categoryName = dateIndex >= 0 && indexOf('category') >= 0 ? cells[indexOf('category')].toLowerCase() : 'other';
     return {
       user_id: userId,
       date,
       amount,
-      currency: indexOf('currency') >= 0 ? cells[indexOf('currency')] || 'NPR' : 'NPR',
+      currency: (indexOf('currency') >= 0 ? cells[indexOf('currency')] || 'NPR' : 'NPR').trim().toUpperCase().slice(0, 3) || 'NPR',
       category_id: categoryByName.get(categoryName) ?? otherCategory,
       payment_method: (indexOf('payment method') >= 0 ? cells[indexOf('payment method')] : 'Cash') || 'Cash',
-      description: indexOf('description') >= 0 ? cells[indexOf('description')] || null : null,
-      notes: indexOf('notes') >= 0 ? cells[indexOf('notes')] || null : null,
+      description: cleanText(indexOf('description') >= 0 ? cells[indexOf('description')] : null, MAX_DESCRIPTION_LENGTH),
+      notes: cleanText(indexOf('notes') >= 0 ? cells[indexOf('notes')] : null, MAX_NOTES_LENGTH),
     };
   }).filter((row) => row.category_id);
   if (!rows.length) throw new Error('CSV has no importable rows.');
+  if (rows.length > MAX_CSV_IMPORT_ROWS) throw new Error(`CSV import is limited to ${MAX_CSV_IMPORT_ROWS} rows per file.`);
   const { error } = await supabase.from('expenses').insert(rows);
   if (error) throw error;
   return rows.length;

@@ -13,6 +13,7 @@ import { Trash2, X, ZoomIn } from 'lucide-react-native';
 
 import { Text } from '@/components/ui/Text';
 import { useTheme } from '@/hooks/useTheme';
+import { useReceiptUrl } from '@/hooks/useReceiptUrl';
 
 interface ImageViewerModalProps {
   visible: boolean;
@@ -29,6 +30,9 @@ export function ImageViewerModal({
 }: ImageViewerModalProps) {
   const theme = useTheme();
   const { width, height } = useWindowDimensions();
+  // Receipts live in a private bucket — stored paths / legacy public URLs are
+  // resolved to short-lived signed URLs before rendering.
+  const resolvedUrl = useReceiptUrl(imageUrl);
 
   if (!imageUrl) return null;
 
@@ -83,7 +87,7 @@ export function ImageViewerModal({
           {/* Full Screen Image */}
           <View style={styles.imageContainer}>
             <Image
-              source={{ uri: imageUrl }}
+              source={{ uri: resolvedUrl || imageUrl }}
               style={[styles.fullImage, { width, height: height * 0.75 }]}
               resizeMode="contain"
             />

@@ -94,6 +94,7 @@ function RootNavigator() {
         <Stack.Screen name="transfer-history" />
         <Stack.Screen name="export" options={{ presentation: 'modal' }} />
         <Stack.Screen name="bullion" />
+        <Stack.Screen name="profile" />
         <Stack.Screen name="profit-loss" options={{ presentation: 'modal' }} />
       </Stack>
       <AnimatedSplashScreen visible={isLoading} />

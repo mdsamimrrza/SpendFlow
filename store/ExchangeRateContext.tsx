@@ -19,6 +19,7 @@ const DEFAULT_RATES: Record<string, number> = {
   JPY: 155.0,
   SGD: 1.35,
   MYR: 4.70,
+  KRW: 1350.0,
   THB: 36.5,
   CNY: 7.23,
 };

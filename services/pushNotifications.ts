@@ -70,11 +70,9 @@ export async function registerPushToken(userId: string): Promise<void> {
 
     if (error) {
       console.warn('[Push] Supabase upsert failed:', error.message);
-    } else {
-      console.log('[Push] Token registered successfully:', token.slice(0, 20) + '...');
     }
   } catch (err) {
-    console.warn('[Push] Token registration failed:', err);
+    console.warn('[Push] Token registration failed:', err instanceof Error ? err.message : err);
   }
 }
 
@@ -163,9 +161,12 @@ export async function notifyOtherDevices(payload: CrossDevicePushPayload): Promi
       body: JSON.stringify(messages),
     });
 
-    const result = await response.json().catch(() => null);
-    console.log('[Push] Expo response:', JSON.stringify(result));
+    // Only the delivery status is logged — never the Expo response payload,
+    // which echoes device push tokens.
+    if (!response.ok) {
+      console.warn('[Push] Expo delivery failed with HTTP', response.status);
+    }
   } catch (err) {
-    console.warn('[Push] Cross-device notify failed:', err);
+    console.warn('[Push] Cross-device notify failed:', err instanceof Error ? err.message : err);
   }
 }
