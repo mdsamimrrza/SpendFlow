@@ -317,7 +317,7 @@ export function DeleteAccountModal({ visible, onClose, email, onDeleted }: Delet
                   }}
                 >
                   <Text style={{ fontWeight: '800', color: '#FFFFFF', fontSize: 13.5 }}>
-                    {verifying ? 'Wiping Data...' : 'Verify & Delete'}
+                    {verifying ? 'Deleting Account...' : 'Verify & Delete'}
                   </Text>
                 </Pressable>
               </View>

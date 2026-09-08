@@ -62,17 +62,29 @@ links.
 
 ## 4. Account-deletion semantics (finding #2 — fixed)
 
-Client (`deleteAccount`) → authenticated POST to Edge Function
-`delete-account` (JWT-verified, self-delete only) → service-role deletes rows
-in FK order, paginates storage cleanup, deletes the AUTH USER last → only then
-does the client clear AsyncStorage + sign out. Any step failing returns a
-non-ok response and the client surfaces "deletion did not complete" — never a
-false success. Retry-safe: every step is idempotent; a partially cleaned
-account repeats the same deterministic sequence.
+The client performs **zero destructive work**. `deleteAccount()` only calls the
+`delete-account` Edge Function with the caller's JWT; on any non-success it
+throws and the account remains untouched (no fallback path exists).
 
-If the Edge Function is not deployed (404), the client falls back to
-RLS-scoped row cleanup but **explicitly tells the user the login identity
-could not be deleted**.
+The Edge Function is the sole orchestrator:
+1. JWT → target user (client-supplied IDs are ignored entirely — self-delete
+   only by construction).
+2. `public.delete_user_data(uuid)` RPC — ALL user-owned rows in ONE Postgres
+   transaction (migration `20260908020000_delete_user_data_rpc.sql`), FK-safe
+   order, idempotent.
+3. Storage purge of `receipts/{uid}/**` and `avatars/{uid}/**` through the
+   real Storage SDK (`storage.from().remove()`), paginated until each folder
+   is empty; ANY failure → the whole deletion fails.
+4. Post-checks (profile row gone, folders empty).
+5. Auth user deleted LAST — a storage/DB failure can therefore never strand a
+   half-deleted account with the login removed.
+6. `{ "success": true }` only on full completion.
+
+**Cross-system boundary (honest, not pseudo-atomic):** Postgres, Storage, and
+Auth are separate services — no cross-system transaction exists. The flow is
+retry-safe instead: every step treats "already absent" as success, so a retry
+after a mid-flow failure completes the remainder and then deletes the auth
+identity. Shared data (exchange rates, market gold rates) is never touched.
 
 ## 5. Bullion history policy (finding #1 — fixed)
 
