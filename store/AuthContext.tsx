@@ -96,11 +96,14 @@ export function AuthProvider({ children }: PropsWithChildren) {
           setProfile(null);
           return;
         }
-        // Offline fallback: check cached profile
-        const cached = await AsyncStorage.getItem('@spendflow_cached_profile').catch(() => null);
+        // Offline fallback: this user's cached profile only (keyed by id and
+        // id re-checked before use so a stale foreign profile never paints).
+        const uid = sessionData.session.user.id;
+        const cached = await AsyncStorage.getItem(`@spendflow_cached_profile_${uid}`).catch(() => null);
         if (cached) {
           try {
-            setProfile(JSON.parse(cached) as UserProfile);
+            const parsed = JSON.parse(cached) as UserProfile;
+            if (parsed?.id === uid) setProfile(parsed);
           } catch {
             // ignore
           }
@@ -147,21 +150,42 @@ export function AuthProvider({ children }: PropsWithChildren) {
       void handleOAuthUrl(url);
     });
 
-    // Load cached profile instantly on startup for fast UI render
-    void AsyncStorage.getItem('@spendflow_cached_profile').then((cached) => {
-      if (mounted && cached) {
-        try {
-          setProfile((current) => current || (JSON.parse(cached) as UserProfile));
-        } catch {
-          // ignore
+    // Warm-start paint: the most recently active user's cached profile loads
+    // instantly. The session hydration below validates the painted profile's
+    // id against the actual session and clears any foreign (previous-user)
+    // profile before the UI can act on it.
+    void AsyncStorage.getItem('@spendflow_last_profile_user').then((lastUid) => {
+      if (!lastUid) return;
+      AsyncStorage.getItem(`@spendflow_cached_profile_${lastUid}`).then((cached) => {
+        if (mounted && cached) {
+          try {
+            const parsed = JSON.parse(cached) as UserProfile;
+            if (parsed?.id === lastUid) {
+              setProfile((current) => current || parsed);
+            }
+          } catch {
+            // ignore
+          }
         }
-      }
-    });
+      }).catch(() => {});
+    }).catch(() => {});
+
+    // Track the most recent signed-in user for the next cold start's paint.
+    if (userId) {
+      void AsyncStorage.setItem('@spendflow_last_profile_user', userId).catch(() => {});
+    }
 
     // Initial session hydration
     void supabase.auth.getSession().then(({ data }) => {
       if (!mounted) return;
       setSession(data.session);
+      // The warm-start paint above may have loaded another user's profile —
+      // clear it unless it matches the real session user.
+      if (data.session?.user?.id) {
+        setProfile((current) => (current && current.id === data.session!.user.id ? current : null));
+      } else {
+        setProfile(null);
+      }
       setLoading(false);
     });
 

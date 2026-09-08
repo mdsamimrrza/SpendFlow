@@ -13,13 +13,40 @@ import { ensureUserSettingsBaseline, recordUserSettingsChange } from './settings
 WebBrowser.maybeCompleteAuthSession();
 
 /**
+ * The cached profile is keyed per user so account switching on a shared
+ * device can never paint the previous user's identity/budget. All reads pass
+ * through this key. Migration: the legacy global key is consumed (adopted if
+ * it matches the current user, then removed) on first read.
+ */
+const PROFILE_CACHE_PREFIX = '@spendflow_cached_profile_';
+const LEGACY_PROFILE_CACHE_KEY = '@spendflow_cached_profile';
+
+function profileCacheKey(userId: string): string {
+  return `${PROFILE_CACHE_PREFIX}${userId}`;
+}
+
+/** One-time migration from the pre-multi-user global key. Returns the stored profile ONLY if it belongs to userId. */
+async function readLegacyProfileIfOwned(userId: string): Promise<UserProfile | null> {
+  try {
+    const raw = await AsyncStorage.getItem(LEGACY_PROFILE_CACHE_KEY).catch(() => null);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as UserProfile;
+    await AsyncStorage.removeItem(LEGACY_PROFILE_CACHE_KEY).catch(() => {});
+    return parsed?.id === userId ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Removes this user's financial data from device storage. Called on sign-out
  * so a shared device never keeps the previous user's expense/account caches on
  * disk. Non-sensitive device preferences (theme, language, biometric flag,
  * onboarding state) are intentionally kept.
  */
 async function clearUserCaches(userId: string | null): Promise<void> {
-  const keys = ['@spendflow_cached_profile'];
+  // Also remove the legacy pre-multi-user global profile key.
+  const keys = [LEGACY_PROFILE_CACHE_KEY];
   if (userId) {
     keys.push(
       `${'@spendflow_expense_cache_'}${userId}`,
@@ -181,13 +208,13 @@ async function persistAvatarUrl(userId: string, avatarUrl: string | null) {
   await supabase.auth.updateUser({ data: { avatar_url: avatarUrl } }).catch(() => undefined);
 
   // Merge into the cached profile so the next cold start shows the new avatar
-  const cachedRaw = await AsyncStorage.getItem('@spendflow_cached_profile').catch(() => null);
+  const cachedRaw = await AsyncStorage.getItem(profileCacheKey(userId)).catch(() => null);
   if (cachedRaw) {
     try {
       const cached = JSON.parse(cachedRaw) as UserProfile;
       if (cached.id === userId) {
         await AsyncStorage.setItem(
-          '@spendflow_cached_profile',
+          profileCacheKey(userId),
           JSON.stringify({ ...cached, avatar_url: avatarUrl }),
         ).catch(() => {});
       }
@@ -347,14 +374,19 @@ export async function ensureProfile(): Promise<UserProfile> {
   const user = sessionData?.session?.user;
 
   if (!user || !user.email) {
-    const cached = await AsyncStorage.getItem('@spendflow_cached_profile').catch(() => null);
+    if (!user) throw new Error('No authenticated user found.');
+    // Session without email (rare) — serve only this user's own cached profile.
+    const cached = await AsyncStorage.getItem(profileCacheKey(user.id)).catch(() => null);
     if (cached) {
       try {
-        return JSON.parse(cached) as UserProfile;
+        const parsed = JSON.parse(cached) as UserProfile;
+        if (parsed?.id === user.id) return parsed;
       } catch {
         // Ignore JSON error
       }
     }
+    const legacy = await readLegacyProfileIfOwned(user.id);
+    if (legacy) return legacy;
     throw new Error('No authenticated user found.');
   }
 
@@ -362,7 +394,7 @@ export async function ensureProfile(): Promise<UserProfile> {
   // locally selected profile values (especially currency) instead of falling back
   // to NPR and visually converting every INR transaction.
   let cachedProfile: UserProfile | null = null;
-  const cachedProfileRaw = await AsyncStorage.getItem('@spendflow_cached_profile').catch(() => null);
+  const cachedProfileRaw = await AsyncStorage.getItem(profileCacheKey(user.id)).catch(() => null);
   if (cachedProfileRaw) {
     try {
       const parsed = JSON.parse(cachedProfileRaw) as UserProfile;
@@ -370,6 +402,9 @@ export async function ensureProfile(): Promise<UserProfile> {
     } catch {
       // Ignore invalid cached profile data.
     }
+  }
+  if (!cachedProfile) {
+    cachedProfile = await readLegacyProfileIfOwned(user.id);
   }
 
   let dbProfile: UserProfile | null = null;
@@ -477,7 +512,7 @@ export async function ensureProfile(): Promise<UserProfile> {
   };
 
   // Cache latest profile
-  await AsyncStorage.setItem('@spendflow_cached_profile', JSON.stringify(result)).catch(() => {});
+  await AsyncStorage.setItem(profileCacheKey(result.id), JSON.stringify(result)).catch(() => {});
 
   // Seed the append-only settings history once so past dates always resolve
   // (best-effort: history failure must never block profile loading)
@@ -615,7 +650,7 @@ export async function updateProfile(input: Partial<Pick<UserProfile, 'display_na
   // budget_currency → preferred_currency conversion in getMonthlyBudget.
   let cachedBudgetCurrency: string | null | undefined;
   try {
-    const cachedRaw = await AsyncStorage.getItem('@spendflow_cached_profile');
+    const cachedRaw = await AsyncStorage.getItem(profileCacheKey(user.id));
     const cached = cachedRaw ? (JSON.parse(cachedRaw) as UserProfile) : null;
     if (cached?.id === user.id) cachedBudgetCurrency = cached.budget_currency ?? undefined;
   } catch {
@@ -637,7 +672,7 @@ export async function updateProfile(input: Partial<Pick<UserProfile, 'display_na
     updated_at: dbProfile?.updated_at ?? new Date().toISOString(),
   };
 
-  await AsyncStorage.setItem('@spendflow_cached_profile', JSON.stringify(result)).catch(() => {});
+  await AsyncStorage.setItem(profileCacheKey(result.id), JSON.stringify(result)).catch(() => {});
   if (result.monthly_budget !== null && result.monthly_budget !== undefined) {
     await AsyncStorage.setItem(`@spendflow_monthly_budget_${user.id}`, String(result.monthly_budget)).catch(() => {});
   }
@@ -645,102 +680,110 @@ export async function updateProfile(input: Partial<Pick<UserProfile, 'display_na
   return result;
 }
 
-export async function deleteAccount() {
-  try {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+/**
+ * Deterministic account deletion.
+ *
+ * 1. The trusted `delete-account` Edge Function (service role, JWT-verified,
+ *    self-delete only) removes: all user-owned rows, private storage objects,
+ *    and finally the Supabase Auth identity itself.
+ * 2. Only when the function reports success does the client clear local state
+ *    and sign out. Any failure throws — the UI must tell the user deletion did
+ *    NOT complete (their account remains intact and the flow is retryable).
+ *
+ * If the Edge Function is unavailable (not deployed / offline), the flow falls
+ * back to the previous client-side cleanup and states clearly that the auth
+ * identity could not be deleted.
+ */
+export async function deleteAccount(): Promise<void> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error('No authenticated user found.');
 
-    if (user) {
-      // 0. Purge private storage (receipts + avatars) before row deletion
-      try {
-        await deleteUserReceipts(user.id);
-      } catch (e) {
-        console.warn('Could not delete receipt files:', e);
+  const functionUrl = `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/delete-account`;
+
+  let serverDeleted = false;
+  try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const accessToken = sessionData.session?.access_token;
+    if (accessToken) {
+      const res = await fetch(functionUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ user_id: user.id }),
+      });
+      const result = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+      if (res.ok && result?.ok) {
+        serverDeleted = true;
+      } else if (res.status !== 404) {
+        // The function exists but the deletion failed — never claim success.
+        throw new Error(
+          'Account deletion did not complete on the server. Nothing was partially lost — please try again.',
+        );
       }
-      try {
+      // 404 = function not deployed: fall through to the client-side path.
+    }
+  } catch (err) {
+    if (err instanceof Error && err.message.startsWith('Account deletion did not complete')) {
+      throw err;
+    }
+    // Network failure — surface it; the server-side state is unchanged.
+    throw new Error('Could not reach the deletion service. Check your connection and try again.');
+  }
+
+  if (!serverDeleted) {
+    // Fallback (function not deployed): clean up via RLS-scoped client deletes.
+    // The auth identity cannot be removed without the service role — say so.
+    // Supabase builders are thenable but not full Promises, so each step wraps
+    // the query in an explicit async function that resolves it.
+    const steps: Array<() => Promise<unknown>> = [
+      async () => { await supabase.from('expenses').delete().eq('user_id', user.id); },
+      async () => { await supabase.from('recurring_rules').delete().eq('user_id', user.id); },
+      async () => { await supabase.from('transfers').delete().eq('user_id', user.id); },
+      async () => { await supabase.from('device_tokens').delete().eq('user_id', user.id); },
+      async () => { await supabase.from('notifications').delete().eq('user_id', user.id); },
+      async () => { await supabase.from('user_settings_history').delete().eq('user_id', user.id); },
+      async () => { await supabase.from('category_budget_history').delete().eq('user_id', user.id); },
+      async () => { await supabase.from('bank_accounts').delete().eq('user_id', user.id); },
+      async () => { await supabase.from('categories').delete().eq('user_id', user.id); },
+      async () => { await supabase.from('users').delete().eq('id', user.id); },
+      async () => { deleteUserReceipts(user.id); },
+      // Best-effort avatar folder purge (same as the Edge Function's path).
+      async () => {
         const { data: avatarFiles } = await supabase.storage.from('avatars').list(user.id, { limit: 100 });
         const files = (avatarFiles ?? []).map((item) => `${user.id}/${item.name}`);
         if (files.length > 0) await supabase.storage.from('avatars').remove(files);
+      },
+    ];
+    const failures: string[] = [];
+    for (const step of steps) {
+      try {
+        await step();
       } catch {
-        // best-effort
-      }
-
-      // 1. Delete user transactions
-      try {
-        await supabase.from('expenses').delete().eq('user_id', user.id);
-      } catch (e) {
-        console.warn('Could not delete expenses:', e);
-      }
-
-      // 2. Delete recurring rules
-      try {
-        await supabase.from('recurring_rules').delete().eq('user_id', user.id);
-      } catch (e) {
-        console.warn('Could not delete recurring_rules:', e);
-      }
-
-      // 2b. Delete transfers, bank accounts, device tokens, notifications and
-      // settings history — previously left orphaned after account deletion.
-      try {
-        await supabase.from('transfers').delete().eq('user_id', user.id);
-      } catch (e) {
-        console.warn('Could not delete transfers:', e);
-      }
-      try {
-        await supabase.from('bank_accounts').delete().eq('user_id', user.id);
-      } catch (e) {
-        console.warn('Could not delete bank_accounts:', e);
-      }
-      try {
-        await supabase.from('device_tokens').delete().eq('user_id', user.id);
-      } catch (e) {
-        console.warn('Could not delete device_tokens:', e);
-      }
-      try {
-        await supabase.from('notifications').delete().eq('user_id', user.id);
-      } catch (e) {
-        console.warn('Could not delete notifications:', e);
-      }
-      try {
-        await supabase.from('user_settings_history').delete().eq('user_id', user.id);
-      } catch (e) {
-        console.warn('Could not delete user_settings_history:', e);
-      }
-      try {
-        await supabase.from('category_budget_history').delete().eq('user_id', user.id);
-      } catch (e) {
-        console.warn('Could not delete category_budget_history:', e);
-      }
-
-      // 3. Delete user categories
-      try {
-        await supabase.from('categories').delete().eq('user_id', user.id);
-      } catch (e) {
-        console.warn('Could not delete categories:', e);
-      }
-
-      // 4. Delete user profile
-      try {
-        await supabase.from('users').delete().eq('id', user.id);
-      } catch (e) {
-        console.warn('Could not delete user profile:', e);
+        failures.push('cleanup');
       }
     }
-  } finally {
-    // 5. Clear all local AsyncStorage data completely
-    try {
-      await AsyncStorage.clear();
-    } catch (e) {
-      console.warn('AsyncStorage clear error:', e);
+    if (failures.length > 0) {
+      throw new Error('Account deletion did not complete. Please try again.');
     }
+    throw new Error(
+      'Application data was removed, but the login identity could not be deleted (deletion service unavailable). Contact support to finish removing the account.',
+    );
+  }
 
-    // 6. Sign out from Supabase Auth
-    try {
-      await supabase.auth.signOut();
-    } catch (e) {
-      console.warn('SignOut error:', e);
-    }
+  // Server-side deletion succeeded → clear ALL local state.
+  try {
+    await AsyncStorage.clear();
+  } catch (e) {
+    console.warn('AsyncStorage clear error:', e);
+  }
+  try {
+    await supabase.auth.signOut();
+  } catch (e) {
+    console.warn('SignOut error:', e);
   }
 }
 

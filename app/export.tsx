@@ -117,6 +117,12 @@ export default function ExportScreen() {
     if (result.canceled) return;
     try {
       const csv = await fetch(result.assets[0].uri).then((response) => response.text());
+      // Bound the parsed payload before any processing — the row cap inside
+      // importExpensesFromCsv only runs AFTER the whole file is in memory.
+      if (csv.length > 2 * 1024 * 1024) {
+        Alert.alert('Import Failed', 'The CSV file is too large (max ~2 MB / 1000 rows). Split the file and try again.');
+        return;
+      }
       const count = await importExpensesFromCsv(profile.id, csv);
       showToast({ message: `${count} transactions were successfully imported.` });
       await expenses.refresh(true);

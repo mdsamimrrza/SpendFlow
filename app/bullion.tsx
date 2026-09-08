@@ -29,7 +29,6 @@ import { useBullionRates } from '@/hooks/useBullionRates';
 import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
 import { useTheme } from '@/hooks/useTheme';
-import { generateBullionHistoricalTrend } from '@/services/bullion';
 import { OfficialNepalGoldRate } from '@/services/nepalGold';
 import { formatMoney } from '@/utils/format';
 
@@ -154,28 +153,27 @@ export default function BullionScreen() {
   const chartGradColor = isGold ? '#F59E0B' : '#64748B';
 
   // ── HISTORICAL TREND DATA FOR SELECTED BENCHMARK ──
-  // Nepal: real stored official daily rates once at least two exist; the
-  // simulated curve is only a visual fallback until history accumulates.
+  // Real, verified official daily rates only. A market without at least two
+  // stored records (India has no official-history source yet) shows the
+  // explicit unavailable-history state below — the app never fabricates
+  // historical price points.
   const historyPoints = useMemo(() => {
-    if (activeMarket === 'NEPAL' && nepalHistory.length >= 2) {
-      const cutoff = Date.now() - trendMonths * 30 * 86_400_000;
-      const points = nepalHistory
-        .filter((r) => new Date(`${r.rate_date}T00:00:00`).getTime() >= cutoff)
-        .map((r) => {
-          const d = new Date(`${r.rate_date}T00:00:00`);
-          return {
-            date: r.rate_date,
-            label: format(d, 'd MMM yyyy'),
-            fullDate: format(d, 'EEE, d MMM yyyy'),
-            price: Math.round(officialBenchmarkPrice(r, selectedKey)),
-          };
-        })
-        .filter((p) => p.price > 0);
-      if (points.length >= 2) return points;
-    }
-    if (!activeBenchmark.price) return [];
-    return generateBullionHistoricalTrend(activeBenchmark.price, trendMonths, activeBenchmark.metal);
-  }, [activeMarket, nepalHistory, trendMonths, selectedKey, activeBenchmark.price, activeBenchmark.metal]);
+    if (activeMarket !== 'NEPAL' || nepalHistory.length < 2) return [];
+    const cutoff = Date.now() - trendMonths * 30 * 86_400_000;
+    const points = nepalHistory
+      .filter((r) => new Date(`${r.rate_date}T00:00:00`).getTime() >= cutoff)
+      .map((r) => {
+        const d = new Date(`${r.rate_date}T00:00:00`);
+        return {
+          date: r.rate_date,
+          label: format(d, 'd MMM yyyy'),
+          fullDate: format(d, 'EEE, d MMM yyyy'),
+          price: Math.round(officialBenchmarkPrice(r, selectedKey)),
+        };
+      })
+      .filter((p) => p.price > 0);
+    return points.length >= 2 ? points : [];
+  }, [activeMarket, nepalHistory, trendMonths, selectedKey]);
 
   const { minPrice, maxPrice } = useMemo(() => {
     if (historyPoints.length === 0) {
@@ -609,45 +607,48 @@ export default function BullionScreen() {
                 {activeBenchmark.label} / {activeBenchmark.unit}
               </Text>
               <Text variant="caption" muted style={{ fontSize: 11 }}>
-                {activeMarket === 'NEPAL' && nepalHistory.length >= 2
-                  ? 'Official Daily Rate History (FENEGOSIDA)'
-                  : 'Live Historical Benchmark Curve'}
+                {historyPoints.length >= 2
+                  ? 'Official Daily Rate History (FENEGOSIDA) — verified rates only'
+                  : t('bullion_history_unavailable') || 'Historical data unavailable'}
               </Text>
             </View>
 
-            {/* Time Filter Pills (1M, 3M, 6M, 1Y) */}
-            <View style={{ flexDirection: 'row', gap: 4 }}>
-              {([1, 3, 6, 12] as TrendPeriod[]).map((m) => {
-                const isActive = trendMonths === m;
-                return (
-                  <Pressable
-                    key={m}
-                    onPress={() => { setTrendMonths(m); setSelectedIndex(null); }}
-                    style={{
-                      paddingHorizontal: 8,
-                      paddingVertical: 3.5,
-                      borderRadius: theme.radius.full,
-                      backgroundColor: isActive ? chartAccentColor : theme.colors.surfaceElevated,
-                      borderWidth: 1,
-                      borderColor: isActive ? chartAccentColor : theme.colors.border,
-                    }}
-                  >
-                    <Text
+            {/* Time Filter Pills (1M, 3M, 6M, 1Y) — real history only */}
+            {historyPoints.length >= 2 ? (
+              <View style={{ flexDirection: 'row', gap: 4 }}>
+                {([1, 3, 6, 12] as TrendPeriod[]).map((m) => {
+                  const isActive = trendMonths === m;
+                  return (
+                    <Pressable
+                      key={m}
+                      onPress={() => { setTrendMonths(m); setSelectedIndex(null); }}
                       style={{
-                        fontSize: 11,
-                        fontWeight: isActive ? '800' : '600',
-                        color: isActive ? '#FFFFFF' : theme.colors.textMuted,
+                        paddingHorizontal: 8,
+                        paddingVertical: 3.5,
+                        borderRadius: theme.radius.full,
+                        backgroundColor: isActive ? chartAccentColor : theme.colors.surfaceElevated,
+                        borderWidth: 1,
+                        borderColor: isActive ? chartAccentColor : theme.colors.border,
                       }}
                     >
-                      {m === 1 ? '1M' : m === 3 ? '3M' : m === 6 ? '6M' : '1Y'}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
+                      <Text
+                        style={{
+                          fontSize: 11,
+                          fontWeight: isActive ? '800' : '600',
+                          color: isActive ? '#FFFFFF' : theme.colors.textMuted,
+                        }}
+                      >
+                        {m === 1 ? '1M' : m === 3 ? '3M' : m === 6 ? '6M' : '1Y'}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            ) : null}
           </View>
 
           {/* SVG Financial Chart with Y-Axis & X-Axis Gridlines */}
+          {historyPoints.length >= 2 ? (
           <View style={{ height: chartHeight, position: 'relative', width: '100%', marginTop: 6 }}>
             <Svg width="100%" height={chartHeight} viewBox={`0 0 ${chartWidth} ${chartHeight}`}>
               <Defs>
@@ -787,8 +788,33 @@ export default function BullionScreen() {
               </View>
             )}
           </View>
+          ) : (
+            <View
+              style={{
+                height: chartHeight,
+                borderRadius: theme.radius.md,
+                borderWidth: 1,
+                borderColor: theme.colors.border,
+                backgroundColor: theme.colors.surfaceElevated,
+                alignItems: 'center',
+                justifyContent: 'center',
+                paddingHorizontal: 24,
+                marginTop: 6,
+                gap: 6,
+              }}
+            >
+              <Clock size={20} color={theme.colors.textMuted} />
+              <Text style={{ fontSize: 13, fontWeight: '800', color: theme.colors.text, textAlign: 'center' }}>
+                {t('bullion_history_unavailable') || 'Historical data unavailable'}
+              </Text>
+              <Text variant="caption" muted style={{ fontSize: 11, textAlign: 'center', lineHeight: 15 }}>
+                {t('bullion_history_unavailable_hint') || 'The official daily rate history for this market is not yet available. Verified rates will appear here as they are published.'}
+              </Text>
+            </View>
+          )}
 
-          {/* Period High & Low Badges */}
+          {/* Period High & Low Badges — only meaningful with real history */}
+          {historyPoints.length >= 2 ? (
           <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
             <View
               style={{
@@ -828,6 +854,7 @@ export default function BullionScreen() {
               </Text>
             </View>
           </View>
+          ) : null}
         </Card>
 
         {/* ── 6. INSTANT METAL VALUATION CALCULATOR ── */}

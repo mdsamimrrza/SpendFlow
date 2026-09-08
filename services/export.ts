@@ -27,6 +27,20 @@ function generateExportFileName(expenses: Expense[], ext: 'pdf' | 'xlsx' | 'csv'
   return `SpendFlow-Statement-${todayStr}.${ext}`;
 }
 
+/**
+ * Neutralizes spreadsheet formula injection: a user-controlled value starting
+ * with =, +, -, @, tab, or CR would otherwise execute as a formula when the
+ * exported CSV/XLSX is opened in Excel/Sheets. Prefixing with a single quote
+ * keeps the text intact but inert. Numeric amount cells never pass through here.
+ */
+function sanitizeSpreadsheetCell(value: unknown): string {
+  const text = String(value ?? '');
+  if (/^[=+\-@\t\r]/.test(text)) {
+    return `'${text}`;
+  }
+  return text;
+}
+
 /** Escapes user-controlled text before it is embedded in the PDF's HTML. */
 function escapeHtml(value: unknown): string {
   return String(value ?? '')
@@ -115,8 +129,8 @@ export async function exportCsv(expenses: Expense[]) {
       expense.currency,
       expense.categories?.name ?? 'Other',
       expense.payment_method,
-      expense.description ?? '',
-      expense.notes ?? '',
+      sanitizeSpreadsheetCell(expense.description ?? ''),
+      sanitizeSpreadsheetCell(expense.notes ?? ''),
     ]),
   ];
 
@@ -162,8 +176,8 @@ export async function exportExcel(expenses: Expense[], currency = 'NPR') {
       { value: expense.currency },
       { value: expense.categories?.name ?? 'Other' },
       { value: expense.payment_method },
-      { value: expense.description ?? '' },
-      { value: expense.notes ?? '' },
+      { value: sanitizeSpreadsheetCell(expense.description ?? '') },
+      { value: sanitizeSpreadsheetCell(expense.notes ?? '') },
     ]),
   ];
 

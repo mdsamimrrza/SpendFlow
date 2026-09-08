@@ -120,10 +120,16 @@ export async function deleteReceipt(stored: string | null | undefined): Promise<
  */
 export async function deleteUserReceipts(userId: string): Promise<void> {
   try {
-    const { data } = await supabase.storage.from(RECEIPT_BUCKET).list(userId, { limit: 1000 });
-    const files = (data ?? []).map((item) => `${userId}/${item.name}`);
-    if (files.length > 0) {
+    // Storage list() returns at most 100 objects per call — paginate until the
+    // folder is exhausted so cleanup never silently stops after batch one.
+    for (let page = 0; page < 50; page++) {
+      const { data } = await supabase.storage
+        .from(RECEIPT_BUCKET)
+        .list(userId, { limit: 100, offset: page * 100 });
+      const files = (data ?? []).map((item) => `${userId}/${item.name}`);
+      if (files.length === 0) return;
       await supabase.storage.from(RECEIPT_BUCKET).remove(files);
+      if (files.length < 100) return;
     }
   } catch {
     // Ignore — storage cleanup is best-effort during account deletion.

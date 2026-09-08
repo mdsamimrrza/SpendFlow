@@ -16,10 +16,12 @@ export function notifyExpensesChanged() {
 
 async function getEffectiveMonthlyBudget(userId?: string, targetCurrency = 'NPR'): Promise<number> {
   try {
-    const profileJson = await AsyncStorage.getItem('@spendflow_cached_profile');
+    const profileJson = userId
+      ? await AsyncStorage.getItem(`@spendflow_cached_profile_${userId}`).catch(() => null)
+      : null;
     if (profileJson) {
       const parsed = JSON.parse(profileJson);
-      if (parsed?.monthly_budget && Number(parsed.monthly_budget) > 0) {
+      if (parsed?.id === userId && parsed?.monthly_budget && Number(parsed.monthly_budget) > 0) {
         // The stored figure is in its own currency (budget_currency) — convert
         // so threshold comparisons match the expense totals in targetCurrency.
         return convertCurrency(Number(parsed.monthly_budget), parsed?.budget_currency || targetCurrency, targetCurrency);
@@ -48,7 +50,9 @@ async function getCycleStartDay(userId?: string): Promise<number> {
       // background budget checks while the UI showed the custom cycle.
       if (day >= 2 && day <= 31) return day;
     }
-    const profileJson = await AsyncStorage.getItem('@spendflow_cached_profile');
+    const profileJson = userId
+      ? await AsyncStorage.getItem(`@spendflow_cached_profile_${userId}`).catch(() => null)
+      : null;
     if (profileJson) {
       const day = Number(JSON.parse(profileJson)?.cycle_start_day);
       if (day >= 2 && day <= 31) return day;
@@ -67,7 +71,9 @@ async function getCycleEndDay(userId?: string): Promise<number | null> {
       const endDay = Number(endRaw);
       if (endDay >= 1 && endDay <= 31) return endDay;
     }
-    const profileJson = await AsyncStorage.getItem('@spendflow_cached_profile');
+    const profileJson = userId
+      ? await AsyncStorage.getItem(`@spendflow_cached_profile_${userId}`).catch(() => null)
+      : null;
     if (profileJson) {
       const endDay = Number(JSON.parse(profileJson)?.cycle_end_day);
       if (endDay >= 1 && endDay <= 31) return endDay;
