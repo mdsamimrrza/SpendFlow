@@ -9,6 +9,8 @@ import { ImageViewerModal } from '@/components/ui/ImageViewerModal';
 import { Text } from '@/components/ui/Text';
 import { useAuth } from '@/hooks/useAuth';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
+import { useRateResolver } from '@/hooks/useRateResolver';
+import { convertExpense, type RateResolver } from '@/services/exchange';
 import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
 import { useReceiptUrl } from '@/hooks/useReceiptUrl';
@@ -29,21 +31,51 @@ function ExpenseDetailModal({
 }) {
   const theme = useTheme();
   const router = useRouter();
-  const { convert } = useExchangeRates();
   const { t } = useLanguage();
   const [fullImageModalUrl, setFullImageModalUrl] = useState<string | null>(null);
 
   // Receipts live in a private bucket — resolve stored path/URL to a signed URL.
   const receiptUrl = useReceiptUrl(expense?.receipt_image_url);
 
+  // Snapshot-aware: the row's own exchange_rate_to_usd (frozen at creation)
+  // and its transaction-date rate — never today's market rate.
+  const [convertedAmount, setConvertedAmount] = useState<number | null>(
+    expense && expense.currency && expense.currency !== currency
+      ? null
+      : expense?.amount != null
+        ? Number(expense.amount)
+        : null,
+  );
+  useEffect(() => {
+    let cancelled = false;
+    if (!expense || !isDifferentCurrency) {
+      setConvertedAmount(expense ? Number(expense.amount) : null);
+      return;
+    }
+    convertExpense(
+      {
+        amount: Number(expense.amount),
+        currency: expense.currency,
+        date: expense.date,
+        exchange_rate_to_usd: expense.exchange_rate_to_usd,
+      },
+      currency,
+    )
+      .then((v) => {
+        if (!cancelled) setConvertedAmount(v);
+      })
+      .catch(() => {
+        if (!cancelled) setConvertedAmount(Number(expense.amount));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [expense?.id, expense?.amount, expense?.currency, expense?.date, expense?.exchange_rate_to_usd, currency]);
+
   if (!expense) return null;
 
   const isIncome = (expense.type || 'expense') === 'income';
   const isDifferentCurrency = expense.currency && expense.currency !== currency;
-  const convertedAmount = isDifferentCurrency
-    ? convert(Number(expense.amount), expense.currency, currency)
-    : Number(expense.amount);
-
   return (
     <>
       <Modal visible transparent animationType="slide" onRequestClose={onClose}>
@@ -167,7 +199,7 @@ function ExpenseDetailModal({
                       maxWidth: '100%',
                     }}
                   >
-                  {formatMoney(convertedAmount, currency)}
+                  {formatMoney(convertedAmount ?? Number(expense.amount), currency)}
                 </Text>
                 {isDifferentCurrency ? (
                   <Text style={{ fontWeight: '600', fontSize: 13, color: theme.colors.textMuted, marginTop: 2 }}>
@@ -375,17 +407,22 @@ export function CategoryBreakdown({
   expenses,
   targetCurrency,
   paymentMethods,
+  resolver = null,
 }: {
   expenses: Expense[];
   targetCurrency?: string;
   paymentMethods?: { method: string; total: number; count: number; pct: number }[];
+  /** Snapshot-aware resolver — each row converts at its own date. */
+  resolver?: RateResolver | null;
 }) {
   const theme = useTheme();
   const { profile } = useAuth();
-  const { rates, convert } = useExchangeRates();
+  const { rates } = useExchangeRates();
   const { t } = useLanguage();
   const { isPrivacyMode } = usePrivacy();
   const currency = targetCurrency ?? profile?.preferred_currency ?? 'NPR';
+  const rateResolver = useRateResolver(expenses, currency);
+  const activeResolver = resolver ?? rateResolver;
 
   const [isFlipped, setIsFlipped] = useState(false);
   const [flipCount, setFlipCount] = useState(0);
@@ -452,14 +489,14 @@ export function CategoryBreakdown({
   // Pre-compute breakdown data for BOTH flow types so each card face renders independently
   const dataByType = useMemo(() => {
     const build = (ft: 'expense' | 'income') =>
-      groupByCategory(expenses, currency, rates, ft)
+      (activeResolver ? groupByCategory(expenses, currency, activeResolver, ft) : [])
         .slice(0, 6)
         .map((item, idx) => ({
           ...item,
           color: VIBRANT_PALETTE[idx % VIBRANT_PALETTE.length],
         }));
     return { expense: build('expense'), income: build('income') };
-  }, [expenses, currency, rates]);
+  }, [expenses, currency, activeResolver]);
 
   // Filtered transactions for selected category, per flow type
   const filteredByType = useMemo(() => {
@@ -697,8 +734,8 @@ export function CategoryBreakdown({
               <View style={{ gap: theme.spacing.xs }}>
                 {filteredCategoryExpenses.map((expense) => {
                   const isDifferent = expense.currency && expense.currency !== currency;
-                  const converted = isDifferent
-                    ? convert(Number(expense.amount), expense.currency, currency)
+                  const converted = isDifferent && activeResolver
+                    ? activeResolver.convert(Number(expense.amount), expense.currency, currency, expense.date)
                     : Number(expense.amount);
 
                   return (

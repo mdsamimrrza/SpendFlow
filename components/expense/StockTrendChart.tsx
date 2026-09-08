@@ -6,7 +6,8 @@ import { addDays, format, parseISO } from 'date-fns';
 import { ArrowDownRight, ArrowUpRight, Check, ChevronDown, Sparkles, TrendingUp, Wallet } from 'lucide-react-native';
 import { Card } from '@/components/ui/Card';
 import { Text } from '@/components/ui/Text';
-import { useExchangeRates } from '@/hooks/useExchangeRates';
+import { useRateResolver } from '@/hooks/useRateResolver';
+import type { RateResolver } from '@/services/exchange';
 import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
 import { useTheme } from '@/hooks/useTheme';
@@ -74,16 +75,20 @@ export function StockTrendChart({
   targetCurrency = 'NPR',
   cycleStartDay = 1,
   cycleEndDay = null,
+  resolver = null,
 }: {
   expenses: Expense[];
   targetCurrency?: string;
   /** Active financial-cycle window (source of truth: currentMonthRange). */
   cycleStartDay?: number;
   cycleEndDay?: number | null;
+  /** Snapshot-aware resolver — each row converts at its own date. */
+  resolver?: RateResolver | null;
 }) {
   const theme = useTheme();
   const { t, language } = useLanguage();
-  const { convert } = useExchangeRates();
+  const builtResolver = useRateResolver(expenses, targetCurrency);
+  const activeResolver = resolver ?? builtResolver;
   usePrivacy();
   const { width } = useWindowDimensions();
   const [viewMode, setViewMode] = useState<FlowViewMode>('both');
@@ -145,7 +150,9 @@ export function StockTrendChart({
     const now = new Date();
     const resultPoints: FlowDataPoint[] = [];
     const getAmount = (e: Expense) =>
-      convert(Number(e.amount), e.currency || 'NPR', targetCurrency);
+      activeResolver
+        ? activeResolver.convert(Number(e.amount), e.currency || 'NPR', targetCurrency, e.date)
+        : 0;
 
     const expenseOnly = expenses.filter((e) => (e.type || 'expense') === 'expense');
     const incomeOnly = expenses.filter((e) => e.type === 'income');
@@ -384,7 +391,7 @@ export function StockTrendChart({
     // Financial-cycle awareness: the 1M/6M windows follow the active custom
     // cycle (source of truth: currentMonthRange). Calendar cycles keep the
     // original calendar-month bucketing exactly.
-  }, [expenses, filter, targetCurrency, convert, language, locale, isCalendarCycle, cycleStartDay, cycleEndDay]);
+  }, [expenses, filter, targetCurrency, activeResolver, language, locale, isCalendarCycle, cycleStartDay, cycleEndDay]);
 
   const maxAmount = useMemo(() => {
     if (viewMode === 'expense') {

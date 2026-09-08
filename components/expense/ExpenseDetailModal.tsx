@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Image,
   Modal,
@@ -25,10 +25,10 @@ import { CategoryIcon } from '@/components/ui/CategoryIcon';
 import { ImageViewerModal } from '@/components/ui/ImageViewerModal';
 import { Text } from '@/components/ui/Text';
 import { useAuth } from '@/hooks/useAuth';
-import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
 import { useReceiptUrl } from '@/hooks/useReceiptUrl';
+import { convertExpense } from '@/services/exchange';
 import { useTheme } from '@/hooks/useTheme';
 import { Expense } from '@/types';
 import { formatMoney, formatTime12 } from '@/utils/format';
@@ -48,7 +48,6 @@ export function ExpenseDetailModal({
 }: ExpenseDetailModalProps) {
   const theme = useTheme();
   const { profile } = useAuth();
-  const { convert } = useExchangeRates();
   const { isPrivacyMode } = usePrivacy();
   const { t } = useLanguage();
   const router = useRouter();
@@ -58,14 +57,50 @@ export function ExpenseDetailModal({
   // Receipts live in a private bucket — resolve stored path/URL to a signed URL.
   const receiptUrl = useReceiptUrl(expense?.receipt_image_url);
 
+  // Snapshot-aware conversion: the row's own exchange_rate_to_usd (frozen at
+  // creation) and its transaction-date rate — never today's market rate.
+  const preferredCurrency = profile?.preferred_currency ?? 'NPR';
+  const [convertedAmount, setConvertedAmount] = useState<number | null>(
+    expense && expense.currency && expense.currency !== preferredCurrency
+      ? null
+      : expense?.amount != null
+        ? Number(expense.amount)
+        : null,
+  );
+  useEffect(() => {
+    let cancelled = false;
+    if (!expense) {
+      setConvertedAmount(null);
+      return;
+    }
+    if (!expense.currency || expense.currency === preferredCurrency) {
+      setConvertedAmount(Number(expense.amount));
+      return;
+    }
+    convertExpense(
+      {
+        amount: Number(expense.amount),
+        currency: expense.currency,
+        date: expense.date,
+        exchange_rate_to_usd: expense.exchange_rate_to_usd,
+      },
+      preferredCurrency,
+    )
+      .then((v) => {
+        if (!cancelled) setConvertedAmount(v);
+      })
+      .catch(() => {
+        if (!cancelled) setConvertedAmount(Number(expense.amount));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [expense, preferredCurrency]);
+
   if (!expense) return null;
 
   const isIncome = expense.type === 'income';
-  const preferredCurrency = profile?.preferred_currency ?? 'NPR';
   const isDifferentCurrency = expense.currency && expense.currency !== preferredCurrency;
-  const convertedAmount = isDifferentCurrency
-    ? convert(Number(expense.amount), expense.currency, preferredCurrency)
-    : Number(expense.amount);
 
   const categoryName = expense.categories?.name || (isIncome ? 'Income Source' : 'Expense');
   const categoryIcon = expense.categories?.icon || (isIncome ? 'trending-up' : 'tag');
@@ -89,7 +124,7 @@ export function ExpenseDetailModal({
 
   const formattedAmount = isPrivacyMode
     ? '••••••'
-    : `${isIncome ? '+' : '-'}${formatMoney(convertedAmount, preferredCurrency)}`;
+    : `${isIncome ? '+' : '-'}${formatMoney(convertedAmount ?? Number(expense.amount), preferredCurrency)}`;
 
   return (
     <>

@@ -8,11 +8,20 @@ const PEGGED_USD_PER_UNIT: Record<string, number> = {
   SAR: 1 / 3.75,
 };
 
+// Nepal Rastra Bank peg (in force since 1993): 1 INR = 1.60 NPR, exact and
+// permanent. NPR is NOT a floating currency in this app: it never gets
+// fetched from a rate API, cached in exchange_rates, or read from historical
+// rows. Every NPR rate is derived from the same date's INR rate:
+//   usdPerNpr = usdPerInr / 1.6
+// INR itself floats against USD normally (live / historical DB / fallback).
+export const NPR_PER_INR = 1.6;
+
 // Last-resort approximation when neither DB cache nor the API can answer.
-// Pegged currencies (QAR/AED/SAR) are resolved by PEGGED_USD_PER_UNIT instead.
+// Pegged currencies (QAR/AED/SAR) are resolved by PEGGED_USD_PER_UNIT instead,
+// and NPR is derived from INR (see fallbackUsdPerUnit) — so NPR has no entry
+// here by design.
 const FALLBACK_UNITS_PER_USD: Record<string, number> = {
   USD: 1,
-  NPR: 133.5,
   INR: 83.5,
   QAR: 3.64,
   GBP: 0.79,
@@ -74,6 +83,11 @@ function round2(n: number): number {
 }
 
 function fallbackUsdPerUnit(currency: string): number {
+  // NPR is pegged to INR — derive from INR's fallback, never an NPR entry.
+  if (currency === 'NPR') {
+    const inr = FALLBACK_UNITS_PER_USD['INR'];
+    return inr && inr > 0 ? (1 / inr) / NPR_PER_INR : 1;
+  }
   const units = FALLBACK_UNITS_PER_USD[currency];
   return units && units > 0 ? 1 / units : 1;
 }
@@ -120,6 +134,9 @@ export function createExchangeService(client: SupabaseClient) {
     if (!error && data) {
       const byCurrency = new Map<string, { date: string; rate: number }[]>();
       for (const row of data as { currency: string; date: string; rate_to_usd: number | null }[]) {
+        // Nepal–India peg: stored NPR rows predate the peg and float — never
+        // consume them; NPR is always derived from INR.
+        if (row.currency === 'NPR') continue;
         const rate = Number(row.rate_to_usd);
         if (!(rate > 0)) continue;
         const list = byCurrency.get(row.currency) ?? [];
@@ -164,6 +181,11 @@ export function createExchangeService(client: SupabaseClient) {
         const data = await res.json();
         if (data?.rates && typeof data.rates === 'object') {
           latestUnits = data.rates as Record<string, number>;
+          // Nepal–India peg: never consume a market NPR rate — derive it.
+          const inrPerUsd = Number(latestUnits.INR);
+          if (Number.isFinite(inrPerUsd) && inrPerUsd > 0) {
+            latestUnits.NPR = inrPerUsd * NPR_PER_INR;
+          }
           latestAt = Date.now();
           return latestUnits;
         }
@@ -176,6 +198,16 @@ export function createExchangeService(client: SupabaseClient) {
 
   async function getRate(currency: string, date: string): Promise<number> {
     const ccy = (currency || 'USD').toUpperCase();
+    // Nepal–India peg: NPR is derived from the same date's INR rate — never
+    // fetched, never read from exchange_rates, never upserted.
+    if (ccy === 'NPR') {
+      const rememberedNpr = recallRate('NPR', date);
+      if (rememberedNpr !== null) return rememberedNpr;
+      const inr = await getRate('INR', date);
+      const nprRate = round8(inr / NPR_PER_INR);
+      rememberRate('NPR', date, nprRate);
+      return nprRate;
+    }
     if (PEGGED_USD_PER_UNIT[ccy] !== undefined) return PEGGED_USD_PER_UNIT[ccy];
     const remembered = recallRate(ccy, date);
     if (remembered !== null) return remembered;
@@ -244,8 +276,10 @@ export function createExchangeService(client: SupabaseClient) {
     const to = (toCurrency || 'USD').toUpperCase();
     if (from === to || !amount) return amount;
     const toRate = await getRate(to, expense.date);
+    // NPR rows may carry pre-peg floating snapshots — those are wrong under
+    // the fixed 1 INR = 1.60 NPR rule, so NPR never uses a stored snapshot.
     const snapshot = Number(expense.exchange_rate_to_usd);
-    if (snapshot > 0) return round2((amount * snapshot) / toRate);
+    if (snapshot > 0 && from !== 'NPR') return round2((amount * snapshot) / toRate);
     const fromRate = await getRate(from, expense.date);
     return round2((amount * fromRate) / toRate);
   }
@@ -260,16 +294,26 @@ export function createExchangeService(client: SupabaseClient) {
     for (const row of rows) {
       const ccy = (row.currency || 'USD').toUpperCase();
       const snap = Number(row.exchange_rate_to_usd);
-      if (snap > 0) {
+      // Nepal–India peg: NPR snapshots predate the peg — never used; NPR is
+      // derived from the same date's INR rate below.
+      if (snap > 0 && ccy !== 'NPR') {
         cache.set(key(ccy, row.date), snap);
-      } else if (PEGGED_USD_PER_UNIT[ccy] === undefined) {
+      } else if (PEGGED_USD_PER_UNIT[ccy] === undefined && ccy !== 'NPR') {
         missing.set(key(ccy, row.date), { c: ccy, d: row.date });
+      }
+      // NPR is derived from INR, so preload INR for every NPR transaction
+      // date rather than falling back to a present-day/static INR rate.
+      if (ccy === 'NPR') {
+        missing.set(key('INR', row.date), { c: 'INR', d: row.date });
       }
       if (ccy !== target) rowsByTargetDate.add(row.date);
     }
     for (const d of rowsByTargetDate) {
-      if (PEGGED_USD_PER_UNIT[target] === undefined) {
+      if (PEGGED_USD_PER_UNIT[target] === undefined && target !== 'NPR') {
         missing.set(key(target, d), { c: target, d });
+      }
+      if (target === 'NPR') {
+        missing.set(key('INR', d), { c: 'INR', d });
       }
     }
 
@@ -295,11 +339,15 @@ export function createExchangeService(client: SupabaseClient) {
       }
     }
 
-    // Still nothing? One live-rates call answers every remaining currency.
-    if (missing.size) {
+    // A live market quote is valid only for today/future values. Historical
+    // records must never be silently re-valued using today's quote.
+    const liveMissing = new Map(
+      [...missing].filter(([, pair]) => pair.d >= todayIso()),
+    );
+    if (liveMissing.size) {
       const latest = await loadLatestUnitsPerUsd();
       if (latest) {
-        for (const [k, pair] of [...missing]) {
+        for (const [k, pair] of liveMissing) {
           const units = Number(latest[pair.c]);
           if (units > 0) {
             const rate = round8(1 / units);
@@ -311,6 +359,17 @@ export function createExchangeService(client: SupabaseClient) {
       }
     }
 
+    // Nepal–India peg: any remaining NPR entries derive from the INR rate at
+    // the same date (INR entries were filled by the memory/DB/live passes
+    // above), so the NPR↔INR cross-rate is exactly 1.60 on every date.
+    for (const [k, pair] of [...missing]) {
+      if (pair.c !== 'NPR') continue;
+      const inr = cache.get(key('INR', pair.d));
+      const inrRate = inr && inr > 0 ? inr : fallbackUsdPerUnit('INR');
+      cache.set(k, round8(inrRate / NPR_PER_INR));
+      missing.delete(k);
+    }
+
     // Anything left falls back to static approximations.
     for (const [k, pair] of missing) {
       cache.set(k, fallbackUsdPerUnit(pair.c));
@@ -318,6 +377,11 @@ export function createExchangeService(client: SupabaseClient) {
 
     const usdPerUnit = (currency: string, date: string): number => {
       const ccy = (currency || 'USD').toUpperCase();
+      if (ccy === 'NPR') {
+        const inr = cache.get(key('INR', date));
+        const inrRate = inr && inr > 0 ? inr : fallbackUsdPerUnit('INR');
+        return round8(inrRate / NPR_PER_INR);
+      }
       if (PEGGED_USD_PER_UNIT[ccy] !== undefined) return PEGGED_USD_PER_UNIT[ccy];
       return cache.get(key(ccy, date)) ?? fallbackUsdPerUnit(ccy);
     };

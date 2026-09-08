@@ -3,7 +3,8 @@ import { getKathmanduToday, OfficialNepalGoldRate } from '@/services/nepalGold';
 
 const DEFAULT_RATES: Record<string, number> = {
   USD: 1.0,
-  NPR: 133.5,
+  // 83.5 INR/USD × 1.60 (NRB peg) — kept peg-consistent by construction.
+  NPR: 133.6,
   INR: 83.5,
   QAR: 3.64,
   GBP: 0.79,

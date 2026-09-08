@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, PropsWithChildren, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { NPR_PER_INR } from '@/services/exchange';
 
 const RATES_STORAGE_KEY = 'spendflow_exchange_rates_cache';
 const CACHE_EXPIRY_MS = 6 * 60 * 60 * 1000; // 6 hours
@@ -7,7 +8,8 @@ const CACHE_EXPIRY_MS = 6 * 60 * 60 * 1000; // 6 hours
 // Baseline fallback rates relative to 1 USD
 const DEFAULT_RATES: Record<string, number> = {
   USD: 1.0,
-  NPR: 133.5,
+  // 83.5 INR/USD × 1.60 (NRB peg) — kept peg-consistent by construction.
+  NPR: 133.6,
   INR: 83.5,
   QAR: 3.64,
   GBP: 0.79,
@@ -25,6 +27,17 @@ const DEFAULT_RATES: Record<string, number> = {
 };
 
 let inMemoryRates: Record<string, number> = { ...DEFAULT_RATES };
+
+// Nepal Rastra Bank peg (1 INR = 1.60 NPR, fixed since 1993): the live API's
+// NPR rate is a floating-market value and must never be consumed as-is —
+// every rate map that leaves this module derives NPR from its INR rate.
+function applyNprPeg(rates: Record<string, number>): Record<string, number> {
+  const inrPerUsd = Number(rates.INR);
+  if (Number.isFinite(inrPerUsd) && inrPerUsd > 0) {
+    rates.NPR = inrPerUsd * NPR_PER_INR;
+  }
+  return rates;
+}
 // Truth about where inMemoryRates came from. 'live' = fresh provider data;
 // 'cached' = stored provider data past its TTL; 'estimated' = hardcoded
 // offline baseline only. Consumers surface this instead of silently presenting
@@ -48,7 +61,7 @@ async function fetchExchangeRates(): Promise<Record<string, number>> {
       const parsed: RatesCache = JSON.parse(rawCache);
       const isFresh = Date.now() - parsed.timestamp < CACHE_EXPIRY_MS;
       if (parsed.rates && Object.keys(parsed.rates).length > 0) {
-        inMemoryRates = { ...DEFAULT_RATES, ...parsed.rates };
+        inMemoryRates = applyNprPeg({ ...DEFAULT_RATES, ...parsed.rates });
         inMemoryFetchedAt = parsed.timestamp;
         inMemoryStatus = isFresh ? 'live' : 'cached';
         if (isFresh) {
@@ -81,10 +94,10 @@ async function fetchExchangeRates(): Promise<Record<string, number>> {
     }
 
     if (data && data.rates) {
-      const newRates: Record<string, number> = {
+      const newRates: Record<string, number> = applyNprPeg({
         ...DEFAULT_RATES,
         ...data.rates,
-      };
+      });
 
       inMemoryRates = newRates;
       inMemoryStatus = 'live';

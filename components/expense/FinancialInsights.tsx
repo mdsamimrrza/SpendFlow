@@ -16,7 +16,7 @@ import {
 import { Card } from '@/components/ui/Card';
 import { Text } from '@/components/ui/Text';
 import { CategoryIcon } from '@/components/ui/CategoryIcon';
-import { useExchangeRates } from '@/hooks/useExchangeRates';
+import { useRateResolver } from '@/hooks/useRateResolver';
 import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
 import { useTheme } from '@/hooks/useTheme';
@@ -33,7 +33,7 @@ interface FinancialInsightsProps {
 export function FinancialInsights({ expenses, targetCurrency, flowType, onFlipFlowType }: FinancialInsightsProps) {
   const theme = useTheme();
   const { t, language } = useLanguage();
-  const { convert } = useExchangeRates();
+  const rateResolver = useRateResolver(expenses, targetCurrency);
   const { isPrivacyMode } = usePrivacy();
   const [weekOffset, setWeekOffset] = useState<number>(0);
   const [selectedDay, setSelectedDay] = useState<{ name: string; full: string; total: number; expenses: Expense[] } | null>(null);
@@ -115,16 +115,16 @@ export function FinancialInsights({ expenses, targetCurrency, flowType, onFlipFl
   );
 
   const getAmount = (e: Expense) =>
-    convert(Number(e.amount), e.currency || 'NPR', targetCurrency);
+    rateResolver ? rateResolver.convert(Number(e.amount), e.currency || 'NPR', targetCurrency, e.date) : 0;
 
   const totalSpent = useMemo(
     () => activeWeekExpenses.reduce((sum, e) => sum + getAmount(e), 0),
-    [activeWeekExpenses, targetCurrency, convert],
+    [activeWeekExpenses, targetCurrency, rateResolver],
   );
 
   const totalIncome = useMemo(
     () => activeWeekIncome.reduce((sum, e) => sum + getAmount(e), 0),
-    [activeWeekIncome, targetCurrency, convert],
+    [activeWeekIncome, targetCurrency, rateResolver],
   );
 
   const activeTotal = flowType === 'income' ? totalIncome : totalSpent;
@@ -159,7 +159,7 @@ export function FinancialInsights({ expenses, targetCurrency, flowType, onFlipFl
       peakDay: peakDay?.total > 0 ? peakDay : null,
       peakDayPct: peakDay?.total > 0 && activeTotal > 0 ? Math.round((peakDay.total / activeTotal) * 100) : 0,
     };
-  }, [daysWithDates, activeTargetItems, targetCurrency, convert, activeTotal]);
+  }, [daysWithDates, activeTargetItems, targetCurrency, rateResolver, activeTotal]);
 
   // 4. Time of Day Spending/Income Quadrants (Morning, Afternoon, Evening, Night) for active week
   const timeOfDayStats = useMemo(() => {
@@ -202,7 +202,7 @@ export function FinancialInsights({ expenses, targetCurrency, flowType, onFlipFl
       })),
       peakQuadrant: peakQuadrant?.total > 0 ? peakQuadrant : null,
     };
-  }, [activeTargetItems, targetCurrency, convert, activeTotal]);
+  }, [activeTargetItems, targetCurrency, rateResolver, activeTotal]);
 
   function changeWeek(delta: number) {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);

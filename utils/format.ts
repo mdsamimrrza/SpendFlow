@@ -1,12 +1,14 @@
 import { endOfMonth, format, parseISO, startOfMonth, subMonths } from 'date-fns';
 import { CURRENCY_DETAILS } from '@/constants/app';
+import { NPR_PER_INR, type RateResolver } from '@/services/exchange';
 import { Expense, PeriodKey, UserProfile } from '@/types';
 
 let globalPrivacyMode = false;
 
 const DEFAULT_RATES: Record<string, number> = {
   USD: 1.0,
-  NPR: 133.5,
+  // 83.5 INR/USD × 1.60 (NRB peg) — kept peg-consistent by construction.
+  NPR: 133.6,
   INR: 83.5,
   QAR: 3.64,
   GBP: 0.79,
@@ -28,6 +30,15 @@ export function convertCurrency(
   rates: Record<string, number> = DEFAULT_RATES,
 ): number {
   if (fromCurrency === toCurrency || !amount) return amount;
+
+  // Nepal–India peg (1 INR = 1.60 NPR, NRB fixed rate since 1993): the cross
+  // rate is exact and permanent — never market-derived, never drifted.
+  if (fromCurrency === 'NPR' && toCurrency === 'INR') {
+    return Math.round((amount / NPR_PER_INR) * 100) / 100;
+  }
+  if (fromCurrency === 'INR' && toCurrency === 'NPR') {
+    return Math.round(amount * NPR_PER_INR * 100) / 100;
+  }
 
   const fromRate = rates[fromCurrency] || DEFAULT_RATES[fromCurrency] || 1;
   const toRate = rates[toCurrency] || DEFAULT_RATES[toCurrency] || 1;
@@ -57,11 +68,106 @@ export function getMonthlyBudget(
     preferred_currency?: string;
   } | null,
   rates?: Record<string, number>,
+  targetCurrency?: string,
 ): number {
   const raw = profile?.monthly_budget ? Number(profile.monthly_budget) : 0;
   if (!raw || raw <= 0) return 0;
   const from = (profile?.budget_currency || profile?.preferred_currency || 'NPR').toUpperCase();
-  const to = (profile?.preferred_currency || 'NPR').toUpperCase();
+  const to = (targetCurrency || profile?.preferred_currency || 'NPR').toUpperCase();
+
+  return from === to ? raw : convertCurrency(raw, from, to, rates);
+}
+
+export interface BudgetMetrics {
+  spent: number;
+  budget: number;
+  remaining: number;
+  percentage: number;
+  isOverBudget: boolean;
+  ratio: number;
+}
+
+/**
+ * Calculates financial budget metrics (spent, budget, remaining, percentage, ratio)
+ * with mathematical invariance across display currencies.
+ * The budget amount converts using Today's Current/Live Rate (rates), while the percentage
+ * is evaluated in canonical base USD so switching display currency never alters percentages.
+ */
+export function calculateBudgetMetrics(
+  expenses: Expense[],
+  profile?: {
+    monthly_budget?: number | null;
+    budget_currency?: string | null;
+    preferred_currency?: string;
+  } | null,
+  targetCurrency = 'NPR',
+  resolver?: RateResolver | null,
+  rates?: Record<string, number>,
+): BudgetMetrics {
+  const rawBudget = profile?.monthly_budget ? Number(profile.monthly_budget) : 0;
+  const budgetCurrency = (profile?.budget_currency || profile?.preferred_currency || 'NPR').toUpperCase();
+  const displayCurrency = targetCurrency.toUpperCase();
+
+  if (!rawBudget || rawBudget <= 0) {
+    const spent = resolver
+      ? sumExpenses(expenses, displayCurrency, resolver, 'expense')
+      : 0;
+    return {
+      spent,
+      budget: 0,
+      remaining: 0,
+      percentage: 0,
+      isOverBudget: false,
+      ratio: 0,
+    };
+  }
+
+  // 1. Canonical ratio: convert spending into budget_currency via the same RateResolver
+  //    snapshot rates, then divide by rawBudget (already in budget_currency).
+  //    Both sides share the SAME currency AND the SAME rate source — ratio is
+  //    identical regardless of which display currency the user selects.
+  const spentInBudgetCcy = resolver
+    ? sumExpenses(expenses, budgetCurrency, resolver, 'expense')
+    : 0;
+
+  const ratio = rawBudget > 0 ? spentInBudgetCcy / rawBudget : 0;
+  const percentage = Math.round(ratio * 100);
+  const isOverBudget = rawBudget > 0 && spentInBudgetCcy > rawBudget;
+
+  // 2. Display formatting in targetCurrency using Live Rates for budget and RateResolver for spent
+  const budget = getMonthlyBudget(profile, rates, displayCurrency);
+  const spent = resolver
+    ? sumExpenses(expenses, displayCurrency, resolver, 'expense')
+    : 0;
+  const remaining = Math.max(0, budget - spent);
+
+  return {
+    spent,
+    budget,
+    remaining,
+    percentage,
+    isOverBudget,
+    ratio,
+  };
+}
+
+/**
+ * Returns a category's budget converted into the target currency using Today's Current/Live Rate.
+ */
+export function getCategoryBudget(
+  rawCategoryBudget: number | null | undefined,
+  profile?: {
+    budget_currency?: string | null;
+    preferred_currency?: string;
+  } | null,
+  targetCurrency = 'NPR',
+  rates?: Record<string, number>,
+): number {
+  const raw = rawCategoryBudget ? Number(rawCategoryBudget) : 0;
+  if (!raw || raw <= 0) return 0;
+  const from = (profile?.budget_currency || profile?.preferred_currency || 'NPR').toUpperCase();
+  const to = targetCurrency.toUpperCase();
+
   return from === to ? raw : convertCurrency(raw, from, to, rates);
 }
 
@@ -337,10 +443,16 @@ export function filterExpensesByPeriod(
   return expenses;
 }
 
+/**
+ * Sums expenses (or income) converting each line item at ITS OWN date via the
+ * snapshot-aware RateResolver (built with buildRateResolver) — the same
+ * conversion history.tsx uses. A resolver is required so old transactions can
+ * never silently be re-valued with today's market rate.
+ */
 export function sumExpenses(
   expenses: Expense[],
   targetCurrency = 'NPR',
-  rates?: Record<string, number>,
+  resolver: RateResolver | null = null,
   typeFilter: 'all' | 'expense' | 'income' = 'expense',
 ) {
   return expenses.reduce((total, expense) => {
@@ -349,26 +461,27 @@ export function sumExpenses(
     if (typeFilter === 'income' && !isIncome) return total;
 
     const amount = Number(expense.amount) || 0;
-    const converted = convertCurrency(amount, expense.currency || 'NPR', targetCurrency, rates);
-    return total + converted;
+    return resolver
+      ? total + resolver.convert(amount, expense.currency || 'NPR', targetCurrency, expense.date)
+      : total;
   }, 0);
 }
 
 export function sumIncome(
   expenses: Expense[],
   targetCurrency = 'NPR',
-  rates?: Record<string, number>,
+  resolver: RateResolver | null = null,
 ) {
-  return sumExpenses(expenses, targetCurrency, rates, 'income');
+  return sumExpenses(expenses, targetCurrency, resolver, 'income');
 }
 
 export function calculateCashFlow(
   expenses: Expense[],
   targetCurrency = 'NPR',
-  rates?: Record<string, number>,
+  resolver: RateResolver | null = null,
 ) {
-  const totalIncome = sumIncome(expenses, targetCurrency, rates);
-  const totalExpense = sumExpenses(expenses, targetCurrency, rates, 'expense');
+  const totalIncome = sumIncome(expenses, targetCurrency, resolver);
+  const totalExpense = sumExpenses(expenses, targetCurrency, resolver, 'expense');
   const netSavings = totalIncome - totalExpense;
   const savingsRate = totalIncome > 0 ? Math.max(0, Math.round((netSavings / totalIncome) * 100)) : 0;
 
@@ -398,7 +511,7 @@ export function formatBudgetPercent(spent: number, budget: number): string {
 export function groupByCategory(
   expenses: Expense[],
   targetCurrency = 'NPR',
-  rates?: Record<string, number>,
+  resolver: RateResolver | null = null,
   typeFilter: 'all' | 'expense' | 'income' = 'expense',
 ) {
   const map = new Map<string, { label: string; icon: string; color: string; total: number }>();
@@ -408,7 +521,11 @@ export function groupByCategory(
     if (typeFilter === 'income' && !isIncome) return;
 
     const amount = Number(expense.amount) || 0;
-    const converted = convertCurrency(amount, expense.currency || 'NPR', targetCurrency, rates);
+    // Category aggregates are historical financial values. Never substitute a
+    // current market rate while the snapshot resolver is still loading.
+    const converted = resolver
+      ? resolver.convert(amount, expense.currency || 'NPR', targetCurrency, expense.date)
+      : 0;
     const categoryName = expense.categories?.name ?? 'Other';
     const current = map.get(categoryName) ?? {
       label: categoryName,

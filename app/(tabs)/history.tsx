@@ -60,7 +60,6 @@ import { Text } from '@/components/ui/Text';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
 import { SORT_OPTIONS } from '@/constants/app';
 import { useAuth } from '@/hooks/useAuth';
-import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { useExpenses } from '@/hooks/useExpenses';
 import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
@@ -74,7 +73,6 @@ type HistoryPeriod = 'all' | 'today' | 'week' | 'month' | 'custom';
 
 export default function HistoryScreen() {
   const { profile, session, refreshProfile } = useAuth();
-  const { convert } = useExchangeRates();
   const { t, language } = useLanguage();
   const { isPrivacyMode } = usePrivacy();
   const theme = useTheme();
@@ -215,7 +213,10 @@ export default function HistoryScreen() {
       default:
         return { fromDate: undefined, toDate: undefined };
     }
-  }, [period, customRange]);
+  // The profile arrives asynchronously. Include its cycle window so the
+  // initial calendar-month query is replaced with the actual custom cycle
+  // (for example Aug 31–Sep 30) once profile data is available.
+  }, [period, customRange, profile?.cycle_start_day, profile?.cycle_end_day]);
 
   const filters = useMemo(
     () => ({
@@ -272,9 +273,9 @@ export default function HistoryScreen() {
       if (rateResolver) {
         return rateResolver.convert(Number(expense.amount), expense.currency || 'NPR', preferredCurrency, expense.date);
       }
-      return convert(Number(expense.amount), expense.currency || 'NPR', preferredCurrency);
+      return 0;
     },
-    [rateResolver, convert, preferredCurrency],
+    [rateResolver, preferredCurrency],
   );
 
   // Per-row converted amounts, computed once per (data, rate) change — list
@@ -307,11 +308,12 @@ export default function HistoryScreen() {
     [filteredExpenses, convertAtDate],
   );
 
-  // Highest single expense
+  // Peak transaction in the active display currency. Using the raw stored
+  // amount here would label (for example) INR 40,807 as USD 40,807.
   const highestSingleSpend = useMemo(() => {
     if (filteredExpenses.length === 0) return 0;
-    return filteredExpenses.reduce((max, e) => Math.max(max, Number(e.amount)), 0);
-  }, [filteredExpenses]);
+    return filteredExpenses.reduce((max, expense) => Math.max(max, convertAtDate(expense)), 0);
+  }, [filteredExpenses, convertAtDate]);
 
   // Reset to page 1 whenever filters, search, or category changes
   const handleSearchChange = (text: string) => {

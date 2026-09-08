@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, RefreshControl, ScrollView, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as DocumentPicker from 'expo-document-picker';
@@ -24,6 +24,7 @@ import { exportCsv, exportExcel, exportPdf } from '@/services/export';
 import { importExpensesFromCsv } from '@/services/expenses';
 import { useAuth } from '@/hooks/useAuth';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
+import { buildRateResolver, type RateResolver } from '@/services/exchange';
 import { useExpenses } from '@/hooks/useExpenses';
 import { useLanguage } from '@/hooks/useLanguage';
 import { useTheme } from '@/hooks/useTheme';
@@ -52,9 +53,24 @@ export default function ExportScreen() {
     [expenses.items, period, cycleStartDay, cycleEndDay],
   );
 
+  // Snapshot-aware total: each row converts at its own date — statements
+  // match History/Dashboard exactly instead of re-valuing at today's rate.
+  const [rateResolver, setRateResolver] = useState<RateResolver | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    buildRateResolver(filteredItems, preferredCurrency)
+      .then((r) => {
+        if (!cancelled) setRateResolver(r);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [filteredItems, preferredCurrency]);
+
   const totalAmount = useMemo(
-    () => sumExpenses(filteredItems, preferredCurrency, rates),
-    [filteredItems, preferredCurrency, rates],
+    () => sumExpenses(filteredItems, preferredCurrency, rateResolver),
+    [filteredItems, preferredCurrency, rateResolver],
   );
 
   const periodLabel = PERIODS.find((p) => p.value === period)?.label || 'This Month';

@@ -16,11 +16,12 @@ import { Text } from '@/components/ui/Text';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
 import { useAuth } from '@/hooks/useAuth';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
+import { useRateResolver } from '@/hooks/useRateResolver';
 import { useExpenses } from '@/hooks/useExpenses';
 import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
 import { useTheme } from '@/hooks/useTheme';
-import { currentMonthRange, getCycleMeta, getCycleLabel, getMonthlyBudget, isoDate, sumExpenses } from '@/utils/format';
+import { convertCurrency, currentMonthRange, getCycleMeta, getCycleLabel, getMonthlyBudget, isoDate, sumExpenses } from '@/utils/format';
 import { CURRENCY_DETAILS } from '@/constants/app';
 
 export default function HomeScreen() {
@@ -43,6 +44,13 @@ export default function HomeScreen() {
   });
   const [profileCardOpen, setProfileCardOpen] = useState(false);
 
+  const preferredCurrency = profile?.preferred_currency ?? 'NPR';
+
+  // Snapshot-aware conversion: every dashboard total resolves each row at its
+  // OWN date (using the row's exchange_rate_to_usd snapshot where present) —
+  // identical to History, so the two screens can never diverge.
+  const rateResolver = useRateResolver(expenses.items, preferredCurrency);
+
   const refreshProfileRef = useRef(refreshProfile);
   refreshProfileRef.current = refreshProfile;
   const refreshExpensesRef = useRef(expenses.refresh);
@@ -55,18 +63,17 @@ export default function HomeScreen() {
     }, []),
   );
 
-  const preferredCurrency = profile?.preferred_currency ?? 'NPR';
   const currentMonthItems = useMemo(
     () => expenses.items.filter((expense) => expense.date >= month.from && expense.date <= month.to),
     [expenses.items, month],
   );
   const monthTotal = useMemo(
-    () => sumExpenses(currentMonthItems, preferredCurrency, rates, 'expense'),
-    [currentMonthItems, preferredCurrency, rates],
+    () => rateResolver ? sumExpenses(currentMonthItems, preferredCurrency, rateResolver, 'expense') : 0,
+    [currentMonthItems, preferredCurrency, rateResolver],
   );
   const monthIncome = useMemo(
-    () => sumExpenses(currentMonthItems, preferredCurrency, rates, 'income'),
-    [currentMonthItems, preferredCurrency, rates],
+    () => rateResolver ? sumExpenses(currentMonthItems, preferredCurrency, rateResolver, 'income') : 0,
+    [currentMonthItems, preferredCurrency, rateResolver],
   );
 
   const prevMonthItems = useMemo(
@@ -74,20 +81,32 @@ export default function HomeScreen() {
     [expenses.items, month],
   );
   const prevMonthTotal = useMemo(
-    () => sumExpenses(prevMonthItems, preferredCurrency, rates, 'expense'),
-    [prevMonthItems, preferredCurrency, rates],
+    () => rateResolver ? sumExpenses(prevMonthItems, preferredCurrency, rateResolver, 'expense') : 0,
+    [prevMonthItems, preferredCurrency, rateResolver],
   );
   const prevMonthIncome = useMemo(
-    () => sumExpenses(prevMonthItems, preferredCurrency, rates, 'income'),
-    [prevMonthItems, preferredCurrency, rates],
+    () => rateResolver ? sumExpenses(prevMonthItems, preferredCurrency, rateResolver, 'income') : 0,
+    [prevMonthItems, preferredCurrency, rateResolver],
   );
 
   const todayTotal = useMemo(() => {
     const todayIso = isoDate(new Date());
-    return sumExpenses(expenses.items.filter((expense) => expense.date === todayIso), preferredCurrency, rates);
-  }, [expenses.items, preferredCurrency, rates]);
+    return rateResolver
+      ? sumExpenses(expenses.items.filter((expense) => expense.date === todayIso), preferredCurrency, rateResolver)
+      : 0;
+  }, [expenses.items, preferredCurrency, rateResolver]);
 
-  const monthlyBudget = getMonthlyBudget(profile, rates);
+  const monthlyBudget = getMonthlyBudget(profile, rates, preferredCurrency);
+
+  // Canonical USD ratio for BudgetLimitHeroCard so the % stays invariant across display currencies
+  const budgetRatioBase = useMemo(() => {
+    const rawBudget = profile?.monthly_budget ? Number(profile.monthly_budget) : 0;
+    if (!rawBudget || rawBudget <= 0 || !rateResolver) return undefined;
+    const budgetCcy = (profile?.budget_currency || profile?.preferred_currency || 'NPR').toUpperCase();
+    const budgetUsd = convertCurrency(rawBudget, budgetCcy, 'USD', rates);
+    const spentUsd = sumExpenses(currentMonthItems, 'USD', rateResolver, 'expense');
+    return budgetUsd > 0 ? spentUsd / budgetUsd : 0;
+  }, [profile, rates, rateResolver, currentMonthItems]);
 
   // Time-aware greeting
   const currentHour = new Date().getHours();
@@ -235,6 +254,7 @@ export default function HomeScreen() {
               prevMonthTotal={prevMonthTotal}
               monthIncome={monthIncome}
               prevMonthIncome={prevMonthIncome}
+              budgetRatioBase={budgetRatioBase}
             />
 
             {/* 3. STOCK-STYLE FINANCIAL TREND WAVE GRAPH (1D / 7D / 4W / 6M / 1Y) */}

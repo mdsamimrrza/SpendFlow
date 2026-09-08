@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -34,6 +34,7 @@ import { showToast } from '@/components/ui/Toast';
 import { countryFlag } from '@/constants/countries';
 import { useAuth } from '@/hooks/useAuth';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
+import { useRateResolver } from '@/hooks/useRateResolver';
 import { useExpenses } from '@/hooks/useExpenses';
 import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
@@ -46,13 +47,13 @@ import {
 } from '@/services/bankAccounts';
 import { BankAccount, Transfer } from '@/types';
 import { getErrorMessage } from '@/utils/errors';
-import { convertCurrency, formatMoney } from '@/utils/format';
+import { formatMoney, isoDate } from '@/utils/format';
 
 export default function AccountsScreen() {
   const router = useRouter();
   const theme = useTheme();
   const { profile, session } = useAuth();
-  const { rates, status: rateStatus } = useExchangeRates();
+  const { status: rateStatus } = useExchangeRates();
   const { t } = useLanguage();
   const { isPrivacyMode } = usePrivacy();
 
@@ -109,6 +110,13 @@ export default function AccountsScreen() {
   const [accountsWithLiveBalances, setAccountsWithLiveBalances] = useState<
     (BankAccount & { live_balance: number })[]
   >([]);
+  // Net worth is a current valuation of held account balances, so it uses
+  // today's historical-service rate rather than the deprecated live context.
+  const valuationRows = useMemo(
+    () => accountsWithLiveBalances.map((account) => ({ currency: account.currency, date: isoDate() })),
+    [accountsWithLiveBalances],
+  );
+  const rateResolver = useRateResolver(valuationRows, preferredCurrency);
 
   useEffect(() => {
     let cancelled = false;
@@ -134,7 +142,9 @@ export default function AccountsScreen() {
   // Total Net Liquid Worth (converted from each account's currency to preferredCurrency)
   const totalNetLiquidWorth = accountsWithLiveBalances.reduce((sum, acc) => {
     const accCurrency = acc.currency || preferredCurrency;
-    const converted = convertCurrency(acc.live_balance, accCurrency, preferredCurrency, rates);
+    const converted = rateResolver
+      ? rateResolver.convert(acc.live_balance, accCurrency, preferredCurrency, isoDate())
+      : 0;
     return sum + converted;
   }, 0);
 

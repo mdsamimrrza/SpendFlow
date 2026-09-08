@@ -58,7 +58,7 @@ export default function AnalyticsScreen() {
   const { t } = useLanguage();
   const { isPrivacyMode } = usePrivacy();
   const theme = useTheme();
-  const { convert, rates } = useExchangeRates();
+  const { rates } = useExchangeRates();
   const { width } = useWindowDimensions();
   const isCompact = width < 390;
   const [period, setPeriod] = useState<PeriodKey>('month');
@@ -142,9 +142,9 @@ export default function AnalyticsScreen() {
       if (rateResolver) {
         return rateResolver.convert(Number(expense.amount), expense.currency || 'NPR', preferredCurrency, expense.date);
       }
-      return convert(Number(expense.amount), expense.currency || 'NPR', preferredCurrency);
+      return 0;
     },
-    [rateResolver, convert, preferredCurrency],
+    [rateResolver, preferredCurrency],
   );
 
   const totalSpend = useMemo(
@@ -510,7 +510,7 @@ export default function AnalyticsScreen() {
           {/* 1. Income, Expense & Budget Analysis Card */}
           <IncomeExpenseBudgetCard
             expenses={filteredItems}
-            monthlyBudget={getMonthlyBudget(profile, rates)}
+            monthlyBudget={getMonthlyBudget(profile, rates, preferredCurrency)}
             targetCurrency={preferredCurrency}
           />
 

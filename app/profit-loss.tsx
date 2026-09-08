@@ -12,6 +12,7 @@ import { showToast } from '@/components/ui/Toast';
 import { CalendarModal, DateRange } from '@/components/ui/CalendarModal';
 import { useAuth } from '@/hooks/useAuth';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
+import { buildRateResolver, type RateResolver } from '@/services/exchange';
 import { useExpenses } from '@/hooks/useExpenses';
 import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
@@ -125,13 +126,28 @@ export default function ProfitLossScreen() {
     [expenses.items, from, to],
   );
 
+  // Snapshot-aware conversion: every P&L figure resolves each row at its own
+  // date (row snapshot first), matching History/Dashboard exactly.
+  const [rateResolver, setRateResolver] = useState<RateResolver | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    buildRateResolver(expenses.items, currency)
+      .then((r) => {
+        if (!cancelled) setRateResolver(r);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [expenses.items, currency]);
+
   const totalIncome = useMemo(
-    () => sumIncome(itemsInRange, currency, rates),
-    [itemsInRange, currency, rates],
+    () => sumIncome(itemsInRange, currency, rateResolver),
+    [itemsInRange, currency, rateResolver],
   );
   const totalExpense = useMemo(
-    () => sumExpenses(itemsInRange, currency, rates),
-    [itemsInRange, currency, rates],
+    () => sumExpenses(itemsInRange, currency, rateResolver),
+    [itemsInRange, currency, rateResolver],
   );
   const netResult = totalIncome - totalExpense;
   const isProfit = netResult >= 0;
@@ -211,8 +227,8 @@ export default function ProfitLossScreen() {
           const bucketFromISO = toISO(bucketFrom);
           const bucketToISO = toISO(bucketTo);
           const items = expenses.items.filter((e) => e.date >= bucketFromISO && e.date <= bucketToISO);
-          const income = sumIncome(items, currency, rates);
-          const expense = sumExpenses(items, currency, rates);
+          const income = sumIncome(items, currency, rateResolver);
+          const expense = sumExpenses(items, currency, rateResolver);
 
           const convertedPeriodBudget = getMonthlyBudget(
             {
@@ -287,8 +303,8 @@ export default function ProfitLossScreen() {
           const items = expenses.items.filter(
             (e) => e.date >= bucketFromISO && e.date <= bucketToISO,
           );
-          const income = sumIncome(items, currency, rates);
-          const expense = sumExpenses(items, currency, rates);
+          const income = sumIncome(items, currency, rateResolver);
+          const expense = sumExpenses(items, currency, rateResolver);
           const convertedPeriodBudget = getMonthlyBudget(
             {
               monthly_budget: profile?.monthly_budget ?? null,
@@ -415,8 +431,8 @@ export default function ProfitLossScreen() {
         const items = expenses.items.filter(
           (e) => e.date >= fromISO && e.date <= toISODate,
         );
-        const income = sumIncome(items, currency, rates);
-        const expense = sumExpenses(items, currency, rates);
+        const income = sumIncome(items, currency, rateResolver);
+        const expense = sumExpenses(items, currency, rateResolver);
         const convertedPeriodBudget = getMonthlyBudget(
           {
             monthly_budget: custom.period.monthly_budget ?? profile?.monthly_budget ?? null,
@@ -509,8 +525,8 @@ export default function ProfitLossScreen() {
         const bucketFromISO = toISO(bucketFrom);
         const bucketToISO = toISO(bucketTo);
         const items = expenses.items.filter((e) => e.date >= bucketFromISO && e.date <= bucketToISO);
-        const income = sumIncome(items, currency, rates);
-        const expense = sumExpenses(items, currency, rates);
+        const income = sumIncome(items, currency, rateResolver);
+        const expense = sumExpenses(items, currency, rateResolver);
 
         const convertedPeriodBudget = getMonthlyBudget(
           {

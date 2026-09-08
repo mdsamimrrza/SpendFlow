@@ -3,6 +3,7 @@ import { Platform } from 'react-native';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system/legacy';
+import { buildRateResolver } from '@/services/exchange';
 import { Expense, UserProfile } from '@/types';
 import { formatMoney, groupByCategory } from '@/utils/format';
 
@@ -155,7 +156,8 @@ export async function exportCsv(expenses: Expense[]) {
 // ── 2. EXCEL (XLSX) EXPORT ──
 export async function exportExcel(expenses: Expense[], currency = 'NPR') {
   const fileName = generateExportFileName(expenses, 'xlsx');
-  const summary = groupByCategory(expenses, currency);
+  const resolver = await buildRateResolver(expenses, currency);
+  const summary = groupByCategory(expenses, currency, resolver);
   const totalAmount = expenses.reduce((s, e) => s + Number(e.amount), 0);
 
   const expenseRows = [
@@ -239,7 +241,8 @@ export async function exportPdf(expenses: Expense[], profile?: UserProfile | nul
   // Calculate Aggregates
   const totalSpent = expenses.reduce((sum, e) => sum + Number(e.amount), 0);
   const totalTransactions = expenses.length;
-  const categorySummary = groupByCategory(expenses, currency);
+  const resolver = await buildRateResolver(expenses, currency);
+  const categorySummary = groupByCategory(expenses, currency, resolver);
   const topCategory = categorySummary[0]?.label ?? 'N/A';
   const averageSpent = totalTransactions > 0 ? Math.round(totalSpent / totalTransactions) : 0;
 

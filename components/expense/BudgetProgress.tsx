@@ -23,11 +23,12 @@ import { Card } from '@/components/ui/Card';
 import { Text } from '@/components/ui/Text';
 import { useAuth } from '@/hooks/useAuth';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
+import { useRateResolver } from '@/hooks/useRateResolver';
 import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
 import { useTheme } from '@/hooks/useTheme';
 import { Category, Expense } from '@/types';
-import { formatMoney, formatTime12 } from '@/utils/format';
+import { convertCurrency, currentMonthRange, formatMoney, formatTime12, getCategoryBudget, getCycleMeta } from '@/utils/format';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -47,7 +48,7 @@ export function BudgetProgress({
   const theme = useTheme();
   const router = useRouter();
   const { profile } = useAuth();
-  const { convert } = useExchangeRates();
+  const { rates } = useExchangeRates();
   const { t } = useLanguage();
   const { isPrivacyMode } = usePrivacy();
   const [modalOpen, setModalOpen] = useState(false);
@@ -55,20 +56,25 @@ export function BudgetProgress({
   const [selectedDrawerCatId, setSelectedDrawerCatId] = useState<string | null>(null);
 
   const currency = targetCurrency ?? profile?.preferred_currency ?? 'NPR';
-  const currentMonthKey = new Date().toISOString().slice(0, 7);
+  const rateResolver = useRateResolver(expenses, currency);
+
+  // Cycle-aware reporting month window (supports custom cycle_start_day 2–31 and cycle_end_day)
+  const cycleStartDay = Math.min(Math.max(Number(profile?.cycle_start_day) || 1, 1), 31);
+  const cycleEndDayRaw = Number(profile?.cycle_end_day);
+  const cycleEndDay = cycleEndDayRaw >= 1 && cycleEndDayRaw <= 31 ? cycleEndDayRaw : null;
+  const cycleMeta = getCycleMeta(cycleStartDay, cycleEndDay);
+  const cycleRange = currentMonthRange(cycleStartDay, cycleEndDay);
 
   const budgetedCategories = categories.filter(
     (c) => c.budget_monthly && Number(c.budget_monthly) > 0,
   );
 
   const totalAllocated = budgetedCategories.reduce(
-    (sum, c) => sum + Number(c.budget_monthly),
+    (sum, c) => sum + getCategoryBudget(c.budget_monthly, profile, currency, rates),
     0,
   );
 
-  const now = new Date();
-  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-  const daysRemaining = Math.max(1, daysInMonth - now.getDate());
+  const daysRemaining = Math.max(1, cycleMeta.daysInCycle - cycleMeta.daysElapsed);
 
   function toggleExpandAll() {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
@@ -181,18 +187,27 @@ export function BudgetProgress({
         /* ── CATEGORY BUDGET CARDS MATRIX (ROLL / EXPANDABLE) ── */
         <View style={{ gap: 10 }}>
           {visibleCategories.map((category) => {
-            const budget = Number(category.budget_monthly);
+            const rawCap = Number(category.budget_monthly);
+            const budget = getCategoryBudget(rawCap, profile, currency, rates);
             const categoryExpenses = expenses.filter(
-              (e) => e.category_id === category.id && e.date.startsWith(currentMonthKey),
+              (e) => e.category_id === category.id && e.date >= cycleRange.from && e.date <= cycleRange.to,
             );
             const spent = categoryExpenses.reduce(
-              (total, e) => total + convert(Number(e.amount), e.currency || 'NPR', currency),
+              (total, e) => total + (rateResolver ? rateResolver.convert(Number(e.amount), e.currency || 'NPR', currency, e.date) : 0),
               0,
             );
 
-            const ratio = spent / budget;
+            // Canonical calculation in budget_currency: both sides use the same
+            // RateResolver snapshot rates → ratio is display-currency-invariant.
+            const budgetCurrency = (profile?.budget_currency || profile?.preferred_currency || 'NPR').toUpperCase();
+            const spentInBudgetCcy = categoryExpenses.reduce(
+              (total, e) => total + (rateResolver ? rateResolver.convert(Number(e.amount), e.currency || 'NPR', budgetCurrency, e.date) : 0),
+              0,
+            );
+
+            const ratio = rawCap > 0 ? spentInBudgetCcy / rawCap : 0;
             const pct = Math.round(ratio * 100);
-            const isOver = spent > budget;
+            const isOver = budgetBaseUsd > 0 && spentBaseUsd > budgetBaseUsd;
             const isWarning = pct >= 80 && !isOver;
 
             let statusColor = category.color || theme.colors.primary;

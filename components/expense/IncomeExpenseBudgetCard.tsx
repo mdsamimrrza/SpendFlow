@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Pressable, useWindowDimensions, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
@@ -16,10 +16,11 @@ import { Card } from '@/components/ui/Card';
 import { Text } from '@/components/ui/Text';
 import { useAuth } from '@/hooks/useAuth';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
+import { useRateResolver } from '@/hooks/useRateResolver';
 import { useLanguage } from '@/hooks/useLanguage';
 import { useTheme } from '@/hooks/useTheme';
 import { Expense } from '@/types';
-import { formatMoney, getMonthlyBudget, sumExpenses, sumIncome } from '@/utils/format';
+import { formatMoney, getMonthlyBudget, sumExpenses, sumIncome, convertCurrency } from '@/utils/format';
 
 interface IncomeExpenseBudgetCardProps {
   expenses: Expense[];
@@ -41,19 +42,27 @@ export function IncomeExpenseBudgetCard({
   const isCompact = width < 390;
 
   const currency = targetCurrency ?? profile?.preferred_currency ?? 'NPR';
-  const effectiveBudget = monthlyBudget > 0 ? monthlyBudget : getMonthlyBudget(profile, rates);
+  const rateResolver = useRateResolver(expenses, currency);
+  const effectiveBudget = monthlyBudget > 0 ? monthlyBudget : getMonthlyBudget(profile, rates, currency);
 
-  const totalIncome = sumIncome(expenses, currency, rates);
-  const totalExpense = sumExpenses(expenses, currency, rates, 'expense');
+  // Canonical USD-base resolver (snapshot-aware) for percentages
+  const usdResolver = useRateResolver(expenses, 'USD');
+  const totalIncome = useMemo(() => rateResolver ? sumIncome(expenses, currency, rateResolver) : 0, [expenses, currency, rateResolver]);
+  const totalExpense = useMemo(() => rateResolver ? sumExpenses(expenses, currency, rateResolver, 'expense') : 0, [expenses, currency, rateResolver]);
   const netSavings = totalIncome - totalExpense;
 
   const incomeItemsCount = expenses.filter((e) => e.type === 'income').length;
   const expenseItemsCount = expenses.filter((e) => e.type !== 'income').length;
 
+  // Canonical base-USD totals for currency-invariant percentage calculations
+  const totalExpenseUsd = useMemo(() => usdResolver ? sumExpenses(expenses, 'USD', usdResolver, 'expense') : 0, [expenses, usdResolver]);
+  const budgetUsd = useMemo(() => convertCurrency(effectiveBudget, currency, 'USD', rates), [effectiveBudget, currency, rates]);
+
   // Ratios & Percentages
   const savingsRate = totalIncome > 0 ? Math.max(-100, Math.round((netSavings / totalIncome) * 100)) : 0;
   const expenseToIncomeRatio = totalIncome > 0 ? Math.round((totalExpense / totalIncome) * 100) : 0;
-  const budgetUtilizationRatio = effectiveBudget > 0 ? Math.round((totalExpense / effectiveBudget) * 100) : 0;
+  // Use canonical USD ratio so switching display currency never changes the %
+  const budgetUtilizationRatio = budgetUsd > 0 ? Math.round((totalExpenseUsd / budgetUsd) * 100) : 0;
 
   // Status badging
   const isHealthyCashflow = netSavings >= 0;

@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Alert,
   Animated,
@@ -15,7 +15,7 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { CategoryIcon } from '@/components/ui/CategoryIcon';
 import { Text } from '@/components/ui/Text';
 import { useAuth } from '@/hooks/useAuth';
-import { useExchangeRates } from '@/hooks/useExchangeRates';
+import { convertExpense } from '@/services/exchange';
 import { usePrivacy } from '@/hooks/usePrivacy';
 import { useTheme } from '@/hooks/useTheme';
 import { Expense } from '@/types';
@@ -36,7 +36,6 @@ interface ExpenseItemProps {
 export const ExpenseItem = React.memo(function ExpenseItem({ expense, onDelete, onPress, displayAmount }: ExpenseItemProps) {
   const theme = useTheme();
   const { profile } = useAuth();
-  const { convert } = useExchangeRates();
   const { isPrivacyMode } = usePrivacy();
   const router = useRouter();
 
@@ -47,11 +46,42 @@ export const ExpenseItem = React.memo(function ExpenseItem({ expense, onDelete, 
 
   const preferredCurrency = profile?.preferred_currency ?? 'NPR';
   const isDifferentCurrency = expense.currency && expense.currency !== preferredCurrency;
-  const convertedAmount =
-    displayAmount ??
-    (isDifferentCurrency
-      ? convert(Number(expense.amount), expense.currency, preferredCurrency)
-      : Number(expense.amount));
+  // Snapshot-aware display amount: the parent may pass a pre-converted value
+  // (history does); otherwise this row converts at its OWN date via its
+  // exchange_rate_to_usd snapshot — never today's market rate.
+  const [ownConverted, setOwnConverted] = useState<number | null>(
+    displayAmount ?? (isDifferentCurrency ? null : Number(expense.amount)),
+  );
+  useEffect(() => {
+    if (displayAmount !== undefined) {
+      setOwnConverted(displayAmount);
+      return;
+    }
+    if (!isDifferentCurrency) {
+      setOwnConverted(Number(expense.amount));
+      return;
+    }
+    let cancelled = false;
+    convertExpense(
+      {
+        amount: Number(expense.amount),
+        currency: expense.currency,
+        date: expense.date,
+        exchange_rate_to_usd: expense.exchange_rate_to_usd,
+      },
+      preferredCurrency,
+    )
+      .then((v) => {
+        if (!cancelled) setOwnConverted(v);
+      })
+      .catch(() => {
+        if (!cancelled) setOwnConverted(Number(expense.amount));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [displayAmount, expense.id, expense.amount, expense.currency, expense.date, expense.exchange_rate_to_usd, preferredCurrency]);
+  const convertedAmount = ownConverted;
 
   // Swipe Left PanResponder Gesture
   const panResponder = useRef(
@@ -243,7 +273,7 @@ export const ExpenseItem = React.memo(function ExpenseItem({ expense, onDelete, 
                   color: expense.type === 'income' ? theme.colors.income : theme.colors.text,
                 }}
               >
-                {`${expense.type === 'income' ? '+' : '-'}\u00A0${formatMoney(convertedAmount, preferredCurrency).replace(/ /g, '\u00A0')}`}
+                {`${expense.type === 'income' ? '+' : '-'}\u00A0${formatMoney(convertedAmount ?? Number(expense.amount), preferredCurrency).replace(/ /g, '\u00A0')}`}
               </Text>
               {isDifferentCurrency ? (
                 <Text

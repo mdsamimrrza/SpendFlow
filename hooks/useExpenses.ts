@@ -3,8 +3,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getCategoryById } from '@/services/categories';
 import { createExpense, filterAndSortCachedExpenses, getCachedExpenses, listExpenses, softDeleteExpense, updateExpense } from '@/services/expenses';
 import { checkAndNotifyBudgetThreshold, checkAndNotifyCategoryBudgetThreshold, notifyExpenseAdded, notifyLargeExpense } from '@/services/notifications';
+import { buildRateResolver } from '@/services/exchange';
 import { Expense, ExpenseFilters, ExpenseInput, SortKey } from '@/types';
-import { convertCurrency, currentMonthRange, sumExpenses } from '@/utils/format';
+import { convertCurrency, currentMonthRange, getCategoryBudget, getMonthlyBudget, sumExpenses } from '@/utils/format';
 import { notifyOtherDevices } from '@/services/pushNotifications';
 
 type ExpenseChangeListener = () => void;
@@ -14,7 +15,7 @@ export function notifyExpensesChanged() {
   listeners.forEach((listener) => listener());
 }
 
-async function getEffectiveMonthlyBudget(userId?: string, targetCurrency = 'NPR'): Promise<number> {
+async function getEffectiveMonthlyBudget(userId?: string, targetCurrency = 'NPR', resolver?: any): Promise<number> {
   try {
     const profileJson = userId
       ? await AsyncStorage.getItem(`@spendflow_cached_profile_${userId}`).catch(() => null)
@@ -22,9 +23,7 @@ async function getEffectiveMonthlyBudget(userId?: string, targetCurrency = 'NPR'
     if (profileJson) {
       const parsed = JSON.parse(profileJson);
       if (parsed?.id === userId && parsed?.monthly_budget && Number(parsed.monthly_budget) > 0) {
-        // The stored figure is in its own currency (budget_currency) — convert
-        // so threshold comparisons match the expense totals in targetCurrency.
-        return convertCurrency(Number(parsed.monthly_budget), parsed?.budget_currency || targetCurrency, targetCurrency);
+        return getMonthlyBudget(parsed, undefined, targetCurrency);
       }
     }
     if (userId) {
@@ -101,8 +100,9 @@ async function triggerExpenseNotifications(
       await getCycleEndDay(userId),
     );
     const monthItems = currentItems.filter((item) => item.date >= month.from && item.date <= month.to);
-    const monthTotal = sumExpenses(monthItems, currency);
-    const monthlyBudget = await getEffectiveMonthlyBudget(userId, currency);
+    const rateResolver = await buildRateResolver(monthItems, currency);
+    const monthTotal = sumExpenses(monthItems, currency, rateResolver);
+    const monthlyBudget = await getEffectiveMonthlyBudget(userId, currency, rateResolver);
 
     if (monthlyBudget > 0) {
       void checkAndNotifyBudgetThreshold(monthTotal + amount, monthlyBudget, currency);
@@ -114,13 +114,18 @@ async function triggerExpenseNotifications(
       const targetCat = await getCategoryById(categoryId, userId);
       if (targetCat && targetCat.budget_monthly && Number(targetCat.budget_monthly) > 0) {
         const catMonthItems = monthItems.filter((item) => item.category_id === categoryId);
-        const catMonthTotal = sumExpenses(catMonthItems, currency);
+        const catMonthTotal = sumExpenses(catMonthItems, currency, rateResolver);
+        const profileJson = await AsyncStorage.getItem(`@spendflow_cached_profile_${userId}`).catch(() => null);
+        const parsedProfile = profileJson ? JSON.parse(profileJson) : null;
+        // Pass undefined for rates to fall back to DEFAULT_RATES; rateResolver is
+        // a RateResolver, not a Record<string, number>, so it must not be passed here.
+        const catBudget = getCategoryBudget(targetCat.budget_monthly, parsedProfile, currency, undefined);
         void checkAndNotifyCategoryBudgetThreshold(
           targetCat.id,
           targetCat.name,
           targetCat.icon,
           catMonthTotal + amount,
-          Number(targetCat.budget_monthly),
+          catBudget,
           currency,
         );
       }

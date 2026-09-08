@@ -21,11 +21,12 @@ import { Card } from '@/components/ui/Card';
 import { Text } from '@/components/ui/Text';
 import { useAuth } from '@/hooks/useAuth';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
+import { useRateResolver } from '@/hooks/useRateResolver';
 import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
 import { useTheme } from '@/hooks/useTheme';
 import { Expense } from '@/types';
-import { formatMoney, getMonthlyBudget, groupByCategory } from '@/utils/format';
+import { convertCurrency, formatMoney, getMonthlyBudget, groupByCategory } from '@/utils/format';
 
 interface FinancialHealthScoreCardProps {
   expenses: Expense[];
@@ -38,14 +39,20 @@ export function FinancialHealthScoreCard({
 }: FinancialHealthScoreCardProps) {
   const theme = useTheme();
   const { profile } = useAuth();
-  const { convert, rates } = useExchangeRates();
+  const { rates } = useExchangeRates();
   const { t } = useLanguage();
   const { isPrivacyMode } = usePrivacy();
 
   const [infoModalOpen, setInfoModalOpen] = useState(false);
 
   const currency = targetCurrency ?? profile?.preferred_currency ?? 'NPR';
-  const monthlyBudget = getMonthlyBudget(profile, rates);
+  const rateResolver = useRateResolver(expenses, currency);
+  // Canonical USD resolver for budget adherence (percentage must be currency-invariant)
+  const usdResolver = useRateResolver(expenses, 'USD');
+  const monthlyBudget = getMonthlyBudget(profile, rates, currency);
+  // Budget in canonical USD for ratio calculation
+  const budgetCurrency = (profile?.budget_currency || profile?.preferred_currency || 'NPR').toUpperCase();
+  const rawBudget = profile?.monthly_budget ? Number(profile.monthly_budget) : 0;
 
   // Compute 0-100 Score and Smart Insights
   const healthData = useMemo(() => {
@@ -76,12 +83,12 @@ export function FinancialHealthScoreCard({
     const monthProgress = currentDay / daysInMonth;
 
     const totalSpent = expenseItems.reduce(
-      (sum, e) => sum + convert(Number(e.amount), e.currency || 'NPR', currency),
+      (sum, e) => sum + (rateResolver ? rateResolver.convert(Number(e.amount), e.currency || 'NPR', currency, e.date) : 0),
       0,
     );
 
     const totalIncome = incomeItems.reduce(
-      (sum, e) => sum + convert(Number(e.amount), e.currency || 'NPR', currency),
+      (sum, e) => sum + (rateResolver ? rateResolver.convert(Number(e.amount), e.currency || 'NPR', currency, e.date) : 0),
       0,
     );
 
@@ -127,9 +134,13 @@ export function FinancialHealthScoreCard({
       }
     }
 
-    // 2. Budget Adherence Score (0-35 pts)
-    if (monthlyBudget > 0) {
-      const budgetUsedRatio = totalSpent / monthlyBudget;
+    // 2. Budget Adherence Score (0-35 pts) — computed in canonical USD so it's invariant across display currencies
+    const budgetInUsd = rawBudget > 0 ? convertCurrency(rawBudget, budgetCurrency, 'USD', rates) : 0;
+    const spentUsd = usdResolver
+      ? expenseItems.reduce((sum, e) => sum + usdResolver.convert(Number(e.amount), e.currency || 'NPR', 'USD', e.date), 0)
+      : 0;
+    if (budgetInUsd > 0) {
+      const budgetUsedRatio = spentUsd / budgetInUsd;
       const expectedRatio = monthProgress;
 
       if (budgetUsedRatio <= expectedRatio) {
@@ -164,7 +175,7 @@ export function FinancialHealthScoreCard({
     const dailyMap = new Map<string, number>();
     expenseItems.forEach((e) => {
       const current = dailyMap.get(e.date) || 0;
-      dailyMap.set(e.date, current + convert(Number(e.amount), e.currency || 'NPR', currency));
+      dailyMap.set(e.date, current + (rateResolver ? rateResolver.convert(Number(e.amount), e.currency || 'NPR', currency, e.date) : 0));
     });
 
     const dailyValues = Array.from(dailyMap.values());
@@ -196,7 +207,7 @@ export function FinancialHealthScoreCard({
     }
 
     // 4. Category Concentration & Diversity (0-20 pts)
-    const categoryGroups = groupByCategory(expenseItems, currency, rates);
+    const categoryGroups = rateResolver ? groupByCategory(expenseItems, currency, rateResolver) : [];
     if (categoryGroups.length > 0) {
       const topCat = categoryGroups[0];
       const topRatio = topCat.total / Math.max(totalSpent, 1);
@@ -225,7 +236,7 @@ export function FinancialHealthScoreCard({
     let weekdaySpend = 0;
     expenseItems.forEach((e) => {
       const day = new Date(e.date).getDay();
-      const amt = convert(Number(e.amount), e.currency || 'NPR', currency);
+      const amt = rateResolver ? rateResolver.convert(Number(e.amount), e.currency || 'NPR', currency, e.date) : 0;
       if (day === 0 || day === 6) {
         weekendSpend += amt;
       } else {
@@ -287,7 +298,7 @@ export function FinancialHealthScoreCard({
       savingsRate: computedSavingsRate,
       insights: insights.slice(0, 3),
     };
-  }, [expenses, monthlyBudget, currency, convert, rates]);
+  }, [expenses, monthlyBudget, currency, rateResolver, usdResolver, rawBudget, budgetCurrency, rates]);
 
   // Radial dial geometry
   const radius = 40;

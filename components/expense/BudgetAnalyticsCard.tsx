@@ -6,11 +6,12 @@ import { Card } from '@/components/ui/Card';
 import { Text } from '@/components/ui/Text';
 import { useAuth } from '@/hooks/useAuth';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
+import { useRateResolver } from '@/hooks/useRateResolver';
 import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
 import { useTheme } from '@/hooks/useTheme';
 import { Expense } from '@/types';
-import { formatMoney, getCycleMeta, getMonthlyBudget } from '@/utils/format';
+import { convertCurrency, formatMoney, getCycleMeta, getMonthlyBudget } from '@/utils/format';
 
 interface BudgetAnalyticsCardProps {
   expenses: Expense[];
@@ -22,7 +23,7 @@ export function BudgetAnalyticsCard({ expenses, targetCurrency, flowType }: Budg
   const theme = useTheme();
   const router = useRouter();
   const { profile } = useAuth();
-  const { convert, rates } = useExchangeRates();
+  const { rates } = useExchangeRates();
   const { t } = useLanguage();
   const { isPrivacyMode } = usePrivacy();
   const { width } = useWindowDimensions();
@@ -50,21 +51,35 @@ export function BudgetAnalyticsCard({ expenses, targetCurrency, flowType }: Budg
     () => expenses.filter((expense) => expense.date >= cycleFromStr && expense.date <= cycleToStr),
     [expenses, cycleFromStr, cycleToStr],
   );
+  const rateResolver = useRateResolver(currentMonthItems, currency);
+  // USD resolver for canonical ratio calculations (projection % must be currency-invariant)
+  const usdResolver = useRateResolver(currentMonthItems, 'USD');
   const totalMonthlySpend = useMemo(
     () => currentMonthItems
       .filter((expense) => expense.type !== 'income')
-      .reduce((sum, expense) => sum + convert(Number(expense.amount), expense.currency || 'NPR', currency), 0),
-    [currentMonthItems, convert, currency],
+      .reduce((sum, expense) => sum + (rateResolver ? rateResolver.convert(Number(expense.amount), expense.currency || 'NPR', currency, expense.date) : 0), 0),
+    [currentMonthItems, rateResolver, currency],
   );
   const totalMonthlyIncome = useMemo(
     () => currentMonthItems
       .filter((expense) => expense.type === 'income')
-      .reduce((sum, expense) => sum + convert(Number(expense.amount), expense.currency || 'NPR', currency), 0),
-    [currentMonthItems, convert, currency],
+      .reduce((sum, expense) => sum + (rateResolver ? rateResolver.convert(Number(expense.amount), expense.currency || 'NPR', currency, expense.date) : 0), 0),
+    [currentMonthItems, rateResolver, currency],
   );
 
-  const monthlyBudget = getMonthlyBudget(profile, rates);
+  const monthlyBudget = getMonthlyBudget(profile, rates, currency);
   const isBudgetSet = monthlyBudget > 0;
+
+  // Canonical USD-base totals for currency-invariant projection percentage
+  const rawBudget = profile?.monthly_budget ? Number(profile.monthly_budget) : 0;
+  const budgetCcy = (profile?.budget_currency || profile?.preferred_currency || 'NPR').toUpperCase();
+  const monthlyBudgetUsd = rawBudget > 0 ? convertCurrency(rawBudget, budgetCcy, 'USD', rates) : 0;
+  const totalMonthlySpendUsd = useMemo(
+    () => currentMonthItems
+      .filter((e) => e.type !== 'income')
+      .reduce((sum, e) => sum + (usdResolver ? usdResolver.convert(Number(e.amount), e.currency || 'NPR', 'USD', e.date) : 0), 0),
+    [currentMonthItems, usdResolver],
+  );
 
   // Daily budget calculations
   const dailyAllowance = isBudgetSet ? monthlyBudget / daysInCycle : 0;
@@ -72,6 +87,9 @@ export function BudgetAnalyticsCard({ expenses, targetCurrency, flowType }: Budg
   const projectedEndMonthTotal = actualDailyPace * daysInCycle;
   const isOverBudget = isBudgetSet && totalMonthlySpend > monthlyBudget;
   const isHighBurnRate = isBudgetSet && actualDailyPace > dailyAllowance;
+  // Canonical USD pacing for projection % (currency-invariant)
+  const actualDailyPaceUsd = totalMonthlySpendUsd / daysElapsed;
+  const projectedEndMonthTotalUsd = actualDailyPaceUsd * daysInCycle;
   const incomeDailyPace = totalMonthlyIncome / daysElapsed;
   const projectedMonthlyIncome = incomeDailyPace * daysInCycle;
   const isIncome = flowType === 'income';
@@ -206,7 +224,7 @@ export function BudgetAnalyticsCard({ expenses, targetCurrency, flowType }: Budg
                   ? `${t('budget_perf_projected_income')}: ${formatMoney(projectedMonthlyIncome, currency)}`
                   : isOverBudget
                   ? `${t('budget_perf_exceeded_by')} ${formatMoney(totalMonthlySpend - monthlyBudget, currency)}`
-                  : `${t('budget_perf_projected')}: ${formatMoney(projectedEndMonthTotal, currency)} (${Math.round((projectedEndMonthTotal / monthlyBudget) * 100)}%)`}
+                  : `${t('budget_perf_projected')}: ${formatMoney(projectedEndMonthTotal, currency)} (${monthlyBudgetUsd > 0 ? Math.round((projectedEndMonthTotalUsd / monthlyBudgetUsd) * 100) : 0}%)`}
               </Text>
             </View>
           </View>

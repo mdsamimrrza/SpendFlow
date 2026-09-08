@@ -30,6 +30,11 @@ interface BudgetLimitHeroCardProps {
   prevMonthTotal?: number;
   monthIncome?: number;
   prevMonthIncome?: number;
+  /** Canonical USD-base ratio (spentUSD / budgetUSD) — display-currency-invariant.
+   * When provided, all percentage/progress calculations use this instead of
+   * the display-currency ratio to guarantee the same % regardless of which
+   * currency the user views the app in. */
+  budgetRatioBase?: number;
 }
 
 export function BudgetLimitHeroCard({
@@ -44,6 +49,7 @@ export function BudgetLimitHeroCard({
   prevMonthTotal = 0,
   monthIncome = 0,
   prevMonthIncome = 0,
+  budgetRatioBase,
 }: BudgetLimitHeroCardProps) {
   const theme = useTheme();
   const currencyDetails = CURRENCY_DETAILS[preferredCurrency as keyof typeof CURRENCY_DETAILS] ?? { flag: '💱', label: preferredCurrency };
@@ -109,8 +115,11 @@ export function BudgetLimitHeroCard({
   // ── Expense Side Calculations ──
   const isBudgetSet = monthlyBudget > 0;
   const remaining = isBudgetSet ? monthlyBudget - monthTotal : 0;
-  const ratio = isBudgetSet ? Math.min(monthTotal / monthlyBudget, 1.5) : 0;
-  const isOverBudget = isBudgetSet && monthTotal > monthlyBudget;
+  // Use the canonical USD-base ratio when provided so switching display currency
+  // never changes the percentage shown (budgetRatioBase = spentUSD / budgetUSD).
+  const canonicalRatio = budgetRatioBase !== undefined ? budgetRatioBase : (isBudgetSet ? monthTotal / monthlyBudget : 0);
+  const ratio = isBudgetSet ? Math.min(canonicalRatio, 1.5) : 0;
+  const isOverBudget = isBudgetSet && canonicalRatio > 1;
 
   const progressColor = isOverBudget
     ? theme.colors.danger
@@ -132,7 +141,17 @@ export function BudgetLimitHeroCard({
     isUp = true;
   }
 
-  const usedPercent = isBudgetSet ? formatBudgetPercent(monthTotal, monthlyBudget) : '0%';
+  // Percentage label uses canonical ratio so the number is display-currency-invariant
+  const usedPercent = isBudgetSet
+    ? (canonicalRatio >= 1
+      ? `${Math.round(canonicalRatio * 100)}%`
+      : (() => {
+          const rounded = Math.round(canonicalRatio * 100);
+          if (rounded >= 100) return `${Math.floor(canonicalRatio * 1000) / 10}%`;
+          return `${rounded}%`;
+        })()
+    )
+    : '0%';
 
   // ── Income Side Calculations ──
   const netSavings = monthIncome - monthTotal;

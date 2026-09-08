@@ -72,6 +72,12 @@
 | **Internationalization** | English, Hindi, Nepali — fully synced in `constants/i18n/` | ✅ Complete |
 | **Privacy Mode** | Global amount masking with locked-width containers | ✅ Complete |
 
+### Financial History Principles
+
+- **Historical transaction invariant:** Once a transaction is saved, its original amount, currency, date, and exchange-rate snapshot are immutable. Historical reporting never revalues a transaction using today’s FX rate or inflation.
+- **Multi-country support:** Users may create transactions in any supported currency over time. Mixed-currency totals convert each transaction using that transaction’s own historical snapshot.
+- **No automatic inflation adjustment:** Any current-value view must be explicit and optional; it must never replace historical reporting.
+
 ---
 
 ## 3. Screen-by-Screen Walkthrough (For Feature Pages / Screenshots)
