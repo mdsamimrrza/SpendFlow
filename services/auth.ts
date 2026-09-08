@@ -276,14 +276,28 @@ export async function removeAvatar(): Promise<void> {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) throw new Error('No authenticated user found.');
-  // Best-effort removal of the stored avatar objects (per-user folder).
-  try {
-    const { data } = await supabase.storage.from('avatars').list(user.id, { limit: 100 });
-    const files = (data ?? []).map((item) => `${user.id}/${item.name}`);
-    if (files.length > 0) await supabase.storage.from('avatars').remove(files);
-  } catch {
-    // Storage cleanup is best-effort; the URL is cleared below regardless.
+
+  // Storage first — the DB/auth reference is only cleared when the objects are
+  // verifiably gone (converging pagination: re-list until the folder is empty).
+  // If storage deletion fails we throw, so the profile never claims the photo
+  // was removed while the object still exists in the public avatars bucket.
+  for (let round = 0; round < 50; round++) {
+    const { data: files, error: listError } = await supabase.storage
+      .from('avatars')
+      .list(user.id, { limit: 100 });
+    if (listError) throw new Error('Could not remove the profile photo. Please try again.');
+    const names = (files ?? []).map((item) => `${user.id}/${item.name}`);
+    if (names.length === 0) break;
+
+    const { error: removeError } = await supabase.storage.from('avatars').remove(names);
+    if (removeError) throw new Error('Could not remove the profile photo. Please try again.');
+
+    if (names.length < 100) {
+      const { data: recheck } = await supabase.storage.from('avatars').list(user.id, { limit: 1 });
+      if (!recheck || recheck.length === 0) break;
+    }
   }
+
   await persistAvatarUrl(user.id, null);
 }
 

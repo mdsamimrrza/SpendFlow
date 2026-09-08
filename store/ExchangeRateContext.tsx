@@ -25,12 +25,20 @@ const DEFAULT_RATES: Record<string, number> = {
 };
 
 let inMemoryRates: Record<string, number> = { ...DEFAULT_RATES };
+// Truth about where inMemoryRates came from. 'live' = fresh provider data;
+// 'cached' = stored provider data past its TTL; 'estimated' = hardcoded
+// offline baseline only. Consumers surface this instead of silently presenting
+// estimated values as current market data.
+let inMemoryStatus: RateStatus = 'estimated';
+let inMemoryFetchedAt: number | null = null;
 
 const PRIMARY_RATES_API =
   process.env.EXPO_PUBLIC_EXCHANGE_RATE_API_URL || 'https://open.er-api.com/v6/latest/USD';
 const FALLBACK_RATES_API =
   process.env.EXPO_PUBLIC_EXCHANGE_RATE_FALLBACK_API_URL ||
   'https://api.exchangerate-api.com/v4/latest/USD';
+
+export type RateStatus = 'live' | 'cached' | 'estimated';
 
 async function fetchExchangeRates(): Promise<Record<string, number>> {
   try {
@@ -41,6 +49,8 @@ async function fetchExchangeRates(): Promise<Record<string, number>> {
       const isFresh = Date.now() - parsed.timestamp < CACHE_EXPIRY_MS;
       if (parsed.rates && Object.keys(parsed.rates).length > 0) {
         inMemoryRates = { ...DEFAULT_RATES, ...parsed.rates };
+        inMemoryFetchedAt = parsed.timestamp;
+        inMemoryStatus = isFresh ? 'live' : 'cached';
         if (isFresh) {
           return inMemoryRates;
         }
@@ -77,6 +87,8 @@ async function fetchExchangeRates(): Promise<Record<string, number>> {
       };
 
       inMemoryRates = newRates;
+      inMemoryStatus = 'live';
+      inMemoryFetchedAt = Date.now();
       await AsyncStorage.setItem(
         RATES_STORAGE_KEY,
         JSON.stringify({ timestamp: Date.now(), rates: newRates }),
@@ -87,11 +99,26 @@ async function fetchExchangeRates(): Promise<Record<string, number>> {
     // Fallback gracefully to in-memory or cached rates
   }
 
+  // No live data and nothing better in cache: whatever inMemoryRates holds is
+  // at best a stale copy — its existing inMemoryStatus says which. If even
+  // that was never populated from a provider, it is the estimated baseline.
+  if (inMemoryStatus === 'live' && inMemoryFetchedAt !== null &&
+      Date.now() - inMemoryFetchedAt >= CACHE_EXPIRY_MS) {
+    inMemoryStatus = 'cached';
+  }
   return inMemoryRates;
 }
 
 function getCachedRates(): Record<string, number> {
   return inMemoryRates;
+}
+
+function getCachedRateStatus(): RateStatus {
+  return inMemoryStatus;
+}
+
+function getCachedRateFetchedAt(): number | null {
+  return inMemoryFetchedAt;
 }
 
 /**
@@ -128,6 +155,10 @@ export interface ExchangeRateContextValue {
   convert: (amount: number, fromCurrency?: string, toCurrency?: string) => number;
   /** Re-evaluates the shared rate cache (TTL-respecting, same as a fresh mount previously did). */
   refresh: () => Promise<Record<string, number>>;
+  /** Where the current rates came from: 'live' provider data, 'cached' (past TTL), or 'estimated' offline baseline. */
+  status: RateStatus;
+  /** Provider fetch timestamp (ms epoch) of the current rates — null when estimated. */
+  fetchedAt: number | null;
 }
 
 export const ExchangeRateContext = createContext<ExchangeRateContextValue | null>(null);
@@ -148,15 +179,19 @@ export const ExchangeRateContext = createContext<ExchangeRateContextValue | null
 export function ExchangeRateProvider({ children }: PropsWithChildren) {
   const [rates, setRates] = useState<Record<string, number>>(getCachedRates);
   const [loading, setLoading] = useState(false);
+  const [rateStatus, setRateStatus] = useState<RateStatus>(getCachedRateStatus);
+  const [rateFetchedAt, setRateFetchedAt] = useState<number | null>(getCachedRateFetchedAt);
 
   useEffect(() => {
     let mounted = true;
     setLoading(true);
 
     fetchExchangeRates()
-      .then((newRates) => {
+      .then(() => {
         if (mounted) {
-          setRates(newRates);
+          setRates(getCachedRates());
+          setRateStatus(getCachedRateStatus());
+          setRateFetchedAt(getCachedRateFetchedAt());
           setLoading(false);
         }
       })
@@ -169,7 +204,13 @@ export function ExchangeRateProvider({ children }: PropsWithChildren) {
     };
   }, []);
 
-  const refresh = useCallback(() => fetchExchangeRates(), []);
+  const refresh = useCallback(() =>
+    fetchExchangeRates().then((nextRates) => {
+      setRates(getCachedRates());
+      setRateStatus(getCachedRateStatus());
+      setRateFetchedAt(getCachedRateFetchedAt());
+      return nextRates;
+    }), []);
 
   const convert = useCallback(
     (amount: number, fromCurrency = 'NPR', toCurrency = 'NPR') => {
@@ -179,8 +220,8 @@ export function ExchangeRateProvider({ children }: PropsWithChildren) {
   );
 
   const value = useMemo<ExchangeRateContextValue>(
-    () => ({ rates, loading, convert, refresh }),
-    [convert, loading, rates, refresh],
+    () => ({ rates, loading, convert, refresh, status: rateStatus, fetchedAt: rateFetchedAt }),
+    [convert, loading, rates, rateFetchedAt, rateStatus, refresh],
   );
 
   return <ExchangeRateContext.Provider value={value}>{children}</ExchangeRateContext.Provider>;

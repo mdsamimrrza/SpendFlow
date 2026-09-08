@@ -60,31 +60,51 @@ links.
   someone else's session usefully, but URL-borne tokens are visible to browser
   history. Switching Supabase Auth to PKCE closes this without client changes.
 
-## 4. Account-deletion semantics (finding #2 — fixed)
+## 4. Account-deletion semantics — resumable state machine (round 3)
 
 The client performs **zero destructive work**. `deleteAccount()` only calls the
 `delete-account` Edge Function with the caller's JWT; on any non-success it
 throws and the account remains untouched (no fallback path exists).
 
-The Edge Function is the sole orchestrator:
+The Edge Function is the sole orchestrator, in STRICT order:
+
 1. JWT → target user (client-supplied IDs are ignored entirely — self-delete
    only by construction).
-2. `public.delete_user_data(uuid)` RPC — ALL user-owned rows in ONE Postgres
-   transaction (migration `20260908020000_delete_user_data_rpc.sql`), FK-safe
-   order, idempotent.
-3. Storage purge of `receipts/{uid}/**` and `avatars/{uid}/**` through the
-   real Storage SDK (`storage.from().remove()`), paginated until each folder
-   is empty; ANY failure → the whole deletion fails.
-4. Post-checks (profile row gone, folders empty).
-5. Auth user deleted LAST — a storage/DB failure can therefore never strand a
-   half-deleted account with the login removed.
-6. `{ "success": true }` only on full completion.
+2. **Deletion lock**: `users.deletion_pending = true` (server-managed column;
+   `block_writes_during_deletion` triggers reject that user's writes on EVERY
+   user-owned table while set, and reject any client attempt to set the flag).
+3. **Storage FIRST**: `receipts/{uid}/**` + `avatars/{uid}/**` purged via the
+   official Storage SDK `remove()` with converging pagination, then verified by
+   the `count_user_storage` RPC (reads storage metadata directly — a
+   misleading SDK response cannot mask survivors). Any failure ⇒ 500; the DB
+   and Auth are untouched at that point.
+4. `public.delete_user_data(uuid)` RPC — ALL user-owned rows in ONE Postgres
+   transaction (migration `20260908020000`), FK-safe order, idempotent.
+5. Post-checks: profile row gone + a final storage sweep for objects a
+   concurrent device might have uploaded between the purge and its (rejected)
+   row insert.
+6. Auth user deleted LAST — a failure there reports failure; retry re-verifies
+   storage/DB (both converge to "already clean") and retries only the remainder.
+7. `{ "success": true }` only on full completion.
 
-**Cross-system boundary (honest, not pseudo-atomic):** Postgres, Storage, and
-Auth are separate services — no cross-system transaction exists. The flow is
-retry-safe instead: every step treats "already absent" as success, so a retry
-after a mid-flow failure completes the remainder and then deletes the auth
-identity. Shared data (exchange rates, market gold rates) is never touched.
+**Cross-system boundary (honest, not pseudo-atomic):** PostgreSQL, Storage, and
+Auth are separate services — no cross-system transaction exists. The design is
+a retry-safe state machine: every stage is idempotent and treats "already
+absent" as success. Residual, documented races: storage uploads are not
+trigger-guardable (only DB rows are), so a sub-second window remains between
+the final sweep and the auth deletion — any object landing there is
+inaccessible garbage (private bucket, owner-policy, no owner identity) that
+periodic maintenance can clean. Shared data (exchange rates, market gold
+rates) is never touched.
+
+## 4b. Exchange-rate status honesty (round 3)
+
+`ExchangeRateContext` exposes `status: 'live' | 'cached' | 'estimated'` and
+`fetchedAt` alongside `rates`. `DEFAULT_RATES` (the hardcoded offline
+baseline) is never silently presented as market data: when only the baseline
+is available, surfaces render an explicit localized "Offline rates in use"
+notice (Accounts' net-worth card is the first consumer). Client writes to
+`exchange_rates` remain denied (read-only for clients; trusted server only).
 
 ## 5. Bullion history policy (finding #1 — fixed)
 

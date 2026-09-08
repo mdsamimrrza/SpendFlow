@@ -52,7 +52,7 @@ export default function AccountsScreen() {
   const router = useRouter();
   const theme = useTheme();
   const { profile, session } = useAuth();
-  const { rates } = useExchangeRates();
+  const { rates, status: rateStatus } = useExchangeRates();
   const { t } = useLanguage();
   const { isPrivacyMode } = usePrivacy();
 
@@ -280,6 +280,11 @@ export default function AccountsScreen() {
           <Text variant="caption" muted style={{ fontSize: 11, marginTop: 1 }}>
             Across all connected banks, digital wallets, and cash reserves.
           </Text>
+          {rateStatus === 'estimated' ? (
+            <Text variant="caption" style={{ fontSize: 10, marginTop: 4, color: theme.colors.textMuted, fontStyle: 'italic' }}>
+              ⚠ {t('rates_estimated_notice') || 'Offline rates in use — figures are estimates, not live market rates.'}
+            </Text>
+          ) : null}
         </Card>
 
         {/* ── 2b. QUICK ACTIONS: Add Account · New Transfer · Transfer History ── */}
