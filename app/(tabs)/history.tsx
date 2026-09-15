@@ -45,7 +45,7 @@ import {
   startOfWeek,
 } from 'date-fns';
 import { ExpenseItem } from '@/components/expense/ExpenseItem';
-import { buildRateResolver, RateResolver } from '@/services/exchange';
+import { useRateResolver } from '@/hooks/useRateResolver';
 import { BottomSheet } from '@/components/ui/BottomSheet';
 import { Button } from '@/components/ui/Button';
 import { CalendarModal, DateRange } from '@/components/ui/CalendarModal';
@@ -57,17 +57,19 @@ import { PressableScale } from '@/components/ui/PressableScale';
 import { Select } from '@/components/ui/Select';
 import { PrivacyEyeButton } from '@/components/ui/PrivacyEyeButton';
 import { Text } from '@/components/ui/Text';
+import { showToast } from '@/components/ui/Toast';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
 import { SORT_OPTIONS } from '@/constants/app';
 import { useAuth } from '@/hooks/useAuth';
 import { useExpenses } from '@/hooks/useExpenses';
 import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
+import { usePrivacyScreen } from '@/hooks/usePrivacyScreen';
 import { useTheme } from '@/hooks/useTheme';
 import { listCategories } from '@/services/categories';
 import { exportCsv, exportExcel, exportPdf } from '@/services/export';
 import { Category, Expense, SortKey } from '@/types';
-import { currentMonthRange, getCycleLabel, formatMoney } from '@/utils/format';
+import { calculateCashFlow, currentMonthRange, getCycleLabel, formatMoney } from '@/utils/format';
 
 type HistoryPeriod = 'all' | 'today' | 'week' | 'month' | 'custom';
 
@@ -76,6 +78,8 @@ export default function HistoryScreen() {
   const { t, language } = useLanguage();
   const { isPrivacyMode } = usePrivacy();
   const theme = useTheme();
+  // Financial data screen: block screenshots / screen recording while mounted.
+  usePrivacyScreen();
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -253,29 +257,12 @@ export default function HistoryScreen() {
     });
   }, [expenses.items, selectedCategoryId, typeFilter]);
 
-  const [rateResolver, setRateResolver] = useState<RateResolver | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    buildRateResolver(filteredExpenses, preferredCurrency)
-      .then((resolver) => {
-        if (!cancelled) setRateResolver(resolver);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [filteredExpenses, preferredCurrency]);
-
-  // Every expense converts at its own transaction date, never today's rate
-  const convertAtDate = useCallback(
-    (expense: Expense) => {
-      if (rateResolver) {
-        return rateResolver.convert(Number(expense.amount), expense.currency || 'NPR', preferredCurrency, expense.date);
-      }
-      return 0;
-    },
-    [rateResolver, preferredCurrency],
+  // Every expense converts at its own transaction date, never today's rate —
+  // shared snapshot-resolver hook (identical source used by Analytics, Export,
+  // P&L and the net-worth rollup, so totals can never disagree between screens).
+  const { resolver: rateResolver, convertAtDate } = useRateResolver(
+    filteredExpenses,
+    preferredCurrency,
   );
 
   // Per-row converted amounts, computed once per (data, rate) change — list
@@ -290,9 +277,12 @@ export default function HistoryScreen() {
   // parent-driven re-renders.
   const handleDeleteExpense = useCallback(
     (expense: Expense) => {
-      void expenses.remove(expense.id);
+      expenses
+        .remove(expense.id)
+        .then(() => showToast({ type: 'success', message: t('bin_moved_toast') }))
+        .catch(() => undefined);
     },
-    [expenses.remove],
+    [expenses.remove, t],
   );
 
   const renderExpenseItem = useCallback(
@@ -302,11 +292,22 @@ export default function HistoryScreen() {
     [displayAmounts, handleDeleteExpense],
   );
 
-  // Total summary of all matching expenses (reuses the per-row converted values)
-  const totalAmount = useMemo(
-    () => filteredExpenses.reduce((sum, item) => sum + convertAtDate(item), 0),
-    [filteredExpenses, convertAtDate],
+  // Headline summary of all matching rows. "Cash Flow" (all-flow mode) is a
+  // NET figure — inflow minus outflow — via calculateCashFlow, which uses the
+  // same integer minor-unit accumulation as the dashboard's sumExpenses so the
+  // two screens agree to the paisa. Inflow/Outflow modes show their gross
+  // totals. Rows store positive amounts; the sign is applied here, not at
+  // conversion (convertAtDate/displayAmounts stay unsigned for the list rows).
+  const flowTotals = useMemo(
+    () => calculateCashFlow(filteredExpenses, preferredCurrency, rateResolver),
+    [filteredExpenses, preferredCurrency, rateResolver],
   );
+  const totalAmount =
+    typeFilter === 'income'
+      ? flowTotals.totalIncome
+      : typeFilter === 'expense'
+      ? flowTotals.totalExpense
+      : flowTotals.netSavings;
 
   // Peak transaction in the active display currency. Using the raw stored
   // amount here would label (for example) INR 40,807 as USD 40,807.
@@ -600,6 +601,10 @@ export default function HistoryScreen() {
                   typeFilter === 'income'
                     ? theme.colors.income
                     : typeFilter === 'expense'
+                    ? (theme.isDark ? '#EF4444' : '#DC2626')
+                    : totalAmount > 0
+                    ? theme.colors.income
+                    : totalAmount < 0
                     ? (theme.isDark ? '#EF4444' : '#DC2626')
                     : theme.colors.text,
                 fontVariant: ['tabular-nums'],

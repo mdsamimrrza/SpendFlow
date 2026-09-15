@@ -4,6 +4,7 @@ import { Link, useFocusEffect, useRouter } from 'expo-router';
 import { ArrowRight, Plus, ReceiptText } from 'lucide-react-native';
 import { Avatar } from '@/components/ui/Avatar';
 import { BudgetLimitHeroCard } from '@/components/expense/BudgetLimitHeroCard';
+import { BillsDueStrip } from '@/components/expense/BillsDueStrip';
 import { CategoryBreakdown } from '@/components/expense/Charts';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ExpenseItem } from '@/components/expense/ExpenseItem';
@@ -20,8 +21,9 @@ import { useRateResolver } from '@/hooks/useRateResolver';
 import { useExpenses } from '@/hooks/useExpenses';
 import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
+import { usePrivacyScreen } from '@/hooks/usePrivacyScreen';
 import { useTheme } from '@/hooks/useTheme';
-import { convertCurrency, currentMonthRange, getCycleMeta, getCycleLabel, getMonthlyBudget, isoDate, sumExpenses } from '@/utils/format';
+import { currentMonthRange, getCycleMeta, getCycleLabel, getMonthlyBudget, isoDate, sumExpenses } from '@/utils/format';
 import { CURRENCY_DETAILS } from '@/constants/app';
 
 export default function HomeScreen() {
@@ -31,6 +33,8 @@ export default function HomeScreen() {
   const theme = useTheme();
   const router = useRouter();
   const { rates } = useExchangeRates();
+  // Financial data screen: block screenshots / screen recording while mounted.
+  usePrivacyScreen();
   // Dashboard derivations are memoized: without this, every render (including
   // local UI state like the profile drawer) re-filtered and re-converted the
   // full loaded expense set five times.
@@ -49,7 +53,7 @@ export default function HomeScreen() {
   // Snapshot-aware conversion: every dashboard total resolves each row at its
   // OWN date (using the row's exchange_rate_to_usd snapshot where present) —
   // identical to History, so the two screens can never diverge.
-  const rateResolver = useRateResolver(expenses.items, preferredCurrency);
+  const { resolver: rateResolver, ready: resolverReady } = useRateResolver(expenses.items, preferredCurrency);
 
   const refreshProfileRef = useRef(refreshProfile);
   refreshProfileRef.current = refreshProfile;
@@ -96,17 +100,17 @@ export default function HomeScreen() {
       : 0;
   }, [expenses.items, preferredCurrency, rateResolver]);
 
-  const monthlyBudget = getMonthlyBudget(profile, rates, preferredCurrency);
+  const monthlyBudget = getMonthlyBudget(profile, rateResolver, preferredCurrency);
 
-  // Canonical USD ratio for BudgetLimitHeroCard so the % stays invariant across display currencies
+  // Budget ratio for BudgetLimitHeroCard: convert both expenses and budget to the budget's currency
+  // using the SAME RateResolver (historical rates) for consistency across display currencies
   const budgetRatioBase = useMemo(() => {
     const rawBudget = profile?.monthly_budget ? Number(profile.monthly_budget) : 0;
     if (!rawBudget || rawBudget <= 0 || !rateResolver) return undefined;
     const budgetCcy = (profile?.budget_currency || profile?.preferred_currency || 'NPR').toUpperCase();
-    const budgetUsd = convertCurrency(rawBudget, budgetCcy, 'USD', rates);
-    const spentUsd = sumExpenses(currentMonthItems, 'USD', rateResolver, 'expense');
-    return budgetUsd > 0 ? spentUsd / budgetUsd : 0;
-  }, [profile, rates, rateResolver, currentMonthItems]);
+    const spentInBudgetCcy = sumExpenses(currentMonthItems, budgetCcy, rateResolver, 'expense');
+    return rawBudget > 0 ? spentInBudgetCcy / rawBudget : 0;
+  }, [profile, rateResolver, currentMonthItems]);
 
   // Time-aware greeting
   const currentHour = new Date().getHours();
@@ -172,14 +176,38 @@ export default function HomeScreen() {
     };
   }, [floatY, floatX]);
 
-  if (expenses.loading && expenses.items.length === 0) {
+  if ((expenses.loading && expenses.items.length === 0) || !resolverReady) {
+    // First-load skeleton shaped like the real dashboard (app bar, summary
+    // card pair, chart, list rows) so data appears to slot into place.
+    // Also held while the rate resolver builds its first pass — otherwise the
+    // hero card (0.00), chart (flat line) and category breakdown (empty
+    // state) would pop in one by one. The resolver's `ready` flag settles on
+    // success OR failure, so an offline login renders fallbacks instead of
+    // getting stuck on the skeleton.
     return (
-      <View style={{ flex: 1, padding: theme.spacing.lg, gap: theme.spacing.lg, backgroundColor: theme.colors.background }}>
-        <Skeleton height={60} />
-        <Skeleton height={180} />
-        <Skeleton height={220} />
-        <Skeleton height={160} />
-        <Skeleton height={240} />
+      <View style={{ flex: 1, padding: theme.spacing.lg, gap: 16, backgroundColor: theme.colors.background }}>
+        {/* App bar */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          <View style={{ gap: 8 }}>
+            <Skeleton height={11} width={150} radius={6} style={{ marginBottom: 0 }} />
+            <Skeleton height={22} width={210} radius={6} style={{ marginBottom: 0 }} />
+          </View>
+          <Skeleton height={42} width={42} radius={21} style={{ marginBottom: 0 }} />
+        </View>
+
+        {/* Wallet + Flow summary card pair */}
+        <View style={{ flexDirection: 'row', gap: 14 }}>
+          <Skeleton height={150} style={{ flex: 1, marginBottom: 0 }} />
+          <Skeleton height={150} style={{ flex: 1, marginBottom: 0 }} />
+        </View>
+
+        {/* Chart / insights card */}
+        <Skeleton height={190} />
+
+        {/* Recent transaction rows */}
+        <Skeleton height={76} radius={16} />
+        <Skeleton height={76} radius={16} />
+        <Skeleton height={76} radius={16} />
       </View>
     );
   }
@@ -256,6 +284,9 @@ export default function HomeScreen() {
               prevMonthIncome={prevMonthIncome}
               budgetRatioBase={budgetRatioBase}
             />
+
+            {/* 2.5 BILLS DUE — open recurring slots with one-tap Mark Paid */}
+            <BillsDueStrip />
 
             {/* 3. STOCK-STYLE FINANCIAL TREND WAVE GRAPH (1D / 7D / 4W / 6M / 1Y) */}
             <StockTrendChart

@@ -9,14 +9,13 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { format } from 'date-fns';
-import Svg, { Circle, Defs, Line, LinearGradient, Path, Rect, Stop, Text as SvgText } from 'react-native-svg';
+import Svg, { Circle, Defs, Line, LinearGradient, Path, Stop, Text as SvgText } from 'react-native-svg';
 import {
   Calculator,
   ChevronLeft,
   Clock,
   Globe,
   Info,
-  RefreshCw,
   Scale,
   ShieldCheck,
   TrendingUp,
@@ -25,16 +24,25 @@ import { Card } from '@/components/ui/Card';
 import { PrivacyEyeButton } from '@/components/ui/PrivacyEyeButton';
 import { Text } from '@/components/ui/Text';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
+import { useAuth } from '@/hooks/useAuth';
 import { useBullionRates } from '@/hooks/useBullionRates';
 import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
 import { useTheme } from '@/hooks/useTheme';
+import { countryForCurrency } from '@/constants/countries';
+import { BullionHistoryPoint } from '@/services/bullion';
 import { OfficialNepalGoldRate } from '@/services/nepalGold';
 import { formatMoney } from '@/utils/format';
 
 type ActiveBenchmarkKey = 'gold_tola' | 'silver_tola' | 'gold_10g' | 'silver_10g';
 type TrendPeriod = 1 | 3 | 6 | 12;
-type TargetCountryMarket = 'NEPAL' | 'INDIA';
+/**
+ * Nepal is always the fixed primary market (FENEGOSIDA official fix). The
+ * secondary market follows the user's profile currency so every user sees
+ * their own country's board: INR → India (IBJA calibration), other
+ * currencies → that currency's global-spot board.
+ */
+type TargetCountryMarket = 'NEPAL' | 'SECONDARY';
 
 const GRAMS_PER_TOLA = 11.6638;
 
@@ -56,34 +64,65 @@ export default function BullionScreen() {
   const theme = useTheme();
   const router = useRouter();
   const { language, t } = useLanguage();
+  const { profile } = useAuth();
   usePrivacy();
   const { width } = useWindowDimensions();
 
-  // Determine initial country based on language or profile default
-  const defaultCountry: TargetCountryMarket = language === 'ne' ? 'NEPAL' : 'INDIA';
-  const [activeMarket, setActiveMarket] = useState<TargetCountryMarket>(defaultCountry);
+  // Secondary market follows the user's profile currency. NPR users would get
+  // Nepal twice, so they fall back to India (IBJA) — the previous default.
+  const secondaryCurrency = useMemo(() => {
+    const preferred = (profile?.preferred_currency || 'INR').toUpperCase();
+    return preferred === 'NPR' ? 'INR' : preferred;
+  }, [profile?.preferred_currency]);
+  const secondaryCountry = countryForCurrency(secondaryCurrency);
+  const secondaryLabel = secondaryCountry
+    ? `${secondaryCountry.flag} ${secondaryCountry.name} (${secondaryCurrency})`
+    : `🌐 Global (${secondaryCurrency})`;
 
-  const activeCurrency = activeMarket === 'NEPAL' ? 'NPR' : 'INR';
-  const { prices, rawRates, loading, refreshBullionRates, nepalHistory } = useBullionRates(activeCurrency);
+  // Nepali users start on the Nepal board; everyone else on their own market.
+  const defaultMarket: TargetCountryMarket = language === 'ne' ? 'NEPAL' : 'SECONDARY';
+  const [activeMarket, setActiveMarket] = useState<TargetCountryMarket>(defaultMarket);
 
-  // Real day-over-day change from consecutive stored official records.
+  const activeCurrency = activeMarket === 'NEPAL' ? 'NPR' : secondaryCurrency;
+  const { prices, rawRates, loading, nepalHistory, marketHistory } = useBullionRates(activeCurrency);
+
+  // Day-over-day change from consecutive records — Nepal's verified official
+  // rows, or the secondary market's real futures-close history.
   const nepalChange = useMemo(() => {
-    if (activeMarket !== 'NEPAL' || nepalHistory.length < 2) return null;
-    const latest = nepalHistory[nepalHistory.length - 1];
-    const prev = nepalHistory[nepalHistory.length - 2];
-    const delta = (key: ActiveBenchmarkKey) => {
-      const now = officialBenchmarkPrice(latest, key);
-      const before = officialBenchmarkPrice(prev, key);
-      if (!now || !before) return null;
-      return { change: Math.round(now - before), pct: ((now - before) / before) * 100 };
+    if (activeMarket === 'NEPAL') {
+      if (nepalHistory.length < 2) return null;
+      const latest = nepalHistory[nepalHistory.length - 1];
+      const prev = nepalHistory[nepalHistory.length - 2];
+      const delta = (key: ActiveBenchmarkKey) => {
+        const now = officialBenchmarkPrice(latest, key);
+        const before = officialBenchmarkPrice(prev, key);
+        if (!now || !before) return null;
+        return { change: Math.round(now - before), pct: ((now - before) / before) * 100 };
+      };
+      return {
+        gold_tola: delta('gold_tola'),
+        silver_tola: delta('silver_tola'),
+        gold_10g: delta('gold_10g'),
+        silver_10g: delta('silver_10g'),
+      };
+    }
+    // Secondary market: real day-over-day deltas from each benchmark's own
+    // futures-close series — gold AND silver, tola AND 10g.
+    const delta = (series: BullionHistoryPoint[]) => {
+      if (series.length < 2) return null;
+      const latest = series[series.length - 1];
+      const prev = series[series.length - 2];
+      const change = latest.price - prev.price;
+      if (!prev.price) return null;
+      return { change: Math.round(change), pct: (change / prev.price) * 100 };
     };
     return {
-      gold_tola: delta('gold_tola'),
-      silver_tola: delta('silver_tola'),
-      gold_10g: delta('gold_10g'),
-      silver_10g: delta('silver_10g'),
+      gold_tola: delta(marketHistory.gold_tola),
+      silver_tola: delta(marketHistory.silver_tola),
+      gold_10g: delta(marketHistory.gold_10g),
+      silver_10g: delta(marketHistory.silver_10g),
     };
-  }, [activeMarket, nepalHistory]);
+  }, [activeMarket, nepalHistory, marketHistory]);
 
   // Active selected benchmark card for chart synchronisation
   const [selectedKey, setSelectedKey] = useState<ActiveBenchmarkKey>('gold_tola');
@@ -94,9 +133,8 @@ export default function BullionScreen() {
   const [calcMetal, setCalcMetal] = useState<'24k' | '22k' | 'silver'>('24k');
   const [calcWeight, setCalcWeight] = useState('10');
 
-  // Benchmark Calculations for active market (Nepal vs India)
+  // Benchmark Calculations for active market (Nepal vs user's country board)
   const benchmarks = useMemo(() => {
-    const isNepal = activeMarket === 'NEPAL';
     const goldLabel = t('bullion_hallmark_gold') || 'HALLMARK GOLD';
     const silverLabel = t('bullion_silver') || 'SILVER';
     const tolaLabel = t('bullion_per_tola') || '1 TOLA';
@@ -104,10 +142,10 @@ export default function BullionScreen() {
 
     if (!prices) {
       return {
-        gold_tola: { label: goldLabel, unit: tolaLabel, price: 0, change: -100, pct: -0.03, metal: 'gold' as const },
-        silver_tola: { label: silverLabel, unit: tolaLabel, price: 0, change: 75, pct: 1.53, metal: 'silver' as const },
-        gold_10g: { label: goldLabel, unit: gram10Label, price: 0, change: -85, pct: -0.03, metal: 'gold' as const },
-        silver_10g: { label: silverLabel, unit: gram10Label, price: 0, change: 64.5, pct: 1.54, metal: 'silver' as const },
+        gold_tola: { label: goldLabel, unit: tolaLabel, price: 0, change: null, pct: null, metal: 'gold' as const },
+        silver_tola: { label: silverLabel, unit: tolaLabel, price: 0, change: null, pct: null, metal: 'silver' as const },
+        gold_10g: { label: goldLabel, unit: gram10Label, price: 0, change: null, pct: null, metal: 'gold' as const },
+        silver_10g: { label: silverLabel, unit: gram10Label, price: 0, change: null, pct: null, metal: 'silver' as const },
       };
     }
 
@@ -116,32 +154,32 @@ export default function BullionScreen() {
         label: goldLabel,
         unit: tolaLabel,
         price: prices.gold24kPerTola,
-        change: nepalChange?.gold_tola?.change ?? (isNepal ? null : -78),
-        pct: nepalChange?.gold_tola?.pct ?? (isNepal ? null : -0.03),
+        change: nepalChange?.gold_tola?.change ?? null,
+        pct: nepalChange?.gold_tola?.pct ?? null,
         metal: 'gold' as const,
       },
       silver_tola: {
         label: silverLabel,
         unit: tolaLabel,
         price: prices.silverPerTola,
-        change: nepalChange?.silver_tola?.change ?? (isNepal ? null : 55),
-        pct: nepalChange?.silver_tola?.pct ?? (isNepal ? null : 1.53),
+        change: nepalChange?.silver_tola?.change ?? null,
+        pct: nepalChange?.silver_tola?.pct ?? null,
         metal: 'silver' as const,
       },
       gold_10g: {
         label: goldLabel,
         unit: gram10Label,
         price: prices.gold24kPer10g,
-        change: nepalChange?.gold_10g?.change ?? (isNepal ? null : -65),
-        pct: nepalChange?.gold_10g?.pct ?? (isNepal ? null : -0.03),
+        change: nepalChange?.gold_10g?.change ?? null,
+        pct: nepalChange?.gold_10g?.pct ?? null,
         metal: 'gold' as const,
       },
       silver_10g: {
         label: silverLabel,
         unit: gram10Label,
         price: prices.silverPer10g,
-        change: nepalChange?.silver_10g?.change ?? (isNepal ? null : 47),
-        pct: nepalChange?.silver_10g?.pct ?? (isNepal ? null : 1.54),
+        change: nepalChange?.silver_10g?.change ?? null,
+        pct: nepalChange?.silver_10g?.pct ?? null,
         metal: 'silver' as const,
       },
     };
@@ -153,27 +191,36 @@ export default function BullionScreen() {
   const chartGradColor = isGold ? '#F59E0B' : '#64748B';
 
   // ── HISTORICAL TREND DATA FOR SELECTED BENCHMARK ──
-  // Real, verified official daily rates only. A market without at least two
-  // stored records (India has no official-history source yet) shows the
-  // explicit unavailable-history state below — the app never fabricates
-  // historical price points.
+  // Nepal: real, verified official daily rates from market_gold_rates.
+  // Secondary market: real futures closes converted at historical FX through
+  // the same calibration as the live board (see buildBullionMarketHistory).
+  // Both sources are observed market data — nothing synthetic. A market with
+  // fewer than two points shows the explicit unavailable-history state.
   const historyPoints = useMemo(() => {
-    if (activeMarket !== 'NEPAL' || nepalHistory.length < 2) return [];
     const cutoff = Date.now() - trendMonths * 30 * 86_400_000;
-    const points = nepalHistory
-      .filter((r) => new Date(`${r.rate_date}T00:00:00`).getTime() >= cutoff)
-      .map((r) => {
-        const d = new Date(`${r.rate_date}T00:00:00`);
-        return {
-          date: r.rate_date,
-          label: format(d, 'd MMM yyyy'),
-          fullDate: format(d, 'EEE, d MMM yyyy'),
-          price: Math.round(officialBenchmarkPrice(r, selectedKey)),
-        };
-      })
+    if (activeMarket === 'NEPAL') {
+      if (nepalHistory.length < 2) return [];
+      const points = nepalHistory
+        .filter((r) => new Date(`${r.rate_date}T00:00:00`).getTime() >= cutoff)
+        .map((r) => {
+          const d = new Date(`${r.rate_date}T00:00:00`);
+          return {
+            date: r.rate_date,
+            label: format(d, 'd MMM yyyy'),
+            fullDate: format(d, 'EEE, d MMM yyyy'),
+            price: Math.round(officialBenchmarkPrice(r, selectedKey)),
+          };
+        })
+        .filter((p) => p.price > 0);
+      return points.length >= 2 ? points : [];
+    }
+    // Secondary market: the selected benchmark's own real series.
+    const points = marketHistory[selectedKey]
+      .filter((p) => new Date(`${p.date}T00:00:00`).getTime() >= cutoff)
+      .map((p) => ({ ...p, label: format(new Date(`${p.date}T00:00:00`), 'd MMM yyyy') }))
       .filter((p) => p.price > 0);
     return points.length >= 2 ? points : [];
-  }, [activeMarket, nepalHistory, trendMonths, selectedKey]);
+  }, [activeMarket, nepalHistory, marketHistory, trendMonths, selectedKey]);
 
   const { minPrice, maxPrice } = useMemo(() => {
     if (historyPoints.length === 0) {
@@ -280,7 +327,7 @@ export default function BullionScreen() {
     if (change === null || pct === null) {
       return (
         <Text style={{ fontSize: 11, fontWeight: '700', color: theme.colors.textMuted, marginTop: 2 }}>
-          — awaiting official history
+          {t('bullion_change_pending') || '— awaiting history data'}
         </Text>
       );
     }
@@ -343,7 +390,7 @@ export default function BullionScreen() {
           </View>
         </View>
 
-        {/* ── 2. COUNTRY MARKET SWITCHER (NEPAL VS INDIA) ── */}
+        {/* ── 2. COUNTRY MARKET SWITCHER (NEPAL + USER'S COUNTRY) ── */}
         <View
           style={{
             flexDirection: 'row',
@@ -374,7 +421,7 @@ export default function BullionScreen() {
           </Pressable>
 
           <Pressable
-            onPress={() => { setActiveMarket('INDIA'); setSelectedIndex(null); }}
+            onPress={() => { setActiveMarket('SECONDARY'); setSelectedIndex(null); }}
             style={{
               flex: 1,
               flexDirection: 'row',
@@ -383,19 +430,25 @@ export default function BullionScreen() {
               gap: 6,
               paddingVertical: 8,
               borderRadius: theme.radius.sm,
-              backgroundColor: activeMarket === 'INDIA' ? theme.colors.primary : 'transparent',
+              backgroundColor: activeMarket === 'SECONDARY' ? theme.colors.primary : 'transparent',
             }}
           >
-            <Text style={{ fontSize: 13, fontWeight: '800', color: activeMarket === 'INDIA' ? '#FFFFFF' : theme.colors.textMuted }}>
-              🇮🇳 {t('bullion_market_india') || 'India (INR)'}
+            <Text
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.7}
+              style={{ fontSize: 13, fontWeight: '800', color: activeMarket === 'SECONDARY' ? '#FFFFFF' : theme.colors.textMuted }}
+            >
+              {secondaryLabel}
             </Text>
           </Pressable>
         </View>
 
-        {/* ── 3. LAST UPDATED PILL WITH REFRESH TRIGGER ── */}
-        <Pressable
-          onPress={refreshBullionRates}
-          disabled={loading}
+        {/* ── 3. LAST UPDATED PILL (auto-refreshing) ──
+            Rates update automatically on screen open, market switch, and app
+            foreground — no manual refresh control. Shows a spinner only while
+            a live fetch is in flight. */}
+        <View
           style={{
             flexDirection: 'row',
             alignItems: 'center',
@@ -416,10 +469,9 @@ export default function BullionScreen() {
             <Clock size={13} color={theme.colors.textMuted} />
           )}
           <Text variant="caption" muted style={{ fontSize: 11, fontWeight: '600' }}>
-            {loading ? 'Refreshing prices...' : updatedReadable}
+            {loading ? (t('bullion_updating') || 'Updating prices…') : updatedReadable}
           </Text>
-          {!loading && <RefreshCw size={11} color={theme.colors.textMuted} style={{ marginLeft: 2 }} />}
-        </Pressable>
+        </View>
 
         {/* ── 4. 2x2 BENCHMARK MARKET CARDS GRID ── */}
         <View style={{ gap: 10 }}>
@@ -608,7 +660,9 @@ export default function BullionScreen() {
               </Text>
               <Text variant="caption" muted style={{ fontSize: 11 }}>
                 {historyPoints.length >= 2
-                  ? 'Official Daily Rate History (FENEGOSIDA) — verified rates only'
+                  ? activeMarket === 'NEPAL'
+                    ? 'Official Daily Rate History (FENEGOSIDA) — verified rates only'
+                    : `Daily Close History (${secondaryCurrency}) — market benchmark series`
                   : t('bullion_history_unavailable') || 'Historical data unavailable'}
               </Text>
             </View>
@@ -711,23 +765,13 @@ export default function BullionScreen() {
                 />
               ) : null}
 
-              {/* Invisible Touch Hitboxes & Glowing Circle Point */}
+              {/* Invisible Circle Point Markers (touch handled by the overlay
+                  below — onPress on an svg Rect leaks RN responder props into
+                  the DOM on web, one console warning per point) */}
               {chartCoords.map((c) => {
                 const isSel = selectedIndex === c.index;
-                const n = chartCoords.length;
-                const hitW = n > 1 ? drawW / (n - 1) : drawW;
-                const safeHitW = Number.isFinite(hitW) ? hitW : 1;
-                const rectX = Number.isFinite(c.x) ? c.x - safeHitW / 2 : 0;
                 return (
                   <React.Fragment key={c.point.date}>
-                    <Rect
-                      x={rectX}
-                      y={padTop}
-                      width={safeHitW}
-                      height={drawH}
-                      fill="transparent"
-                      onPress={() => setSelectedIndex(c.index === selectedIndex ? null : c.index)}
-                    />
                     {(isSel || (selectedIndex === null && c.index === chartCoords.length - 1)) && (
                       <Circle
                         cx={c.x}
@@ -757,6 +801,19 @@ export default function BullionScreen() {
                 </SvgText>
               ))}
             </Svg>
+
+            {/* Touch layer — one native Pressable per chart point, overlaying
+                the SVG (same pattern as StockTrendChart). Keeps tap handling
+                off svg shapes so RN responder props never reach web DOM. */}
+            <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, flexDirection: 'row' }}>
+              {chartCoords.map((c) => (
+                <Pressable
+                  key={c.point.date}
+                  onPress={() => setSelectedIndex(c.index === selectedIndex ? null : c.index)}
+                  style={{ flex: 1, height: '100%' }}
+                />
+              ))}
+            </View>
 
             {/* Floating Tooltip Callout with Day, Month, Year */}
             {selectedPoint && (

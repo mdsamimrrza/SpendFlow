@@ -14,6 +14,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
+import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import { useRouter } from 'expo-router';
 import {
   AlertCircle,
@@ -31,7 +32,9 @@ import {
   FileText,
   Image as ImageIcon,
   ImagePlus,
+  LayoutGrid,
   Plus,
+  Repeat,
   Sparkles,
   Tag,
   Trash2,
@@ -39,6 +42,7 @@ import {
   X,
 } from 'lucide-react-native';
 import { z } from 'zod';
+import { format, parseISO } from 'date-fns';
 import { AccountManageModal } from '@/components/account/AccountManageModal';
 import { Button } from '@/components/ui/Button';
 import { CalendarModal } from '@/components/ui/CalendarModal';
@@ -52,17 +56,26 @@ import { PressableScale } from '@/components/ui/PressableScale';
 import { Text } from '@/components/ui/Text';
 import { CURRENCIES, PAYMENT_METHODS } from '@/constants/app';
 import { useAuth } from '@/hooks/useAuth';
-import { notifyExpensesChanged, useExpenses } from '@/hooks/useExpenses';
+import { notifyExpensesChanged } from '@/hooks/useExpenses';
+import { useAccountBalances } from '@/hooks/useAccountBalances';
 import { useLanguage } from '@/hooks/useLanguage';
-import { useTransfers } from '@/hooks/useTransfers';
+import { useSecurity } from '@/hooks/useSecurity';
 import { useTheme } from '@/hooks/useTheme';
-import { computeAccountBalances, listBankAccounts, seedDefaultAccounts } from '@/services/bankAccounts';
+import { listBankAccounts, seedDefaultAccounts } from '@/services/bankAccounts';
 import { listCategories } from '@/services/categories';
 import { convertExpense } from '@/services/exchange';
 import { getExpense, softDeleteExpense } from '@/services/expenses';
+import {
+  getCachedRecurringRules,
+  listRecurringRules,
+  payPlanFromForm,
+  updateRecurringRule,
+} from '@/services/recurring';
 import { deleteReceipt, uploadReceipt } from '@/services/receipts';
+import { ReceiptScan, scanReceipt } from '@/services/receiptOcr';
+import { showToast, ToastHost } from '@/components/ui/Toast';
 import { useReceiptUrl } from '@/hooks/useReceiptUrl';
-import { BankAccount, Category, ExpenseInput, PaymentMethod, TransactionType } from '@/types';
+import { BankAccount, Category, ExpenseInput, PaymentMethod, RecurringRule, TransactionType } from '@/types';
 import { currentFormattedTime, formatMoney, formatTimeForInput, isoDate, parseTimeInput } from '@/utils/format';
 
 const timeRegex = /^(\d{1,2}):(\d{2})\s*(AM|PM)$/i;
@@ -97,14 +110,21 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
   const theme = useTheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { width: screenWidth } = useWindowDimensions();
+  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
   const isCompactScreen = screenWidth < 380;
-  const expenses = useExpenses(userId);
-  // Transfers move money between accounts, so they must be included in live
-  // balances for the submit() guard to see post-transfer availability.
-  const { transfers } = useTransfers(userId);
+  // Suppresses the biometric lock around camera/picker round-trips (system
+  // activities fire background→active on return).
+  const { beginSystemCapture, endSystemCapture } = useSecurity();
   const [categories, setCategories] = useState<Category[]>([]);
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
+  // Single source of truth for live balances (same hook the Accounts & Wallets
+  // screen uses), so the submit guard and the account chips can never disagree
+  // with the balances shown elsewhere in the app. `expenses`/`transfers` come
+  // from the hook too — the balance math and every consumer share one load.
+  const {
+    liveBalances: accountLiveBalances,
+    expenses,
+  } = useAccountBalances(userId, accounts);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [calendarOpen, setCalendarOpen] = useState(false);
@@ -118,6 +138,30 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
   const [categoryDropdownOpen, setCategoryDropdownOpen] = useState(false);
   const [accountDropdownOpen, setAccountDropdownOpen] = useState(false);
   const [paymentDropdownOpen, setPaymentDropdownOpen] = useState(false);
+  // Floating dropdowns render in a transparent Modal (same pattern as the
+  // History toolbar) so their ScrollView scrolls natively on Android without
+  // fighting the form's outer ScrollView for the drag gesture. The anchor's
+  // window rect is measured at open time to position the panel below the row.
+  const categoryAnchorRef = useRef<View | null>(null);
+  const accountAnchorRef = useRef<View | null>(null);
+  const planAnchorRef = useRef<View | null>(null);
+  // Panel placement, computed once at open time from the anchor card's window
+  // rect: `top` when the list fits below the card, `bottom` when it must flip
+  // ABOVE the card (bottom-of-screen cards), `scrollMax` = the ScrollView
+  // viewport height left over after the panel chrome.
+  const [popoverRect, setPopoverRect] = useState<{
+    left: number;
+    width: number;
+    top?: number;
+    bottom?: number;
+    scrollMax: number;
+  } | null>(null);
+  // Pay-from-plan collapses to a single "🔁 Pay from plan (N)" line like the
+  // Add-a-note row; the circle row is hidden until expanded.
+  const [planRowOpen, setPlanRowOpen] = useState(false);
+  // Notes start collapsed in add mode; edit mode auto-expands when a saved
+  // note exists (see the getExpense effect) so it's never hidden from view.
+  const [notesOpen, setNotesOpen] = useState(false);
   const [insufficientBalance, setInsufficientBalance] = useState<{
     accountName: string;
     accountIcon?: string;
@@ -146,8 +190,38 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
   // (or legacy URL/local URI) that must be resolved to a signed URL to render.
   const receiptPreviewUrl = useReceiptUrl(form.receipt_image_url);
 
+  // ── Deferred receipt upload ──
+  // A picked image is kept LOCAL (its device URI sits in
+  // form.receipt_image_url for preview) and only uploads in submit() right
+  // before the row is saved. This guarantees an abandoned scan (user picks a
+  // bill, OCR runs, form is closed without saving) never leaves an orphaned
+  // object in storage. Cleared on remove/submit/replace.
+  const [pendingReceipt, setPendingReceipt] = useState<{
+    uri: string;
+    fileName: string | null;
+    mimeType: string | null;
+    base64: string | null;
+  } | null>(null);
+  // The receipt the EDITED expense originally pointed at (loaded from the DB).
+  // If the user replaces or clears it, the old storage object is deleted only
+  // AFTER the updated row saves — deleting earlier would lose the image if the
+  // save fails or the user backs out.
+  const originalReceiptUrlRef = useRef<string | null>(null);
+
   const [rawAmount, setRawAmount] = useState('');
+  // Edit mode: the rule this row belongs to (drives the "Part of a plan" badge
+  // and the delete dialog's "cancel plan too?" branch).
+  const [planRuleId, setPlanRuleId] = useState<string | null>(null);
+  // ── PAY FROM PLAN dropdown: pick an existing recurring rule → the form
+  // auto-fills from it, the date stays "today", and saving books the open
+  // slot AND re-anchors the chain from the payment date (docs §3/§6).
+  const [rulesCache, setRulesCache] = useState<RecurringRule[]>([]);
+  const [payPlan, setPayPlan] = useState<RecurringRule | null>(null);
+  const [planDropdownOpen, setPlanDropdownOpen] = useState(false);
   const currencyManuallySelected = useRef(false);
+  // Fields the user has touched this session — receipt-OCR prefill must never
+  // overwrite them (mirrors currencyManuallySelected, one flag per field).
+  const userEditedFields = useRef<Set<'amount' | 'date' | 'time' | 'description' | 'category' | 'payment'>>(new Set());
 
   // ── 12-hour numeric time entry buffers ──
   // Seeded from form.time so the boxes are pre-filled in add-mode. In edit-mode
@@ -158,28 +232,9 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
   const [minuteRaw, setMinuteRaw] = useState(() => initTimeMatch ? initTimeMatch[2] : '');
   const [hourRaw, setHourRaw] = useState(() => initTimeMatch ? initTimeMatch[1] : '');
 
-  // Derive live balances for each account from initial_balance + all loaded
-  // transactions. Async because every transaction is converted into the
-  // account's own currency (INR entries in an NPR account must not be summed
-  // as raw amounts). Used for the balance guard in submit() and account chips.
-  const [accountLiveBalances, setAccountLiveBalances] = useState<
-    (BankAccount & { live_balance: number })[]
-  >([]);
-
-  useEffect(() => {
-    let cancelled = false;
-    computeAccountBalances(accounts, expenses.items, transfers)
-      .then((next) => {
-        if (!cancelled) setAccountLiveBalances(next);
-      })
-      .catch(() => {
-        // Keep the last computed balances; the submit guard still works off them
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [accounts, expenses.items, transfers]);
-
+  // accountLiveBalances (live_balance per account, converted into each
+  // account's own currency) comes from useAccountBalances above — shared with
+  // the Accounts & Wallets screen. Used for the submit() guard and chips.
   // Account picker rows ordered by live balance: highest first, lowest last.
   const accountsByBalanceDesc = useMemo(
     () =>
@@ -191,6 +246,64 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
     [accounts, accountLiveBalances],
   );
 
+  // Circle row = current pick first (so it's always visible and ringed), then
+  // the richest accounts behind it, capped at five plus the ▦ All button —
+  // mirrors the category circle row in the card above.
+  const accountRow = useMemo(() => {
+    const seen = new Set<string>();
+    const list: BankAccount[] = [];
+    const selected = accounts.find((a) => a.id === form.bank_account_id);
+    if (selected) {
+      list.push(selected);
+      seen.add(selected.id);
+    }
+    for (const acc of accountsByBalanceDesc) {
+      if (!seen.has(acc.id)) {
+        list.push(acc);
+        seen.add(acc.id);
+      }
+    }
+    return list.slice(0, 5);
+  }, [accounts, form.bank_account_id, accountsByBalanceDesc]);
+
+  // ── Live over-balance alert for the amount hero ───────────────────────────
+  // Mirrors the submit() insufficient-balance guard: the entry amount is
+  // converted into the account's own currency before comparing, and in edit
+  // mode the already-booked original row is added back to the available
+  // balance. While true, the amount card border turns red.
+  const [overBalance, setOverBalance] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    const acct = accounts.find((a) => a.id === form.bank_account_id);
+    const amt = Number(form.amount) || 0;
+    if (!acct || amt <= 0 || (form.type ?? 'expense') !== 'expense') {
+      setOverBalance(false);
+      return;
+    }
+    const acctCurrency = acct.currency || 'NPR';
+    const balance =
+      accountLiveBalances.find((x) => x.id === acct.id)?.live_balance ?? Number(acct.initial_balance ?? 0);
+    void (async () => {
+      try {
+        const amountInAcct = await convertExpense(
+          { currency: form.currency || 'NPR', date: form.date || isoDate(), exchange_rate_to_usd: null, amount: amt },
+          acctCurrency,
+        );
+        let available = balance;
+        const original = expenseId ? expenses.items.find((e) => e.id === expenseId) : null;
+        if (original && original.type === 'expense' && original.bank_account_id === acct.id) {
+          available += await convertExpense(original, acctCurrency).catch(() => Number(original.amount) || 0);
+        }
+        if (!cancelled) setOverBalance(amountInAcct > available);
+      } catch {
+        if (!cancelled) setOverBalance(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [form.amount, form.currency, form.date, form.type, form.bank_account_id, accounts, accountLiveBalances, expenseId, expenses.items]);
+
   // Profile hydration can finish after this screen mounts while offline. Apply the
   // cached preferred currency once, but never overwrite a currency the user picked.
   useEffect(() => {
@@ -198,6 +311,14 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
       setForm((current) => ({ ...current, currency: profile.preferred_currency }));
     }
   }, [expenseId, profile?.preferred_currency]);
+
+  // Recurring rules for the duplicate-bill chip — add mode only; cached first,
+  // then the server list (same paint pattern as the rest of the app).
+  useEffect(() => {
+    if (!userId || expenseId) return;
+    void getCachedRecurringRules(userId).then(setRulesCache).catch(() => undefined);
+    void listRecurringRules(userId).then(setRulesCache).catch(() => undefined);
+  }, [userId, expenseId]);
 
   const loadCategories = async () => {
     if (!userId) return [];
@@ -262,12 +383,17 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
           receipt_image_url: expense.receipt_image_url,
           type: expense.type || 'expense',
         });
+        originalReceiptUrlRef.current = expense.receipt_image_url ?? null;
+        // Rule linkage drives the "Part of a plan" badge + delete branching.
+        setPlanRuleId(expense.recurring_rule_id ?? null);
         // Re-seed the hour/minute boxes with the saved time so updating the
         // entry retains it instead of overwriting it with mount-time "now".
         const savedParts = savedTime.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
         setHourRaw(savedParts ? savedParts[1] : '');
         setMinuteRaw(savedParts ? savedParts[2] : '');
         setRawAmount(String(expense.amount));
+        // A saved note must be visible immediately in edit mode.
+        setNotesOpen(Boolean(expense.notes));
       })
       .catch((err) => setError(err instanceof Error ? err.message : 'Could not load this expense.'));
   }, [expenseId]);
@@ -281,6 +407,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
   }
 
   function handleAmountChange(text: string) {
+    userEditedFields.current.add('amount');
     const cleaned = text.replace(/[^0-9.]/g, '');
     const parts = cleaned.split('.');
     const sanitized = parts.length > 2 ? `${parts[0]}.${parts.slice(1).join('')}` : cleaned;
@@ -289,6 +416,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
   }
 
   function handleAddQuickAmount(inc: number) {
+    userEditedFields.current.add('amount');
     const current = rawAmount ? Number(rawAmount) : 0;
     const next = String(current + inc);
     setRawAmount(next);
@@ -305,6 +433,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
   const timePeriod = (timeMatch ? timeMatch[3].toUpperCase() : 'PM') as 'AM' | 'PM';
 
   function updateTimeParts(hour?: string, minute?: string, period?: 'AM' | 'PM') {
+    userEditedFields.current.add('time');
     setForm((current) => {
       const m = (current.time || '').match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
       const h = hour ?? (m ? m[1] : '12');
@@ -373,6 +502,67 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
     }
   }
 
+  /**
+   * Applies receipt-OCR findings to the form. Each field is filled only when
+   * the user has not touched it this session (userEditedFields) — in edit mode
+   * the loaded expense pre-populates the form, and prefill never clobbers it.
+   */
+  function applyReceiptScan(scan: ReceiptScan) {
+    const touched = userEditedFields.current;
+
+    if (scan.amount !== null && !touched.has('amount')) {
+      setRawAmount(String(scan.amount));
+      setForm((prev) => ({ ...prev, amount: scan.amount! }));
+    }
+    if (scan.date !== null && !touched.has('date')) {
+      setForm((prev) => ({ ...prev, date: scan.date! }));
+    }
+    if (scan.time !== null && !touched.has('time')) {
+      setForm((prev) => ({ ...prev, time: scan.time! }));
+      const parts = scan.time!.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+      if (parts) {
+        setHourRaw(parts[1]);
+        setMinuteRaw(parts[2]);
+      }
+    }
+    if (scan.merchant !== null && !touched.has('description') && !form.description) {
+      setForm((prev) => ({ ...prev, description: scan.merchant! }));
+    }
+    if (scan.categoryName !== null && !touched.has('category')) {
+      const match = categories.find(
+        (c) =>
+          c.name.toLowerCase().includes(scan.categoryName!.toLowerCase()) ||
+          scan.categoryName!.toLowerCase().includes(c.name.toLowerCase()),
+      );
+      // Only when the default (first) category is still selected — an active
+      // user choice must win even if it was auto-assigned before OCR finished.
+      const isDefaultSelection =
+        !form.category_id || categories[0]?.id === form.category_id;
+      if (match && isDefaultSelection) {
+        setForm((prev) => ({ ...prev, category_id: match.id }));
+      }
+    }
+    if (scan.currency !== null && scan.currency !== form.currency && !currencyManuallySelected.current) {
+      setForm((prev) => ({ ...prev, currency: scan.currency! }));
+    }
+    if (scan.paymentMethod !== null && !touched.has('payment') && form.payment_method === 'Cash') {
+      setForm((prev) => ({ ...prev, payment_method: scan.paymentMethod! }));
+    }
+
+    const filledCount = [
+      scan.amount !== null && !touched.has('amount'),
+      scan.date !== null && !touched.has('date'),
+      scan.time !== null && !touched.has('time'),
+      scan.merchant !== null && !touched.has('description') && !form.description,
+    ].filter(Boolean).length;
+
+    if (filledCount > 0) {
+      showToast({ message: `${t('ocr_scan_success') || 'Receipt scanned — details filled'} ✓`, type: 'success' });
+    } else if (scan.amount === null && scan.hasText) {
+      showToast({ message: t('ocr_scan_failed') || "Couldn't read the bill — please fill details", type: 'info' });
+    }
+  }
+
   async function pickImage(fromCamera: boolean) {
     setError(null);
     try {
@@ -390,41 +580,70 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
         }
       }
 
-      const result = fromCamera
-        ? await ImagePicker.launchCameraAsync({
-          mediaTypes: ['images'],
-          quality: 0.8,
-          base64: true,
-        })
-        : await ImagePicker.launchImageLibraryAsync({
-          mediaTypes: ['images'],
-          quality: 0.8,
-          base64: true,
-        });
+      // The camera/gallery is a separate Android activity: without the capture
+      // suppression the app treats returning with the photo as a fresh
+      // foreground and re-prompts biometrics on every attach.
+      beginSystemCapture();
+      let result;
+      try {
+        result = fromCamera
+          ? await ImagePicker.launchCameraAsync({
+            mediaTypes: ['images'],
+            quality: 0.8,
+            base64: true,
+          })
+          : await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ['images'],
+            quality: 0.8,
+            base64: true,
+          });
+      } finally {
+        endSystemCapture();
+      }
 
-      if (!result.canceled && result.assets[0] && profile?.id) {
-        setSaving(true);
-        try {
-          const asset = result.assets[0];
+      if (!result.canceled && result.assets[0]) {
+        const asset = result.assets[0];
+        // Downscale to a 1600px long edge at quality 0.65 (industry sweet
+        // spot for paper receipts: ~150-350 KB, text stays crisp and OCR-safe
+        // — below this small print starts softening). Applied before the
+        // preview, the scan and the upload so all use the same small file.
+        // Skipped on web (native module) and on failure.
+        let finalUri = asset.uri;
+        let finalBase64 = asset.base64 ?? null;
+        let finalMime = asset.mimeType ?? null;
+        const MAX_EDGE = 1600;
+        const longest = Math.max(asset.width ?? 0, asset.height ?? 0);
+        if (Platform.OS !== 'web' && longest > MAX_EDGE) {
+          const scale = MAX_EDGE / longest;
           try {
-            const url = await uploadReceipt(
-              profile.id,
+            const resized = await manipulateAsync(
               asset.uri,
-              asset.fileName,
-              asset.mimeType,
-              asset.base64,
+              [{ resize: { width: Math.round((asset.width ?? longest) * scale), height: Math.round((asset.height ?? longest) * scale) } }],
+              { compress: 0.65, format: SaveFormat.JPEG, base64: true },
             );
-            setForm((current) => ({ ...current, receipt_image_url: url }));
+            finalUri = resized.uri;
+            finalBase64 = resized.base64 ?? null;
+            finalMime = 'image/jpeg';
           } catch {
-            // Offline fallback: Store local device URI so receipt is attached seamlessly offline
-            setForm((current) => ({ ...current, receipt_image_url: asset.uri }));
+            // Keep the original capture if manipulation fails — never block.
           }
-          await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
-        } catch (err) {
-          setError(err instanceof Error ? err.message : t('common_error'));
-        } finally {
-          setSaving(false);
         }
+        // OCR runs immediately (local file) and never blocks — a scan failure
+        // is silently ignored.
+        void scanReceipt(finalUri, form.currency || 'NPR')
+          .then(applyReceiptScan)
+          .catch(() => undefined);
+        // Upload is DEFERRED to submit(): keeping the image local here means
+        // an abandoned scan never writes anything to storage. The device URI
+        // renders fine as a preview until then.
+        setPendingReceipt({
+          uri: finalUri,
+          fileName: asset.fileName ?? null,
+          mimeType: finalMime,
+          base64: finalBase64,
+        });
+        setForm((current) => ({ ...current, receipt_image_url: finalUri }));
+        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : t('common_error'));
@@ -491,13 +710,72 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
 
     setSaving(true);
     try {
+      // ── Receipt upload (deferred from pickImage) ──
+      // Only now, with validation passed and the row about to be written, does
+      // the picked image go to storage. Offline/upload failure falls back to
+      // the local device URI so the expense still saves with a local link.
+      let receiptUrl: string | null = form.receipt_image_url ?? null;
+      if (pendingReceipt) {
+        try {
+          receiptUrl = await uploadReceipt(
+            userId ?? '',
+            pendingReceipt.uri,
+            pendingReceipt.fileName,
+            pendingReceipt.mimeType,
+            pendingReceipt.base64,
+          );
+        } catch {
+          receiptUrl = pendingReceipt.uri;
+        }
+        setPendingReceipt(null);
+      }
+
+      // ── Pay-from-plan path (docs/recurring-plan.md §6): book the rule's
+      // open slot with what's actually in the form (corrected price wins),
+      // then the chain recalculates from THIS payment date. The row is
+      // written inside the service, so the generic save is skipped entirely.
+      if (payPlan) {
+        const paid = await payPlanFromForm(userId ?? '', payPlan.id, {
+          amount: Number(parsed.data.amount),
+          category_id: parsed.data.category_id,
+          currency: parsed.data.currency || 'NPR',
+          description: parsed.data.description?.trim() || null,
+          notes: parsed.data.notes?.trim() || null,
+          date: parsed.data.date,
+          time: parseTimeInput(parsed.data.time),
+          payment_method: parsed.data.payment_method,
+          bank_account_id: parsed.data.bank_account_id ?? null,
+          receipt_image_url: receiptUrl,
+        });
+        notifyExpensesChanged();
+        showToast({
+          message:
+            `${t('recurring_marked_paid') || 'Payment recorded'} · ${t('recurring_next_due_short') || 'next due'} ${paid.nextDue}`
+            + (paid.lateDays > 0 ? ` · ${t('recurring_late_days') || 'late'} ${paid.lateDays}d` : ''),
+          type: 'success',
+        });
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+        handleBack();
+        return;
+      }
+
       const payloadToSave: ExpenseInput = {
         ...parsed.data,
         type: txType,
         time: parseTimeInput(parsed.data.time),
+        receipt_image_url: receiptUrl,
       };
 
       await expenses.save(payloadToSave, expenseId);
+
+      // The row is safely saved — now (and only now) delete a replaced or
+      // cleared original receipt. Best-effort; a failure just leaves the old
+      // object for a later cleanup rather than breaking the save.
+      if (originalReceiptUrlRef.current && originalReceiptUrlRef.current !== receiptUrl) {
+        void deleteReceipt(originalReceiptUrlRef.current);
+        originalReceiptUrlRef.current = receiptUrl;
+      }
+
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
       handleBack();
     } catch (err) {
@@ -510,12 +788,247 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
   const selectedCategory = categories.find((c) => c.id === form.category_id);
   const txType = form.type ?? 'expense';
   const isIncome = txType === 'income';
-  const isAnyDropdownOpen = categoryDropdownOpen || accountDropdownOpen || paymentDropdownOpen;
 
+  // ── Category usage for the recents chips: "last used" = newest loaded row,
+  // "count" = entries in the entry's month (loaded page = recent history,
+  // which is exactly what a recents strip should rank on).
+  const categoryUsage = useMemo(() => {
+    const byCat = new Map<string, { last: string; count: number }>();
+    const month = form.date.slice(0, 7);
+    for (const e of expenses.items) {
+      if (e.deleted_at) continue;
+      const prev = byCat.get(e.category_id);
+      byCat.set(e.category_id, {
+        last: !prev || e.date > prev.last ? e.date : prev.last,
+        count: (prev?.count ?? 0) + (e.date.slice(0, 7) === month ? 1 : 0),
+      });
+    }
+    const top = [...byCat.entries()]
+      .map(([id, v]) => ({ category: categories.find((c) => c.id === id), last: v.last, count: v.count }))
+      .filter((x) => !!x.category && (isIncome ? x.category.type === 'income' : x.category.type !== 'income'))
+      .sort((a, b) => b.count - a.count || b.last.localeCompare(a.last))
+      .slice(0, 5);
+    return { byCat, top };
+  }, [expenses.items, categories, form.date, isIncome]);
+
+  // Circle row = current pick first (so it's always visible and ringed),
+  // then the recents behind it, capped at five plus the ▦ All button.
+  const categoryRow = useMemo(() => {
+    const seen = new Set<string>();
+    const list: Category[] = [];
+    if (selectedCategory && ((form.type ?? 'expense') === 'income' ? selectedCategory.type === 'income' : selectedCategory.type !== 'income')) {
+      list.push(selectedCategory);
+      seen.add(selectedCategory.id);
+    }
+    for (const u of categoryUsage.top) {
+      if (u.category && !seen.has(u.category.id)) {
+        list.push(u.category);
+        seen.add(u.category.id);
+      }
+    }
+    return list.slice(0, 5);
+  }, [selectedCategory, categoryUsage, form.type]);
+
+  // ── Pay-from-plan selection: fill the form from the rule, keep the date at
+  // today, and flag the submit path to book this slot and re-anchor the
+  // schedule from this payment date. Touched fields are marked so a later
+  // receipt OCR never clobbers the plan-provided values.
+  const availablePlans = useMemo(
+    () => rulesCache.filter((r) => r.is_active),
+    [rulesCache],
+  );
+
+  // Circle row = current plan first, then the soonest-due behind it (overdue
+  // dates sort to the front), capped at five plus the ▦ All popover — mirrors
+  // the category & account circle rows below.
+  const planRow = useMemo(() => {
+    const seen = new Set<string>();
+    const list: RecurringRule[] = [];
+    if (payPlan) {
+      list.push(payPlan);
+      seen.add(payPlan.id);
+    }
+    const byDue = [...availablePlans].sort((a, b) => a.next_due_date.localeCompare(b.next_due_date));
+    for (const r of byDue) {
+      if (!seen.has(r.id)) {
+        list.push(r);
+        seen.add(r.id);
+      }
+    }
+    return list.slice(0, 5);
+  }, [availablePlans, payPlan]);
+
+  function handleSelectPlan(rule: RecurringRule) {
+    setPlanDropdownOpen(false);
+    setPlanRowOpen(false); // collapse to the "🔁 PlanName" line, like "Note added"
+    setPayPlan(rule);
+    const amt = Number(rule.amount);
+    setRawAmount(Number.isFinite(amt) ? String(amt) : '');
+    setForm((prev) => ({
+      ...prev,
+      type: 'expense',
+      amount: amt,
+      category_id: rule.category_id || prev.category_id,
+      currency: rule.currency || prev.currency,
+      description: rule.description?.trim() || prev.description,
+      payment_method: rule.payment_method || prev.payment_method,
+      bank_account_id: rule.bank_account_id ?? prev.bank_account_id,
+      date: isoDate(),
+    }));
+    const touched = userEditedFields.current;
+    (['amount', 'category', 'payment', 'description', 'date'] as const).forEach((f) => touched.add(f));
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+  }
+
+  // Slot chip shown on each plan tile: human date (Sep 18), red when overdue,
+  // primary tint when due today, neutral for upcoming.
+  function planSlotChip(rule: RecurringRule): { label: string; tone: 'danger' | 'primary' | 'muted' } {
+    const due = rule.next_due_date;
+    const late = Math.max(
+      0,
+      Math.round((new Date(`${isoDate()}T00:00:00`).getTime() - new Date(`${due}T00:00:00`).getTime()) / 86_400_000),
+    );
+    if (late > 0) return { label: `${t('recurring_overdue') || 'Overdue'} ${late}d`, tone: 'danger' };
+    if (due === isoDate()) return { label: t('recurring_due_today') || 'Due today', tone: 'primary' };
+    let text = due;
+    try {
+      text = format(parseISO(due), 'MMM d');
+    } catch {
+      // keep raw ISO if the row carries an unexpected format
+    }
+    return { label: `${t('recurring_next_due_short') || 'next due'} ${text}`, tone: 'muted' };
+  }
+
+  function cycleLabel(rule: RecurringRule): string {
+    if (rule.frequency === 'daily') return 'Daily';
+    if (rule.frequency === 'weekly') return 'Weekly';
+    if (rule.frequency === 'custom') return `Every ${rule.interval_days ?? 30} days`;
+    return 'Monthly';
+  }
+
+  // Rule-linked rows get a three-way delete: payment only, plan + payment, or cancel.
+  function requestDelete() {
+    if (!planRuleId) {
+      setDeleteConfirmOpen(true);
+      return;
+    }
+    Alert.alert(
+      t('recurring_delete_title') || 'Delete this payment?',
+      t('recurring_delete_plan_question') || 'This entry belongs to a recurring plan. Cancel the plan too?',
+      [
+        { text: t('common_cancel') || 'Cancel', style: 'cancel' },
+        {
+          text: t('recurring_delete_plan_too') || 'Cancel plan too',
+          style: 'destructive',
+          onPress: () => {
+            void Promise.all([
+              softDeleteExpense(expenseId!, userId),
+              updateRecurringRule(planRuleId, { is_active: false }, userId),
+            ])
+              .then(() => {
+                notifyExpensesChanged();
+                showToast({ type: 'success', message: t('bin_moved_toast') });
+                handleBack();
+              })
+              .catch((err) => setError(err instanceof Error ? err.message : 'Could not delete this expense.'));
+          },
+        },
+        {
+          text: t('recurring_delete_payment_only') || 'This payment only',
+          style: 'destructive',
+          onPress: () => {
+            void softDeleteExpense(expenseId!, userId)
+              .then(() => {
+                notifyExpensesChanged();
+                showToast({ type: 'success', message: t('bin_moved_toast') });
+                handleBack();
+              })
+              .catch((err) => setError(err instanceof Error ? err.message : 'Could not delete this expense.'));
+          },
+        },
+      ],
+    );
+  }
   const closeAllDropdowns = () => {
     if (categoryDropdownOpen) setCategoryDropdownOpen(false);
     if (accountDropdownOpen) setAccountDropdownOpen(false);
     if (paymentDropdownOpen) setPaymentDropdownOpen(false);
+    if (planDropdownOpen) setPlanDropdownOpen(false);
+  };
+
+  // The floating panels render in a box-none overlay at the screen root (see
+  // the JSX near the end of the return) — NOT in a Modal: a Modal is its own
+  // window and swallows every touch behind it, which made the whole form feel
+  // frozen while a dropdown was open. The panel's ScrollView sits on top of
+  // the form instead, so it scrolls natively and the page behind stays live.
+  // The anchor's window rect is measured when the ▦ All button is tapped.
+  // Rough full-list heights (rows + footer) used to decide below-vs-above.
+  // The ScrollView scrolls what doesn't fit, so these are comfort targets,
+  // not hard requirements.
+  const PANEL_NEED: Record<'category' | 'account' | 'plan', number> = {
+    category: 300,
+    account: 320,
+    plan: 350,
+  };
+
+  const openDropdown = (
+    kind: 'category' | 'account' | 'plan',
+    ref: React.RefObject<View | null>,
+  ) => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+    // Clear first so the panel only mounts once the fresh rect arrives —
+    // measureInWindow is async, and rendering with a stale rect would flash
+    // the popover at the wrong card's position for a frame.
+    setPopoverRect(null);
+    ref.current?.measureInWindow((x, y, w, h) => {
+      const belowTop = y + (h || 0) + 6;
+      const chrome = 70; // padding + borders + pinned footer row
+      const spaceBelow = screenHeight - belowTop - 24;
+      const spaceAbove = y - 24;
+      const listNeed = PANEL_NEED[kind] - chrome;
+      if (spaceBelow >= Math.min(listNeed, 190)) {
+        // Just below the card — the normal case.
+        setPopoverRect({
+          top: belowTop,
+          left: x,
+          width: w,
+          scrollMax: Math.max(130, Math.min(listNeed, spaceBelow)),
+        });
+      } else if (spaceAbove >= Math.min(listNeed, 190)) {
+        // Card sits near the bottom (bank account / pay-from-plan while the
+        // keyboard is up): flip ABOVE so the whole panel stays visible and
+        // scrollable instead of collapsing into an off-screen sliver.
+        setPopoverRect({
+          bottom: Math.max(24, screenHeight - y + 6),
+          left: x,
+          width: w,
+          scrollMax: Math.max(130, Math.min(listNeed, spaceAbove)),
+        });
+      } else {
+        // Neither side has a comfortable room: keep the panel fully on
+        // screen with a 160px scroll viewport.
+        setPopoverRect({
+          top: Math.min(belowTop, Math.max(96, screenHeight - 300)),
+          left: x,
+          width: w,
+          scrollMax: 160,
+        });
+      }
+    });
+    setCategoryDropdownOpen(kind === 'category');
+    setAccountDropdownOpen(kind === 'account');
+    setPlanDropdownOpen(kind === 'plan');
+    setPaymentDropdownOpen(false);
+  };
+
+  const toggleDropdown = (
+    kind: 'category' | 'account' | 'plan',
+    ref: React.RefObject<View | null>,
+  ) => {
+    const isOpen =
+      kind === 'category' ? categoryDropdownOpen : kind === 'account' ? accountDropdownOpen : planDropdownOpen;
+    if (isOpen) closeAllDropdowns();
+    else openDropdown(kind, ref);
   };
 
   return (
@@ -525,12 +1038,43 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
       keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 36}
     >
       <View style={{ flex: 1 }}>
+        {/* Everything except the floating panel overlay — the scrolling form
+            AND the fixed bottom bar — sits under one capture: pressing
+            anywhere outside an open panel closes it on the SAME touch-down,
+            and the press still passes through to the control under the
+            finger (Google-style dismissal). The panels are NOT descendants
+            of this View, so their own taps/drags are never captured here. */}
+        <View
+          style={{ flex: 1 }}
+          onStartShouldSetResponderCapture={() => {
+            if (categoryDropdownOpen || accountDropdownOpen || planDropdownOpen) {
+              closeAllDropdowns();
+            }
+            return false;
+          }}
+        >
         <ScrollView
           ref={scrollRef}
           style={{ flex: 1 }}
           contentContainerStyle={{ padding: theme.spacing.lg, gap: theme.spacing.lg, paddingBottom: 24 }}
           keyboardShouldPersistTaps="handled"
           onScrollBeginDrag={closeAllDropdowns}
+          // Web: wheel/trackpad scrolling never fires onScrollBeginDrag, so the
+          // viewport-anchored overlay panels would drift off their anchor cards
+          // while the form scrolls behind them. Close on any scroll (no-op when
+          // no dropdown is open).
+          onScroll={closeAllDropdowns}
+          // Google-style outside dismissal without stealing the touch: an open
+          // popover closes on a press anywhere in the form, and the SAME press
+          // still reaches the control under the finger (return false keeps the
+          // bubble phase). The panels are NOT inside this ScrollView anymore
+          // (they live in the root overlay), so their own taps never land here.
+          onStartShouldSetResponderCapture={() => {
+            if (categoryDropdownOpen || accountDropdownOpen || planDropdownOpen) {
+              closeAllDropdowns();
+            }
+            return false;
+          }}
         >
           {/* ── 1. APP BAR HEADER ── */}
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -681,6 +1225,30 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
             </Pressable>
           </View>
 
+          {/* ── PART OF A PLAN badge (edit mode, rule-linked row) ── */}
+          {expenseId && planRuleId ? (
+            <Pressable
+              onPress={() => router.push('/recurring')}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 7,
+                paddingVertical: 9,
+                borderRadius: theme.radius.md,
+                backgroundColor: theme.isDark ? 'rgba(99,102,241,0.12)' : 'rgba(79,70,229,0.06)',
+                borderWidth: 1,
+                borderStyle: 'dashed',
+                borderColor: theme.colors.primary,
+              }}
+            >
+              <Repeat size={14} color={theme.colors.primary} />
+              <Text style={{ fontSize: 12.5, fontWeight: '800', color: theme.colors.primary }}>
+                {t('recurring_part_of_plan') || 'Part of a recurring plan'} · {t('recurring_manage_plan') || 'manage'} →
+              </Text>
+            </Pressable>
+          ) : null}
+
           {/* ── 2. HERO AMOUNT & CURRENCY DISPLAY CARD ── */}
           <Card
             style={{
@@ -688,7 +1256,12 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
               gap: 12,
               backgroundColor: theme.isDark ? '#111827' : theme.colors.cardHighlight,
               borderWidth: 2,
-              borderColor: (form.type ?? 'expense') === 'income' ? theme.colors.income : theme.colors.primary,
+              // Red alert while the entry exceeds the selected account's live balance.
+              borderColor: overBalance
+                ? theme.colors.danger
+                : (form.type ?? 'expense') === 'income'
+                  ? theme.colors.income
+                  : theme.colors.primary,
             }}
           >
             {/* Currency Dropdown on Top-Right */}
@@ -816,7 +1389,160 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
             </View>
           </Card>
 
+          {/* ── 2.5 PAY FROM PLAN — collapses to a single line like the
+              Add-a-note row. Expanded: a circle row of quick picks (booked
+              plan leads, then soonest-due) plus a dashed ▦ All that opens the
+              floating Modal with the rich plan tiles. Selecting fills the whole
+              form; re-tapping the checked circle unbooks it. ── */}
+          {!expenseId && !isIncome && availablePlans.length > 0 ? (
+            <View style={{ position: 'relative', zIndex: planDropdownOpen ? 40 : 0 }}>
+            <View style={{ gap: theme.spacing.xs }}>
+              {/* Collapsed single line, same interaction as the Add-a-note row. */}
+              <Pressable
+                onPress={() => {
+                  void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+                  if (planDropdownOpen) setPlanDropdownOpen(false);
+                  setPlanRowOpen((v) => !v);
+                }}
+                accessibilityRole="button"
+                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4 }}
+              >
+                <Text
+                  variant="caption"
+                  style={{ fontWeight: '800', color: planRowOpen || payPlan ? theme.colors.primary : theme.colors.textMuted }}
+                >
+                  {payPlan && !planRowOpen
+                    ? `🔁 ${payPlan.description?.trim() || payPlan.categories?.name || 'Plan'}`
+                    : `🔁 ${t('expense_pay_from_plan') || 'Pay from plan'} (${availablePlans.length})`}
+                </Text>
+                <ChevronDown
+                  size={15}
+                  color={theme.colors.textMuted}
+                  style={{ transform: [{ rotate: planRowOpen ? '180deg' : '0deg' }] }}
+                />
+              </Pressable>
+
+              {planRowOpen && (
+              <>
+
+              {/* ── Icon-circle row ── */}
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={{ gap: 10, paddingVertical: 4, paddingRight: 4 }}
+              >
+                {planRow.map((rule) => {
+                  const isSelected = payPlan?.id === rule.id;
+                  return (
+                    <Pressable
+                      key={rule.id}
+                      onPress={() => {
+                        if (isSelected) {
+                          // Re-tapping the booked circle unbooks the plan
+                          // (filled fields stay, same as the old ✕ clear).
+                          setPayPlan(null);
+                          setPlanDropdownOpen(false);
+                        } else {
+                          handleSelectPlan(rule);
+                        }
+                        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+                      }}
+                      style={{ width: 60, alignItems: 'center', gap: 5 }}
+                    >
+                      <View
+                        style={{
+                          width: 46,
+                          height: 46,
+                          borderRadius: 23,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          borderWidth: isSelected ? 2 : 1,
+                          borderColor: isSelected ? theme.colors.primary : theme.colors.border,
+                          backgroundColor: isSelected
+                            ? (theme.isDark ? 'rgba(99,102,241,0.2)' : 'rgba(79,70,229,0.09)')
+                            : theme.colors.surfaceElevated,
+                        }}
+                      >
+                        <CategoryIcon
+                          name={rule.categories?.icon}
+                          size={20}
+                          color={isSelected ? theme.colors.primary : theme.colors.text}
+                        />
+                      </View>
+                      <Text
+                        numberOfLines={1}
+                        style={{
+                          width: 60,
+                          textAlign: 'center',
+                          fontSize: 10.5,
+                          fontWeight: isSelected ? '800' : '600',
+                          color: isSelected ? theme.colors.primary : theme.colors.textMuted,
+                          includeFontPadding: false,
+                        }}
+                      >
+                        {rule.description?.trim() || rule.categories?.name || 'Plan'}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+
+                <Pressable
+                  onPress={() => toggleDropdown('plan', planAnchorRef)}
+                  style={{ width: 60, alignItems: 'center', gap: 5 }}
+                >
+                  <View
+                    style={{
+                      width: 46,
+                      height: 46,
+                      borderRadius: 23,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      borderWidth: 1.6,
+                      borderStyle: 'dashed',
+                      borderColor: planDropdownOpen ? theme.colors.primary : theme.colors.textMuted,
+                      backgroundColor: planDropdownOpen
+                        ? (theme.isDark ? 'rgba(99,102,241,0.14)' : 'rgba(79,70,229,0.06)')
+                        : 'transparent',
+                    }}
+                  >
+                    <LayoutGrid size={18} color={planDropdownOpen ? theme.colors.primary : theme.colors.textMuted} />
+                  </View>
+                  <Text
+                    style={{
+                      width: 60,
+                      textAlign: 'center',
+                      fontSize: 10.5,
+                      fontWeight: '800',
+                      color: planDropdownOpen ? theme.colors.primary : theme.colors.textMuted,
+                      includeFontPadding: false,
+                    }}
+                  >
+                    {t('expense_all') || 'All'}
+                  </Text>
+                </Pressable>
+              </ScrollView>
+
+              {/* One line of context under the row */}
+              <Text variant="caption" muted style={{ fontSize: 11.5 }}>
+                {payPlan
+                  ? (t('expense_plan_autofill_note') || 'Saving pays this installment — the next due date is calculated from today.')
+                  : `${availablePlans.length} ${availablePlans.length === 1 ? 'active plan' : 'active plans'} · ${t('expense_plan_fills_hint') || 'fills amount, category & date'}`}
+              </Text>
+              </>
+              )}
+
+              {/* Zero-height anchor: measured when ▦ All is tapped; the tiles
+                  panel renders in the root-level overlay below. */}
+              <View ref={planAnchorRef} style={{ position: 'relative' }} />
+            </View>
+            </View>
+          ) : null}
+
           {/* ── 3. CATEGORY SELECTOR (IN-PLACE DROPDOWN DESIGN) ── */}
+          {/* zIndex lifts this card above later siblings while the All-popover
+              floats over them (same overlay pattern as the History toolbar). */}
+          <View style={{ position: 'relative', zIndex: categoryDropdownOpen ? 40 : 0 }}>
           <Card style={{ gap: theme.spacing.sm, padding: theme.spacing.lg }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -855,151 +1581,109 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
               ) : null}
             </View>
 
-            {/* Dropdown Trigger Box */}
-            <Pressable
-              onPress={() => {
-                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                setCategoryDropdownOpen((prev) => !prev);
-                setAccountDropdownOpen(false);
-                setPaymentDropdownOpen(false);
-              }}
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                padding: 12,
-                borderRadius: theme.radius.md,
-                backgroundColor: theme.colors.surfaceElevated,
-                borderWidth: 1.5,
-                borderColor: categoryDropdownOpen ? theme.colors.primary : theme.colors.border,
-              }}
+            {/* ── Icon-circle row: the current pick leads the row, followed by
+                the most-used categories; the dashed ▦ All opens the full
+                in-place list. One tap to change, zero wasted vertical space. ── */}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={{ gap: 10, paddingVertical: 4, paddingRight: 4 }}
             >
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
-                {selectedCategory ? (
-                  <View
-                    style={{
-                      width: 36,
-                      height: 36,
-                      borderRadius: 10,
-                      backgroundColor: `${theme.colors.primary}18`,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      borderWidth: 1,
-                      borderColor: `${theme.colors.primary}30`,
+              {categoryRow.map((cat) => {
+                const isSelected = form.category_id === cat.id;
+                return (
+                  <Pressable
+                    key={cat.id}
+                    onPress={() => {
+                      userEditedFields.current.add('category');
+                      setForm((prev) => ({ ...prev, category_id: cat.id }));
+                      setCategoryDropdownOpen(false);
+                      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
                     }}
+                    style={{ width: 60, alignItems: 'center', gap: 5 }}
                   >
-                    <CategoryIcon name={selectedCategory.icon} size={18} color={theme.colors.primary} />
-                  </View>
-                ) : (
-                  <Tag size={18} color={theme.colors.textMuted} />
-                )}
-                <View style={{ gap: 2, flex: 1 }}>
-                  <Text style={{ fontSize: 14, fontWeight: '800', color: theme.colors.text }} numberOfLines={1}>
-                    {selectedCategory?.name ?? 'Choose Category...'}
-                  </Text>
-                  <Text variant="caption" muted style={{ fontSize: 11 }}>
-                    {selectedCategory
-                      ? ((form.type ?? 'expense') === 'income' ? 'Income Stream' : 'Expense Category')
-                      : 'Tap to pick category from list'}
-                  </Text>
-                </View>
-              </View>
+                    <View
+                      style={{
+                        width: 46,
+                        height: 46,
+                        borderRadius: 23,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        borderWidth: isSelected ? 2 : 1,
+                        borderColor: isSelected ? theme.colors.primary : theme.colors.border,
+                        backgroundColor: isSelected
+                          ? (theme.isDark ? 'rgba(99,102,241,0.2)' : 'rgba(79,70,229,0.09)')
+                          : theme.colors.surfaceElevated,
+                      }}
+                    >
+                      <CategoryIcon name={cat.icon} size={20} color={isSelected ? theme.colors.primary : theme.colors.text} />
+                    </View>
+                    <Text
+                      numberOfLines={1}
+                      style={{
+                        width: 60,
+                        textAlign: 'center',
+                        fontSize: 10.5,
+                        fontWeight: isSelected ? '800' : '600',
+                        color: isSelected ? theme.colors.primary : theme.colors.textMuted,
+                        includeFontPadding: false,
+                      }}
+                    >
+                      {cat.name}
+                    </Text>
+                  </Pressable>
+                );
+              })}
 
-              <ChevronDown
-                size={18}
-                color={theme.colors.textMuted}
-                style={{ transform: [{ rotate: categoryDropdownOpen ? '180deg' : '0deg' }] }}
-              />
-            </Pressable>
-
-            {/* Dropdown Expanded Options List */}
-            {categoryDropdownOpen && (
-              <View
-                style={{
-                  gap: 4,
-                  backgroundColor: theme.colors.surface,
-                  borderRadius: theme.radius.md,
-                  borderWidth: 1.2,
-                  borderColor: theme.colors.border,
-                  padding: 6,
-                  marginTop: 2,
+              <Pressable
+                onPress={() => {
+                  toggleDropdown('category', categoryAnchorRef);
                 }}
+                style={{ width: 60, alignItems: 'center', gap: 5 }}
               >
-                <ScrollView nestedScrollEnabled style={{ maxHeight: 220 }}>
-                  {categories
-                    .filter((c) => ((form.type ?? 'expense') === 'income' ? c.type === 'income' : c.type !== 'income'))
-                    .map((cat) => {
-                      const isSelected = form.category_id === cat.id;
-                      return (
-                        <Pressable
-                          key={cat.id}
-                          onPress={() => {
-                            setForm((prev) => ({ ...prev, category_id: cat.id }));
-                            setCategoryDropdownOpen(false);
-                            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                          }}
-                          style={{
-                            flexDirection: 'row',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            paddingVertical: 10,
-                            paddingHorizontal: 12,
-                            borderRadius: theme.radius.sm,
-                            backgroundColor: isSelected
-                              ? (theme.isDark ? 'rgba(99, 102, 241, 0.18)' : 'rgba(79, 70, 229, 0.08)')
-                              : 'transparent',
-                          }}
-                        >
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
-                            <CategoryIcon name={cat.icon} size={18} color={isSelected ? theme.colors.primary : theme.colors.text} />
-                            <Text
-                              style={{
-                                fontSize: 13.5,
-                                fontWeight: isSelected ? '800' : '600',
-                                color: isSelected ? theme.colors.primary : theme.colors.text,
-                              }}
-                              numberOfLines={1}
-                            >
-                              {cat.name}
-                            </Text>
-                          </View>
-                          {isSelected && <Check size={16} color={theme.colors.primary} />}
-                        </Pressable>
-                      );
-                    })}
-                </ScrollView>
-
-                <Pressable
-                  onPress={() => {
-                    setCategoryDropdownOpen(false);
-                    setEditingCategory(null);
-                    setCategoryModalOpen(true);
-                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  }}
+                <View
                   style={{
-                    flexDirection: 'row',
+                    width: 46,
+                    height: 46,
+                    borderRadius: 23,
                     alignItems: 'center',
                     justifyContent: 'center',
-                    gap: 6,
-                    paddingVertical: 9,
-                    borderRadius: theme.radius.sm,
-                    borderWidth: 1,
+                    borderWidth: 1.6,
                     borderStyle: 'dashed',
-                    borderColor: theme.colors.primary,
-                    backgroundColor: theme.colors.surfaceElevated,
-                    marginTop: 2,
+                    borderColor: categoryDropdownOpen ? theme.colors.primary : theme.colors.textMuted,
+                    backgroundColor: categoryDropdownOpen
+                      ? (theme.isDark ? 'rgba(99,102,241,0.14)' : 'rgba(79,70,229,0.06)')
+                      : 'transparent',
                   }}
                 >
-                  <Plus size={15} color={theme.colors.primary} />
-                  <Text style={{ fontSize: 12.5, fontWeight: '800', color: theme.colors.primary }}>
-                    + Add New Category
-                  </Text>
-                </Pressable>
-              </View>
-            )}
+                  <LayoutGrid size={18} color={categoryDropdownOpen ? theme.colors.primary : theme.colors.textMuted} />
+                </View>
+                <Text
+                  style={{
+                    width: 60,
+                    textAlign: 'center',
+                    fontSize: 10.5,
+                    fontWeight: '800',
+                    color: categoryDropdownOpen ? theme.colors.primary : theme.colors.textMuted,
+                    includeFontPadding: false,
+                  }}
+                >
+                  {t('expense_all') || 'All'}
+                </Text>
+              </Pressable>
+            </ScrollView>
+
+            {/* Zero-height anchor: measured when ▦ All is tapped; the panel
+                itself renders in the root-level overlay below. */}
+            <View ref={categoryAnchorRef} style={{ position: 'relative' }} />
           </Card>
+          </View>
 
           {/* ── 3.5 BANK ACCOUNT & WALLET SELECTOR (IN-PLACE DROPDOWN DESIGN) ── */}
+          {/* zIndex lifts this card above later siblings while the All-popover
+              floats over them (same overlay pattern as the History toolbar). */}
+          <View style={{ position: 'relative', zIndex: accountDropdownOpen ? 40 : 0 }}>
           <Card
             style={{ gap: theme.spacing.sm, padding: theme.spacing.lg }}
             onLayout={(e) => { accountCardY.current = e.nativeEvent.layout.y; }}
@@ -1048,175 +1732,101 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
               ) : null}
             </View>
 
-            {/* Dropdown Trigger Box */}
-            {(() => {
-              const selectedAccount = accounts.find((a) => a.id === form.bank_account_id);
-              const liveEntry = selectedAccount ? accountLiveBalances.find((a) => a.id === selectedAccount.id) : null;
-              const liveBalance = liveEntry?.live_balance ?? Number(selectedAccount?.initial_balance ?? 0);
-              return (
-                <Pressable
-                  onPress={() => {
-                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    setAccountDropdownOpen((prev) => !prev);
-                    setCategoryDropdownOpen(false);
-                    setPaymentDropdownOpen(false);
-                  }}
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: 12,
-                    borderRadius: theme.radius.md,
-                    backgroundColor: theme.colors.surfaceElevated,
-                    borderWidth: 1.5,
-                    borderColor: accountDropdownOpen ? theme.colors.primary : theme.colors.border,
-                  }}
-                >
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
-                    {selectedAccount ? (
-                      <View
-                        style={{
-                          width: 36,
-                          height: 36,
-                          borderRadius: 10,
-                          backgroundColor: `${selectedAccount.color || theme.colors.primary}18`,
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          borderWidth: 1,
-                          borderColor: `${selectedAccount.color || theme.colors.primary}30`,
-                        }}
-                      >
-                        <CategoryIcon
-                          name={selectedAccount.icon}
-                          size={18}
-                          color={selectedAccount.color || theme.colors.primary}
-                        />
-                      </View>
-                    ) : (
-                      <Wallet size={18} color={theme.colors.textMuted} />
-                    )}
-                    <View style={{ gap: 2, flex: 1 }}>
-                      <Text numberOfLines={1} style={{ fontSize: 14, fontWeight: '800', color: theme.colors.text }}>
-                        {selectedAccount?.name ?? 'Select Account / Wallet'}
-                      </Text>
-                      {selectedAccount ? (
-                        <Text
-                          variant="caption"
-                          style={{
-                            fontSize: 11,
-                            fontWeight: '700',
-                            color: liveBalance >= 0 ? theme.colors.income : theme.colors.danger,
-                          }}
-                        >
-                          Available: {formatMoney(liveBalance, selectedAccount.currency)}
-                        </Text>
-                      ) : (
-                        <Text variant="caption" muted style={{ fontSize: 11 }}>
-                          Tap to choose bank account or cash wallet
-                        </Text>
-                      )}
+            {/* ── Icon-circle row (same design as the category picker above):
+                the current pick leads, then the richest accounts; the dashed
+                ▦ All opens the full in-place list with live balances. ── */}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={{ gap: 10, paddingVertical: 4, paddingRight: 4 }}
+            >
+              {accountRow.map((acc) => {
+                const isSelected = form.bank_account_id === acc.id;
+                const accent = acc.color || theme.colors.primary;
+                return (
+                  <Pressable
+                    key={acc.id}
+                    onPress={() => {
+                      setForm((prev) => ({ ...prev, bank_account_id: acc.id }));
+                      setAccountDropdownOpen(false);
+                      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+                    }}
+                    style={{ width: 60, alignItems: 'center', gap: 5 }}
+                  >
+                    <View
+                      style={{
+                        width: 46,
+                        height: 46,
+                        borderRadius: 23,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        borderWidth: isSelected ? 2 : 1,
+                        borderColor: isSelected ? accent : theme.colors.border,
+                        backgroundColor: isSelected ? `${accent}18` : theme.colors.surfaceElevated,
+                      }}
+                    >
+                      <CategoryIcon name={acc.icon} size={20} color={isSelected ? accent : theme.colors.text} />
                     </View>
-                  </View>
+                    <Text
+                      numberOfLines={1}
+                      style={{
+                        width: 60,
+                        textAlign: 'center',
+                        fontSize: 10.5,
+                        fontWeight: isSelected ? '800' : '600',
+                        color: isSelected ? accent : theme.colors.textMuted,
+                        includeFontPadding: false,
+                      }}
+                    >
+                      {acc.name}
+                    </Text>
+                  </Pressable>
+                );
+              })}
 
-                  <ChevronDown
-                    size={18}
-                    color={theme.colors.textMuted}
-                    style={{ transform: [{ rotate: accountDropdownOpen ? '180deg' : '0deg' }] }}
-                  />
-                </Pressable>
-              );
-            })()}
-
-            {/* Dropdown Expanded Options List */}
-            {accountDropdownOpen && (
-              <View
-                style={{
-                  gap: 4,
-                  backgroundColor: theme.colors.surface,
-                  borderRadius: theme.radius.md,
-                  borderWidth: 1.2,
-                  borderColor: theme.colors.border,
-                  padding: 6,
-                  marginTop: 2,
-                }}
+              <Pressable
+                onPress={() => toggleDropdown('account', accountAnchorRef)}
+                style={{ width: 60, alignItems: 'center', gap: 5 }}
               >
-                <ScrollView nestedScrollEnabled style={{ maxHeight: 230 }}>
-                  {accountsByBalanceDesc.map((acc) => {
-                    const isSelected = form.bank_account_id === acc.id;
-                    const liveEntry = accountLiveBalances.find((a) => a.id === acc.id);
-                    const liveBalance = liveEntry?.live_balance ?? Number(acc.initial_balance ?? 0);
-                    return (
-                      <Pressable
-                        key={acc.id}
-                        onPress={() => {
-                          setForm((prev) => ({ ...prev, bank_account_id: acc.id }));
-                          setAccountDropdownOpen(false);
-                          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                        }}
-                        style={{
-                          flexDirection: 'row',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          paddingVertical: 10,
-                          paddingHorizontal: 12,
-                          borderRadius: theme.radius.sm,
-                          backgroundColor: isSelected
-                            ? (theme.isDark ? 'rgba(99, 102, 241, 0.18)' : 'rgba(79, 70, 229, 0.08)')
-                            : 'transparent',
-                        }}
-                      >
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
-                          <CategoryIcon name={acc.icon} size={18} color={acc.color || theme.colors.primary} />
-                          <View style={{ flex: 1 }}>
-                            <Text style={{ fontSize: 13.5, fontWeight: isSelected ? '800' : '600', color: theme.colors.text }}>
-                              {acc.name}
-                            </Text>
-                            <Text
-                              style={{
-                                fontSize: 10.5,
-                                fontWeight: '700',
-                                color: liveBalance >= 0 ? theme.colors.income : theme.colors.danger,
-                              }}
-                            >
-                              Live: {formatMoney(liveBalance, acc.currency)}
-                            </Text>
-                          </View>
-                        </View>
-                        {isSelected && <Check size={16} color={theme.colors.primary} />}
-                      </Pressable>
-                    );
-                  })}
-                </ScrollView>
-
-                <Pressable
-                  onPress={() => {
-                    setAccountDropdownOpen(false);
-                    setEditingAccount(null);
-                    setAccountModalOpen(true);
-                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  }}
+                <View
                   style={{
-                    flexDirection: 'row',
+                    width: 46,
+                    height: 46,
+                    borderRadius: 23,
                     alignItems: 'center',
                     justifyContent: 'center',
-                    gap: 6,
-                    paddingVertical: 9,
-                    borderRadius: theme.radius.sm,
-                    borderWidth: 1,
+                    borderWidth: 1.6,
                     borderStyle: 'dashed',
-                    borderColor: theme.colors.primary,
-                    backgroundColor: theme.colors.surfaceElevated,
-                    marginTop: 2,
+                    borderColor: accountDropdownOpen ? theme.colors.primary : theme.colors.textMuted,
+                    backgroundColor: accountDropdownOpen
+                      ? (theme.isDark ? 'rgba(99,102,241,0.14)' : 'rgba(79,70,229,0.06)')
+                      : 'transparent',
                   }}
                 >
-                  <Plus size={15} color={theme.colors.primary} />
-                  <Text style={{ fontSize: 12.5, fontWeight: '800', color: theme.colors.primary }}>
-                    + Add New Bank Account / Wallet
-                  </Text>
-                </Pressable>
-              </View>
-            )}
+                  <LayoutGrid size={18} color={accountDropdownOpen ? theme.colors.primary : theme.colors.textMuted} />
+                </View>
+                <Text
+                  style={{
+                    width: 60,
+                    textAlign: 'center',
+                    fontSize: 10.5,
+                    fontWeight: '800',
+                    color: accountDropdownOpen ? theme.colors.primary : theme.colors.textMuted,
+                    includeFontPadding: false,
+                  }}
+                >
+                  {t('expense_all') || 'All'}
+                </Text>
+              </Pressable>
+            </ScrollView>
+
+            {/* Zero-height anchor: measured when ▦ All is tapped; the panel
+                itself renders in the root-level overlay below. Balances stay
+                dropdown-only (Live: … on each row). */}
+            <View ref={accountAnchorRef} style={{ position: 'relative' }} />
           </Card>
+          </View>
 
           {/* ── 4. DESCRIPTION & QUICK TAGS CARD ── */}
           <Card style={{ gap: theme.spacing.md, padding: theme.spacing.lg }}>
@@ -1234,7 +1844,10 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
                   : (t('expense_description_placeholder') || 'e.g. Starbucks Cafe, Grocery Mart')
               }
               value={form.description ?? ''}
-              onChangeText={(description) => setForm((current) => ({ ...current, description }))}
+                    onChangeText={(description) => {
+                      if (description) userEditedFields.current.add('description');
+                      setForm((current) => ({ ...current, description }));
+                    }}
             />
 
             {/* Quick Tag Pills */}
@@ -1243,6 +1856,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
                 <Pressable
                   key={tag}
                   onPress={() => {
+                    userEditedFields.current.add('description');
                     setForm((prev) => ({ ...prev, description: tag }));
                     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
                   }}
@@ -1260,6 +1874,50 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
                   </Text>
                 </Pressable>
               ))}
+            </View>
+            {/* ── NOTES (collapsed optional; the record view shows this) ── */}
+            <View style={{ gap: theme.spacing.xs }}>
+              <Pressable
+                onPress={() => setNotesOpen((v) => !v)}
+                accessibilityRole="button"
+                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4 }}
+              >
+                <Text variant="caption" style={{ fontWeight: '800', color: notesOpen || form.notes ? theme.colors.primary : theme.colors.textMuted }}>
+                  {form.notes && !notesOpen
+                    ? `📝 ${t('expense_note_label') || 'Note added'}`
+                    : `📝 ${t('expense_add_note') || 'Add a note (optional)'}`}
+                </Text>
+                <ChevronDown
+                  size={15}
+                  color={theme.colors.textMuted}
+                  style={{ transform: [{ rotate: notesOpen ? '180deg' : '0deg' }] }}
+                />
+              </Pressable>
+
+              {notesOpen ? (
+                <TextInput
+                  value={form.notes ?? ''}
+                  onChangeText={(notes) => setForm((current) => ({ ...current, notes }))}
+                  placeholder={t('expense_note_placeholder') || 'Split info, reason, follow-up…'}
+                  placeholderTextColor={theme.colors.textMuted}
+                  multiline
+                  numberOfLines={3}
+                  maxLength={500}
+                  style={{
+                    minHeight: 78,
+                    textAlignVertical: 'top',
+                    padding: 12,
+                    borderRadius: theme.radius.md,
+                    backgroundColor: theme.colors.surfaceElevated,
+                    borderWidth: 1,
+                    borderColor: theme.colors.border,
+                    color: theme.colors.text,
+                    fontSize: 13.5,
+                    fontWeight: '600',
+                    includeFontPadding: false,
+                  }}
+                />
+              ) : null}
             </View>
           </Card>
 
@@ -1470,6 +2128,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
                   {/* NOW */}
                   <Pressable
                     onPress={() => {
+                      userEditedFields.current.add('time');
                       const now = currentFormattedTime();
 
                       setForm((current) => ({
@@ -1541,6 +2200,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
                     <Pressable
                       key={pm.key}
                       onPress={() => {
+                        userEditedFields.current.add('payment');
                         setForm((prev) => ({ ...prev, payment_method: pm.key }));
                         void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
                       }}
@@ -1687,9 +2347,11 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
 
                   <Pressable
                     onPress={() => {
-                      // Best-effort removal of the private storage object; the
-                      // form value is cleared regardless.
-                      void deleteReceipt(form.receipt_image_url);
+                      // A pending local pick has nothing in storage yet — just
+                      // clear it. A saved receipt (edit mode) stays in storage
+                      // until the row is actually saved without it, so backing
+                      // out of the form loses nothing.
+                      setPendingReceipt(null);
                       setForm((prev) => ({ ...prev, receipt_image_url: null }));
                     }}
                     style={{
@@ -1737,7 +2399,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
               title={isIncome ? 'Delete Income Record' : (t('expense_delete') || 'Delete Expense')}
               variant="destructive"
               icon={Trash2}
-              onPress={() => setDeleteConfirmOpen(true)}
+              onPress={requestDelete}
               style={{ marginTop: 4 }}
             />
           ) : null}
@@ -1938,6 +2600,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
             mode="single"
             onApply={(range) => {
               if (range.startDate) {
+                userEditedFields.current.add('date');
                 setForm((current) => ({ ...current, date: range.startDate! }));
               }
             }}
@@ -2096,13 +2759,14 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
 
         <ConfirmDialog
           visible={deleteConfirmOpen}
-          title={isIncome ? 'Delete Income?' : 'Delete Expense?'}
-          message={isIncome ? 'This income entry will be permanently removed.' : 'This expense will be permanently removed from your history.'}
+          title={isIncome ? t('expense_delete_income_title') : t('expense_delete_title')}
+          message={t('bin_move_expense_message')}
           onCancel={() => setDeleteConfirmOpen(false)}
           onConfirm={() => {
             setDeleteConfirmOpen(false);
             void softDeleteExpense(expenseId!, userId).then(() => {
               notifyExpensesChanged();
+              showToast({ type: 'success', message: t('bin_moved_toast') });
               handleBack();
             }).catch((err) => {
               setError(err instanceof Error ? err.message : 'Could not delete this expense.');
@@ -2173,7 +2837,361 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
             }}
           />
         </View>
+        </View>
+
+        {/* ── DROPDOWN OVERLAY LAYER (category / account / plan panels) ──
+            Sits at the screen root and renders the three ▦ All panels at the
+            window coords measured from their anchors. box-none lets touches
+            that miss a panel fall through to the live form behind — no Modal
+            window, so the page is never frozen while a dropdown is open. */}
+        <View
+          pointerEvents="box-none"
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            zIndex: 9999,
+          }}
+        >
+            {categoryDropdownOpen && popoverRect && (
+              <View
+                style={{
+                      position: 'absolute',
+                      top: popoverRect?.top,
+                      bottom: popoverRect?.bottom,
+                      left: popoverRect?.left ?? theme.spacing.lg,
+                      width: popoverRect?.width ?? screenWidth - theme.spacing.lg * 2,
+                      gap: 4,
+                      backgroundColor: theme.colors.surface,
+                      borderRadius: 16,
+                      borderWidth: 1.2,
+                      borderColor: theme.colors.border,
+                      padding: 6,
+                      elevation: 25,
+                      shadowColor: '#000000',
+                      shadowOffset: { width: 0, height: 6 },
+                      shadowOpacity: 0.25,
+                      shadowRadius: 10,
+                    }}
+                  >
+                <ScrollView
+                  showsVerticalScrollIndicator={false}
+                  // RNW ignores showsVerticalScrollIndicator; hide the browser
+                  // scrollbar via CSS scrollbar-width (web-only style prop).
+                  // Android: without nestedScrollEnabled the parent form
+                  // ScrollView wins the drag gesture and the list feels frozen.
+                  nestedScrollEnabled
+                  style={[
+                    Platform.OS === 'web' ? ({ scrollbarWidth: 'none' } as never) : undefined,
+                    { maxHeight: popoverRect?.scrollMax ?? 220 },
+                  ]}
+                >
+                  {categories
+                    .filter((c) => ((form.type ?? 'expense') === 'income' ? c.type === 'income' : c.type !== 'income'))
+                    .map((cat) => {
+                      const isSelected = form.category_id === cat.id;
+                      return (
+                        <Pressable
+                          key={cat.id}
+                          onPress={() => {
+                            userEditedFields.current.add('category');
+                            setForm((prev) => ({ ...prev, category_id: cat.id }));
+                            setCategoryDropdownOpen(false);
+                            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                          }}
+                          style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            paddingVertical: 10,
+                            paddingHorizontal: 12,
+                            borderRadius: theme.radius.sm,
+                            backgroundColor: isSelected
+                              ? (theme.isDark ? 'rgba(99, 102, 241, 0.18)' : 'rgba(79, 70, 229, 0.08)')
+                              : 'transparent',
+                          }}
+                        >
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                            <CategoryIcon name={cat.icon} size={18} color={isSelected ? theme.colors.primary : theme.colors.text} />
+                            <Text
+                              style={{
+                                fontSize: 13.5,
+                                fontWeight: isSelected ? '800' : '600',
+                                color: isSelected ? theme.colors.primary : theme.colors.text,
+                              }}
+                              numberOfLines={1}
+                            >
+                              {cat.name}
+                            </Text>
+                          </View>
+                          {isSelected && <Check size={16} color={theme.colors.primary} />}
+                        </Pressable>
+                      );
+                    })}
+                </ScrollView>
+
+                <Pressable
+                  onPress={() => {
+                    setCategoryDropdownOpen(false);
+                    setEditingCategory(null);
+                    setCategoryModalOpen(true);
+                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  }}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 6,
+                    paddingVertical: 9,
+                    borderRadius: theme.radius.sm,
+                    borderWidth: 1,
+                    borderStyle: 'dashed',
+                    borderColor: theme.colors.primary,
+                    backgroundColor: theme.colors.surfaceElevated,
+                    marginTop: 2,
+                  }}
+                >
+                  <Plus size={15} color={theme.colors.primary} />
+                  <Text style={{ fontSize: 12.5, fontWeight: '800', color: theme.colors.primary }}>
+                    + Add New Category
+                  </Text>
+                </Pressable>
+              </View>
+            )}
+            {accountDropdownOpen && popoverRect && (
+              <View
+                style={{
+                      position: 'absolute',
+                      top: popoverRect?.top,
+                      bottom: popoverRect?.bottom,
+                      left: popoverRect?.left ?? theme.spacing.lg,
+                      width: popoverRect?.width ?? screenWidth - theme.spacing.lg * 2,
+                      gap: 4,
+                      backgroundColor: theme.colors.surface,
+                      borderRadius: 16,
+                      borderWidth: 1.2,
+                      borderColor: theme.colors.border,
+                      padding: 6,
+                      elevation: 25,
+                      shadowColor: '#000000',
+                      shadowOffset: { width: 0, height: 6 },
+                      shadowOpacity: 0.25,
+                      shadowRadius: 10,
+                    }}
+                  >
+                <ScrollView
+                  showsVerticalScrollIndicator={false}
+                  nestedScrollEnabled
+                  style={[
+                    Platform.OS === 'web' ? ({ scrollbarWidth: 'none' } as never) : undefined,
+                    { maxHeight: popoverRect?.scrollMax ?? 230 },
+                  ]}
+                >
+                  {accountsByBalanceDesc.map((acc) => {
+                    const isSelected = form.bank_account_id === acc.id;
+                    const liveEntry = accountLiveBalances.find((a) => a.id === acc.id);
+                    const liveBalance = liveEntry?.live_balance ?? Number(acc.initial_balance ?? 0);
+                    return (
+                      <Pressable
+                        key={acc.id}
+                        onPress={() => {
+                          setForm((prev) => ({ ...prev, bank_account_id: acc.id }));
+                          setAccountDropdownOpen(false);
+                          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        }}
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          paddingVertical: 10,
+                          paddingHorizontal: 12,
+                          borderRadius: theme.radius.sm,
+                          backgroundColor: isSelected
+                            ? (theme.isDark ? 'rgba(99, 102, 241, 0.18)' : 'rgba(79, 70, 229, 0.08)')
+                            : 'transparent',
+                        }}
+                      >
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                          <CategoryIcon name={acc.icon} size={18} color={acc.color || theme.colors.primary} />
+                          <View style={{ flex: 1 }}>
+                            <Text style={{ fontSize: 13.5, fontWeight: isSelected ? '800' : '600', color: theme.colors.text }}>
+                              {acc.name}
+                            </Text>
+                            <Text
+                              style={{
+                                fontSize: 10.5,
+                                fontWeight: '700',
+                                color: liveBalance >= 0 ? theme.colors.income : theme.colors.danger,
+                              }}
+                            >
+                              Live: {formatMoney(liveBalance, acc.currency)}
+                            </Text>
+                          </View>
+                        </View>
+                        {isSelected && <Check size={16} color={theme.colors.primary} />}
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+
+                <Pressable
+                  onPress={() => {
+                    setAccountDropdownOpen(false);
+                    setEditingAccount(null);
+                    setAccountModalOpen(true);
+                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  }}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 6,
+                    paddingVertical: 9,
+                    borderRadius: theme.radius.sm,
+                    borderWidth: 1,
+                    borderStyle: 'dashed',
+                    borderColor: theme.colors.primary,
+                    backgroundColor: theme.colors.surfaceElevated,
+                    marginTop: 2,
+                  }}
+                >
+                  <Plus size={15} color={theme.colors.primary} />
+                  <Text style={{ fontSize: 12.5, fontWeight: '800', color: theme.colors.primary }}>
+                    + Add New Bank Account / Wallet
+                  </Text>
+                </Pressable>
+              </View>
+            )}
+              {planDropdownOpen && popoverRect && (
+                <View
+                  style={{
+                        position: 'absolute',
+                        top: popoverRect?.top,
+                        bottom: popoverRect?.bottom,
+                        left: popoverRect?.left ?? theme.spacing.lg,
+                        width: popoverRect?.width ?? screenWidth - theme.spacing.lg * 2,
+                        backgroundColor: theme.colors.surface,
+                        borderRadius: 16,
+                        borderWidth: 1.2,
+                        borderColor: theme.colors.border,
+                        padding: 6,
+                        elevation: 25,
+                        shadowColor: '#000000',
+                        shadowOffset: { width: 0, height: 6 },
+                        shadowOpacity: 0.25,
+                        shadowRadius: 10,
+                      }}
+                    >
+                  {/* Plan tiles — tap to fill; selected tile locks in with a check */}
+                  <ScrollView
+                    keyboardShouldPersistTaps="handled"
+                    showsVerticalScrollIndicator={false}
+                    nestedScrollEnabled
+                    style={[
+                      Platform.OS === 'web' ? ({ scrollbarWidth: 'none' } as never) : undefined,
+                      { maxHeight: popoverRect?.scrollMax ?? 280 },
+                    ]}
+                    contentContainerStyle={{ gap: 8 }}
+                  >
+                    {availablePlans.map((rule) => {
+                      const isSelected = payPlan?.id === rule.id;
+                      const chip = planSlotChip(rule);
+                      const chipColor = chip.tone === 'danger'
+                        ? (theme.isDark ? '#F87171' : '#DC2626')
+                        : chip.tone === 'primary'
+                          ? theme.colors.primary
+                          : theme.colors.textMuted;
+                      return (
+                        <Pressable
+                          key={rule.id}
+                          onPress={() => handleSelectPlan(rule)}
+                          style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            gap: 12,
+                            padding: 12,
+                            borderRadius: theme.radius.md,
+                            borderWidth: isSelected ? 1.8 : 1.2,
+                            borderStyle: isSelected ? 'solid' : 'dashed',
+                            borderColor: isSelected ? theme.colors.primary : theme.colors.border,
+                            backgroundColor: isSelected
+                              ? (theme.isDark ? 'rgba(99,102,241,0.16)' : 'rgba(79,70,229,0.07)')
+                              : theme.colors.surfaceElevated,
+                          }}
+                        >
+                          {/* Icon tile */}
+                          <View
+                            style={{
+                              width: 40,
+                              height: 40,
+                              borderRadius: 12,
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              backgroundColor: `${theme.colors.primary}18`,
+                              borderWidth: 1,
+                              borderColor: `${theme.colors.primary}30`,
+                            }}
+                          >
+                            <CategoryIcon name={rule.categories?.icon} size={19} color={theme.colors.primary} />
+                          </View>
+
+                          {/* Name + cycle / slot chip */}
+                          <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
+                            <Text numberOfLines={1} style={{ fontSize: 14, fontWeight: '800', color: isSelected ? theme.colors.primary : theme.colors.text }}>
+                              {rule.description?.trim() || rule.categories?.name || 'Plan'}
+                            </Text>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                              <Text style={{ fontSize: 10.5, fontWeight: '600', color: theme.colors.textMuted }}>
+                                {cycleLabel(rule)}
+                              </Text>
+                              <View
+                                style={{
+                                  paddingHorizontal: 7,
+                                  paddingVertical: 2,
+                                  borderRadius: theme.radius.full,
+                                  borderWidth: 1,
+                                  borderColor: chip.tone === 'muted' ? theme.colors.border : chipColor,
+                                  backgroundColor: chip.tone === 'danger'
+                                    ? (theme.isDark ? 'rgba(239,68,68,0.12)' : 'rgba(239,68,68,0.08)')
+                                    : 'transparent',
+                                }}
+                              >
+                                <Text style={{ fontSize: 10, fontWeight: '800', color: chipColor }}>
+                                  {chip.label}
+                                </Text>
+                              </View>
+                            </View>
+                          </View>
+
+                          {/* Amount + selected badge */}
+                          <View style={{ alignItems: 'flex-end', gap: 3 }}>
+                            <Text
+                              style={{
+                                fontSize: 15,
+                                fontWeight: '900',
+                                color: theme.colors.text,
+                                fontVariant: ['tabular-nums'],
+                              }}
+                            >
+                              {formatMoney(Number(rule.amount), rule.currency || profile?.preferred_currency || 'NPR')}
+                            </Text>
+                            {isSelected ? (
+                              <CheckCircle2 size={17} color={theme.colors.primary} />
+                            ) : null}
+                          </View>
+                        </Pressable>
+                      );
+                    })}
+                  </ScrollView>
+                </View>
+              )}
+        </View>
       </View>
+      {/* Local host: expense/add is modal-presented (Android window above the
+          root host). Topmost-host arbitration keeps toasts single-rendered. */}
+      <ToastHost />
     </KeyboardAvoidingView>
   );
 }

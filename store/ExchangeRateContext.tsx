@@ -1,29 +1,29 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, PropsWithChildren, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { NPR_PER_INR } from '@/services/exchange';
+import { NPR_PER_INR, seedTodayRatesFromUnitsPerUsd } from '@/services/exchange';
 
 const RATES_STORAGE_KEY = 'spendflow_exchange_rates_cache';
 const CACHE_EXPIRY_MS = 6 * 60 * 60 * 1000; // 6 hours
 
-// Baseline fallback rates relative to 1 USD
+// Baseline fallback rates relative to 1 USD (refreshed 2026-09-09)
 const DEFAULT_RATES: Record<string, number> = {
   USD: 1.0,
-  // 83.5 INR/USD × 1.60 (NRB peg) — kept peg-consistent by construction.
-  NPR: 133.6,
-  INR: 83.5,
+  // 94.84 INR/USD × 1.60 (NRB peg) — kept peg-consistent by construction.
+  NPR: 151.74,
+  INR: 94.84,
   QAR: 3.64,
-  GBP: 0.79,
-  EUR: 0.92,
-  AED: 3.67,
+  GBP: 0.738,
+  EUR: 0.86,
+  AED: 3.6725,
   SAR: 3.75,
-  CAD: 1.36,
-  AUD: 1.52,
-  JPY: 155.0,
-  SGD: 1.35,
-  MYR: 4.70,
-  KRW: 1350.0,
-  THB: 36.5,
-  CNY: 7.23,
+  CAD: 1.378,
+  AUD: 1.386,
+  JPY: 153.8,
+  SGD: 1.265,
+  MYR: 4.06,
+  KRW: 1341.0,
+  THB: 32.9,
+  CNY: 6.73,
 };
 
 let inMemoryRates: Record<string, number> = { ...DEFAULT_RATES };
@@ -65,6 +65,9 @@ async function fetchExchangeRates(): Promise<Record<string, number>> {
         inMemoryFetchedAt = parsed.timestamp;
         inMemoryStatus = isFresh ? 'live' : 'cached';
         if (isFresh) {
+          // Feed the persistent rate memory so dashboard resolver builds skip
+          // their own provider round trip for today's date.
+          seedTodayRatesFromUnitsPerUsd(inMemoryRates);
           return inMemoryRates;
         }
       }
@@ -102,6 +105,7 @@ async function fetchExchangeRates(): Promise<Record<string, number>> {
       inMemoryRates = newRates;
       inMemoryStatus = 'live';
       inMemoryFetchedAt = Date.now();
+      seedTodayRatesFromUnitsPerUsd(newRates);
       await AsyncStorage.setItem(
         RATES_STORAGE_KEY,
         JSON.stringify({ timestamp: Date.now(), rates: newRates }),
@@ -116,7 +120,7 @@ async function fetchExchangeRates(): Promise<Record<string, number>> {
   // at best a stale copy — its existing inMemoryStatus says which. If even
   // that was never populated from a provider, it is the estimated baseline.
   if (inMemoryStatus === 'live' && inMemoryFetchedAt !== null &&
-      Date.now() - inMemoryFetchedAt >= CACHE_EXPIRY_MS) {
+    Date.now() - inMemoryFetchedAt >= CACHE_EXPIRY_MS) {
     inMemoryStatus = 'cached';
   }
   return inMemoryRates;

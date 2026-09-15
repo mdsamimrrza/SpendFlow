@@ -107,6 +107,7 @@ export async function getOfficialNepalRate(): Promise<NepalRateLookup> {
       .from('market_gold_rates')
       .select('*')
       .eq('country_code', 'NP')
+      .eq('status', 'verified')
       .order('rate_date', { ascending: false })
       .limit(1);
 
@@ -135,6 +136,7 @@ export async function getOfficialNepalHistory(days = 400): Promise<OfficialNepal
       .from('market_gold_rates')
       .select('*')
       .eq('country_code', 'NP')
+      .eq('status', 'verified')
       .gte('rate_date', new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10))
       .order('rate_date', { ascending: true })
       .limit(days);

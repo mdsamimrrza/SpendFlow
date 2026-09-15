@@ -28,6 +28,7 @@ import {
   X,
 } from 'lucide-react-native';
 import { Avatar } from '@/components/ui/Avatar';
+import { useRateResolver } from '@/hooks/useRateResolver';
 import { Button } from '@/components/ui/Button';
 import { Text } from '@/components/ui/Text';
 import { useAuth } from '@/hooks/useAuth';
@@ -36,6 +37,7 @@ import { usePrivacy } from '@/hooks/usePrivacy';
 import { useSecurity } from '@/hooks/useSecurity';
 import { useTheme } from '@/hooks/useTheme';
 import { formatMoney, getMonthlyBudget } from '@/utils/format';
+import { Expense } from '@/types';
 
 interface ProfileQuickCardProps {
   visible: boolean;
@@ -48,6 +50,10 @@ export function ProfileQuickCard({ visible, onClose }: ProfileQuickCardProps) {
   const { language, setLanguage, t } = useLanguage();
   const { isPrivacyMode } = usePrivacy();
   const theme = useTheme();
+  
+  const currency = profile?.preferred_currency ?? 'NPR';
+  // Create a minimal rateResolver for budget conversion (no expenses needed for this context)
+  const { resolver: rateResolver } = useRateResolver([] as Expense[], currency);
   const router = useRouter();
 
   // Animation values
@@ -118,8 +124,7 @@ export function ProfileQuickCard({ visible, onClose }: ProfileQuickCardProps) {
   if (!visible) return null;
 
   const displayName = profile?.display_name || profile?.email?.split('@')[0] || 'SpendFlow User';
-  const currency = profile?.preferred_currency ?? 'NPR';
-  const monthlyBudget = getMonthlyBudget(profile);
+  const monthlyBudget = getMonthlyBudget(profile, rateResolver);
 
   function handleNavigate(path: string) {
     onClose();

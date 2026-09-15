@@ -37,11 +37,21 @@ export function AnimatedSplashScreen({ visible, onFinish }: AnimatedSplashScreen
   const [hidden, setHidden] = useState(false);
   const [canDismiss, setCanDismiss] = useState(false);
 
+  // Fast-start dismissal: the intro choreography (punchline stagger + word
+  // wave + hold) runs ~1.7-2.3s; previously a fully warm relaunch STILL had to
+  // watch it to the end before the fade could begin. The splash now releases
+  // as soon as the app is ready, keeping only this short branded minimum
+  // (smooth handoff from the native splash instead of a flicker). On slow
+  // starts the choreography finishes first anyway — behavior unchanged.
+  const MIN_SPLASH_MS = 900;
+  const mountedAt = useRef(Date.now());
+
   const fadeAnim = useRef(new Animated.Value(1)).current;
 
   // Gold Seal Ring & Orbit Animations
-  const sealScale = useRef(new Animated.Value(0.3)).current;
-  const sealOpacity = useRef(new Animated.Value(0)).current;
+  // The seal is statically fully visible: the native system splash shows the
+  // exact same emblem, so keeping it opaque at handoff makes the transition a
+  // seamless cut (the halo/orbit/title/punchline animate around it).
   const outerRingRotate = useRef(new Animated.Value(0)).current;
   const haloGlow = useRef(new Animated.Value(0.2)).current;
   const flareTranslateX = useRef(new Animated.Value(-160)).current;
@@ -65,13 +75,8 @@ export function AnimatedSplashScreen({ visible, onFinish }: AnimatedSplashScreen
   ).current;
 
   useEffect(() => {
-    // 1. Gold Seal Medallion Spring Pop & Halo Radiance
-    Animated.parallel([
-      Animated.timing(sealOpacity, { toValue: 1, duration: 600, useNativeDriver: true }),
-      Animated.spring(sealScale, { toValue: 1, friction: 6, tension: 45, useNativeDriver: true }),
-      Animated.timing(haloGlow, { toValue: 0.9, duration: 1100, useNativeDriver: true }),
-    ]).start();
-
+    // 1. Halo Radiance behind the already-visible seal
+    Animated.timing(haloGlow, { toValue: 0.9, duration: 1100, useNativeDriver: true }).start();
     // 2. Continuous rotating celestial orbit ring
     Animated.loop(
       Animated.timing(outerRingRotate, {
@@ -145,14 +150,19 @@ export function AnimatedSplashScreen({ visible, onFinish }: AnimatedSplashScreen
     flareTranslateX,
     haloGlow,
     outerRingRotate,
-    sealOpacity,
-    sealScale,
     sparklePulse,
     titleLetterSpacing,
     titleOpacity,
     titleTranslateY,
     wordAnims,
   ]);
+
+  useEffect(() => {
+    if (visible || canDismiss) return;
+    const remaining = Math.max(0, MIN_SPLASH_MS - (Date.now() - mountedAt.current));
+    const t = setTimeout(() => setCanDismiss(true), remaining);
+    return () => clearTimeout(t);
+  }, [visible, canDismiss]);
 
   useEffect(() => {
     if (!visible && canDismiss) {
@@ -232,15 +242,7 @@ export function AnimatedSplashScreen({ visible, onFinish }: AnimatedSplashScreen
           <Animated.View style={[styles.alignmentDot, { right: 10, backgroundColor: goldColor, opacity: sparklePulse }]} />
 
           {/* Golden 'S' Coin Seal Medallion */}
-          <Animated.View
-            style={[
-              styles.sealWrapper,
-              {
-                opacity: sealOpacity,
-                transform: [{ scale: sealScale }],
-              },
-            ]}
-          >
+          <View style={styles.sealWrapper}>
             {/* Outer Coin Circle */}
             <View
               style={{
@@ -316,7 +318,7 @@ export function AnimatedSplashScreen({ visible, onFinish }: AnimatedSplashScreen
                 opacity={0.7}
               />
             </Svg>
-          </Animated.View>
+          </View>
         </View>
 
         {/* ── BRAND TITLE & PUNCHLINE STACK ── */}

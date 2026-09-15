@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import './load-maintenance-env';
 import { createExchangeService } from '../services/exchange';
 
 const url = process.env.SUPABASE_URL || process.env.EXPO_PUBLIC_SUPABASE_URL;

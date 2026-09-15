@@ -1,8 +1,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { EXPENSE_CACHE_PREFIX, LEGACY_EXPENSE_CACHE_KEY, PAGE_SIZE } from '@/constants/app';
-import { seedDefaultCategories } from '@/services/categories';
+import { createCategory, listCategories } from '@/services/categories';
+import { listBankAccounts } from '@/services/bankAccounts';
 import { getRate } from '@/services/exchange';
-import { Expense, ExpenseFilters, ExpenseInput, ExpensePage, SortKey } from '@/types';
+import { MAX_AMOUNT, validateAmount } from '@/services/validation';
+import { BankAccount, Expense, ExpenseFilters, ExpenseInput, ExpensePage, SortKey } from '@/types';
 import { supabase } from '@/utils/supabase';
 
 // Explicit column list (not select('*')) so list payloads never include
@@ -12,6 +14,7 @@ import { supabase } from '@/utils/supabase';
 const selection = [
   'id', 'user_id', 'category_id', 'amount', 'currency', 'description', 'date', 'time',
   'payment_method', 'notes', 'receipt_image_url', 'is_recurring', 'recurring_rule_id',
+  'recurring_due_date',
   'bank_account_id', 'exchange_rate_to_usd', 'base_currency', 'type', 'deleted_at',
   'created_at', 'updated_at',
   'categories(name, icon, color)',
@@ -172,18 +175,9 @@ function isValidUUID(str?: string | null): boolean {
 // Monetary values are security-sensitive: NaN/Infinity/negative amounts and
 // malformed dates must be rejected before they reach PostgREST, independent
 // of what the UI allows.
-const MAX_AMOUNT = 1_000_000_000_000;
 const MAX_DESCRIPTION_LENGTH = 500;
 const MAX_NOTES_LENGTH = 2000;
 const MAX_CSV_IMPORT_ROWS = 1000;
-
-function validateAmount(amount: unknown): number {
-  const value = Number(amount);
-  if (!Number.isFinite(value) || value <= 0 || value > MAX_AMOUNT) {
-    throw new Error('Enter a valid amount greater than zero.');
-  }
-  return value;
-}
 
 function validateDate(date: unknown): string {
   if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(new Date(`${date}T00:00:00Z`).getTime())) {
@@ -197,6 +191,16 @@ function cleanText(value: string | null | undefined, maxLength: number): string 
   const trimmed = String(value).trim();
   if (!trimmed) return null;
   return trimmed.slice(0, maxLength);
+}
+
+/**
+ * CSV cells the exporter wrapped with a leading apostrophe (spreadsheet
+ * formula-injection guard for values starting with = + - @) must be unwrapped
+ * on import so descriptions round-trip byte-identical.
+ */
+function stripExportQuote(value: string | null | undefined, maxLength: number): string | null {
+  if (value === null || value === undefined) return null;
+  return cleanText(value.startsWith("'") ? value.slice(1) : value, maxLength);
 }
 
 export async function createExpense(userId: string, input: ExpenseInput) {
@@ -307,7 +311,9 @@ function parseCsvLine(line: string) {
 }
 
 export async function importExpensesFromCsv(userId: string, csv: string) {
-  const lines = csv.split(/\r?\n/).filter((line) => line.trim());
+  // Strip the UTF-8 BOM our own exporter prepends (for Windows Excel) — it
+  // would otherwise glue itself onto the first header name ('Type').
+  const lines = csv.replace(/^\uFEFF/, '').split(/\r?\n/).filter((line) => line.trim());
   if (lines.length < 2) throw new Error('CSV file has no expense rows.');
   const headers = parseCsvLine(lines[0]).map((header) => header.toLowerCase());
   const indexOf = (name: string) => headers.indexOf(name);
@@ -315,29 +321,135 @@ export async function importExpensesFromCsv(userId: string, csv: string) {
   const amountIndex = indexOf('amount');
   if (dateIndex < 0 || amountIndex < 0) throw new Error('CSV must include Date and Amount columns.');
 
-  const categories = await seedDefaultCategories(userId);
-  const categoryByName = new Map(categories.map((category) => [category.name.toLowerCase(), category.id]));
-  const otherCategory = categoryByName.get('other');
+  // Round-trip resolution maps: categories by name (create-on-demand with the
+  // exported icon/color so nothing silently degrades to "Other"), bank accounts
+  // by name (link when the name matches an existing account).
+  const categories = await listCategories(userId);
+  const categoryByName = new Map(categories.map((category) => [category.name.toLowerCase(), category]));
+  const createCategoryIfMissing = async (name: string, icon: string, color: string, type: 'expense' | 'income') => {
+    const key = name.toLowerCase();
+    const existing = categoryByName.get(key);
+    if (existing) return existing;
+    try {
+      const created = await createCategory(userId, { name, icon: icon || '📌', color: color || '#10B981', type });
+      categoryByName.set(key, created);
+      return created;
+    } catch {
+      return null; // network/DB refused — row falls back below
+    }
+  };
+
+  const accounts = await listBankAccounts(userId).catch(() => [] as BankAccount[]);
+  const accountByName = new Map(accounts.map((account) => [account.name.toLowerCase(), account.id]));
+
   const rows = lines.slice(1).map((line, rowIndex) => {
     const cells = parseCsvLine(line);
     const date = cells[dateIndex];
     const amount = Number(cells[amountIndex]);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(amount) || amount <= 0 || amount > MAX_AMOUNT) throw new Error(`Invalid date or amount on CSV row ${rowIndex + 2}.`);
-    const categoryName = dateIndex >= 0 && indexOf('category') >= 0 ? cells[indexOf('category')].toLowerCase() : 'other';
+
+    // Type: income rows must stay income — default keeps legacy files expense.
+    const typeCell = indexOf('type') >= 0 ? cells[indexOf('type')].toLowerCase() : '';
+    const type: 'expense' | 'income' = typeCell === 'income' ? 'income' : 'expense';
+
+    // Category: resolve by name; icon/color only matter when creating it.
+    // stripExportQuote mirrors the exporter's formula-injection guard so
+    // sanitized cells round-trip byte-identical.
+    const categoryName = stripExportQuote(indexOf('category') >= 0 && cells[indexOf('category')] ? cells[indexOf('category')] : 'Other', 100) ?? 'Other';
+    const categoryIcon = stripExportQuote(indexOf('category icon') >= 0 ? cells[indexOf('category icon')] : '', 32) ?? '';
+    const categoryColor = stripExportQuote(indexOf('category color') >= 0 ? cells[indexOf('category color')] : '', 32) ?? '';
+    const category = categoryByName.get(categoryName.toLowerCase()) ?? null;
+
+    // Account: re-link by name when it matches; otherwise unassigned.
+    const accountName = stripExportQuote(indexOf('account') >= 0 ? cells[indexOf('account')] : '', 100) ?? '';
+    const bank_account_id = accountName ? accountByName.get(accountName.toLowerCase()) ?? null : null;
+
+    // Time: free-typed "HH:MM[:SS]" — shape-validated, quote-stripped.
+    const rawTime = stripExportQuote(indexOf('time') >= 0 ? cells[indexOf('time')] : '', 8) ?? '';
+    const time = /^\d{1,2}:\d{2}(:\d{2})?$/.test(rawTime) ? rawTime : null;
+
     return {
       user_id: userId,
       date,
       amount,
+      type,
+      time,
       currency: (indexOf('currency') >= 0 ? cells[indexOf('currency')] || 'NPR' : 'NPR').trim().toUpperCase().slice(0, 3) || 'NPR',
-      category_id: categoryByName.get(categoryName) ?? otherCategory,
+      category_id: category?.id ?? null,
+      category_meta: { name: categoryName, icon: categoryIcon, color: categoryColor, type },
+      bank_account_id,
       payment_method: (indexOf('payment method') >= 0 ? cells[indexOf('payment method')] : 'Cash') || 'Cash',
-      description: cleanText(indexOf('description') >= 0 ? cells[indexOf('description')] : null, MAX_DESCRIPTION_LENGTH),
-      notes: cleanText(indexOf('notes') >= 0 ? cells[indexOf('notes')] : null, MAX_NOTES_LENGTH),
+      description: stripExportQuote(indexOf('description') >= 0 ? cells[indexOf('description')] : null, MAX_DESCRIPTION_LENGTH),
+      notes: stripExportQuote(indexOf('notes') >= 0 ? cells[indexOf('notes')] : null, MAX_NOTES_LENGTH),
     };
-  }).filter((row) => row.category_id);
+  });
   if (!rows.length) throw new Error('CSV has no importable rows.');
   if (rows.length > MAX_CSV_IMPORT_ROWS) throw new Error(`CSV import is limited to ${MAX_CSV_IMPORT_ROWS} rows per file.`);
-  const { error } = await supabase.from('expenses').insert(rows);
+
+  // Create any categories the file references but the account doesn't have,
+  // then fill every row's category_id.
+  const missingCategories = new Map<string, { icon: string; color: string; type: 'expense' | 'income' }>();
+  for (const row of rows) {
+    if (!row.category_id && row.category_meta.name) {
+      if (!missingCategories.has(row.category_meta.name.toLowerCase())) {
+        missingCategories.set(row.category_meta.name.toLowerCase(), {
+          icon: row.category_meta.icon,
+          color: row.category_meta.color,
+          type: row.category_meta.type,
+        });
+      }
+    }
+  }
+  for (const [name, meta] of missingCategories) {
+    const created = await createCategoryIfMissing(name, meta.icon, meta.color, meta.type);
+    if (created) {
+      for (const row of rows) {
+        if (row.category_meta.name.toLowerCase() === name) row.category_id = created.id;
+      }
+    }
+  }
+
+  // category_id is NOT NULL with FK RESTRICT — any row still unresolved after
+  // the create-on-demand pass (network refused, invalid name) is dropped
+  // rather than failing the whole batch, matching the legacy filter.
+  const importable = rows.filter((row) => row.category_id);
+  if (!importable.length) {
+    throw new Error('CSV has no importable rows — no category could be resolved for any transaction.');
+  }
+
+  // Exchange snapshot per row — same field createExpense writes, so imported
+  // history converts at its own dates exactly like natively-created rows.
+  const rateCache = new Map<string, number | null>();
+  const snapshotFor = async (currency: string, date: string): Promise<number | null> => {
+    const key = `${currency}:${date}`;
+    if (rateCache.has(key)) return rateCache.get(key) ?? null;
+    const rate = await getRate(currency, date).catch(() => null);
+    const safe = rate && rate > 0 ? rate : null;
+    rateCache.set(key, safe);
+    return safe;
+  };
+
+  const insertRows = await Promise.all(
+    importable.map(async (row) => {
+      const snapshot = await snapshotFor(row.currency, row.date);
+      return {
+        user_id: row.user_id,
+        date: row.date,
+        time: row.time,
+        amount: row.amount,
+        type: row.type,
+        currency: row.currency,
+        category_id: row.category_id,
+        bank_account_id: row.bank_account_id,
+        payment_method: row.payment_method,
+        description: row.description,
+        notes: row.notes,
+        ...(snapshot ? { exchange_rate_to_usd: snapshot, base_currency: 'USD' } : {}),
+      };
+    }),
+  );
+
+  const { error } = await supabase.from('expenses').insert(insertRows);
   if (error) throw error;
-  return rows.length;
+  return insertRows.length;
 }

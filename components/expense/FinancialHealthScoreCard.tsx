@@ -20,13 +20,12 @@ import {
 import { Card } from '@/components/ui/Card';
 import { Text } from '@/components/ui/Text';
 import { useAuth } from '@/hooks/useAuth';
-import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { useRateResolver } from '@/hooks/useRateResolver';
 import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
 import { useTheme } from '@/hooks/useTheme';
 import { Expense } from '@/types';
-import { convertCurrency, formatMoney, getMonthlyBudget, groupByCategory } from '@/utils/format';
+import { formatMoney, getMonthlyBudget, groupByCategory, isoDate } from '@/utils/format';
 
 interface FinancialHealthScoreCardProps {
   expenses: Expense[];
@@ -39,17 +38,16 @@ export function FinancialHealthScoreCard({
 }: FinancialHealthScoreCardProps) {
   const theme = useTheme();
   const { profile } = useAuth();
-  const { rates } = useExchangeRates();
   const { t } = useLanguage();
   const { isPrivacyMode } = usePrivacy();
 
   const [infoModalOpen, setInfoModalOpen] = useState(false);
 
   const currency = targetCurrency ?? profile?.preferred_currency ?? 'NPR';
-  const rateResolver = useRateResolver(expenses, currency);
+  const { resolver: rateResolver } = useRateResolver(expenses, currency);
   // Canonical USD resolver for budget adherence (percentage must be currency-invariant)
-  const usdResolver = useRateResolver(expenses, 'USD');
-  const monthlyBudget = getMonthlyBudget(profile, rates, currency);
+  const { resolver: usdResolver } = useRateResolver(expenses, 'USD');
+  const monthlyBudget = getMonthlyBudget(profile, rateResolver, currency);
   // Budget in canonical USD for ratio calculation
   const budgetCurrency = (profile?.budget_currency || profile?.preferred_currency || 'NPR').toUpperCase();
   const rawBudget = profile?.monthly_budget ? Number(profile.monthly_budget) : 0;
@@ -135,7 +133,11 @@ export function FinancialHealthScoreCard({
     }
 
     // 2. Budget Adherence Score (0-35 pts) — computed in canonical USD so it's invariant across display currencies
-    const budgetInUsd = rawBudget > 0 ? convertCurrency(rawBudget, budgetCurrency, 'USD', rates) : 0;
+    // Same resolver as the spend numerator — never mix a live-rate budget with
+    // historically-converted spending in one ratio.
+    const budgetInUsd = rawBudget > 0 && usdResolver
+      ? usdResolver.convert(rawBudget, budgetCurrency, 'USD', isoDate())
+      : 0;
     const spentUsd = usdResolver
       ? expenseItems.reduce((sum, e) => sum + usdResolver.convert(Number(e.amount), e.currency || 'NPR', 'USD', e.date), 0)
       : 0;
@@ -298,7 +300,7 @@ export function FinancialHealthScoreCard({
       savingsRate: computedSavingsRate,
       insights: insights.slice(0, 3),
     };
-  }, [expenses, monthlyBudget, currency, rateResolver, usdResolver, rawBudget, budgetCurrency, rates]);
+  }, [expenses, monthlyBudget, currency, rateResolver, usdResolver, rawBudget, budgetCurrency]);
 
   // Radial dial geometry
   const radius = 40;

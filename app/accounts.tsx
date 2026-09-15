@@ -35,13 +35,12 @@ import { countryFlag } from '@/constants/countries';
 import { useAuth } from '@/hooks/useAuth';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { useRateResolver } from '@/hooks/useRateResolver';
-import { useExpenses } from '@/hooks/useExpenses';
+import { useAccountBalances } from '@/hooks/useAccountBalances';
 import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
+import { usePrivacyScreen } from '@/hooks/usePrivacyScreen';
 import { useTheme } from '@/hooks/useTheme';
-import { useTransfers } from '@/hooks/useTransfers';
 import {
-  computeAccountBalances,
   listBankAccounts,
   seedDefaultAccounts,
 } from '@/services/bankAccounts';
@@ -56,6 +55,8 @@ export default function AccountsScreen() {
   const { status: rateStatus } = useExchangeRates();
   const { t } = useLanguage();
   const { isPrivacyMode } = usePrivacy();
+  // Financial data screen: block screenshots / screen recording while mounted.
+  usePrivacyScreen();
 
   const userId = profile?.id ?? session?.user?.id;
   const preferredCurrency = profile?.preferred_currency || 'NPR';
@@ -66,14 +67,18 @@ export default function AccountsScreen() {
   const [modalVisible, setModalVisible] = useState(false);
   const [accountToEdit, setAccountToEdit] = useState<BankAccount | null>(null);
 
-  // Transfers move money between accounts — they affect live balances and get
-  // their own recent-activity section below the account list.
-  const { transfers, remove: removeTransfer, refresh: refreshTransfers } = useTransfers(userId);
+  // One shared source of truth for live balances (identical hook to the
+  // Add/Edit expense form): expenses are loaded with fetchAll, transfers move
+  // money between accounts, and every balance on this list is computed by the
+  // exact same code path the rest of the app reads.
+  const {
+    liveBalances: accountsWithLiveBalances,
+    transfers: transfersHook,
+    refresh: refreshBalances,
+  } = useAccountBalances(userId, accounts);
+  const { transfers, remove: removeTransfer } = transfersHook;
   const [transferToDelete, setTransferToDelete] = useState<Transfer | null>(null);
   const [deletingTransfer, setDeletingTransfer] = useState(false);
-
-  // Load all expenses to compute live balance accurately
-  const expenses = useExpenses(userId, { fetchAll: true });
 
   const loadData = useCallback(async () => {
     if (!userId) {
@@ -100,44 +105,19 @@ export default function AccountsScreen() {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await expenses.refresh(true);
-    await refreshTransfers();
+    await refreshBalances();
     await loadData();
   };
 
-  // Compute live balance for each account using all transactions. Async because
-  // each transaction is converted into the account's currency (INR/NPR mix).
-  const [accountsWithLiveBalances, setAccountsWithLiveBalances] = useState<
-    (BankAccount & { live_balance: number })[]
-  >([]);
+  // accountsWithLiveBalances comes from useAccountBalances above — the exact
+  // same computation the expense form reads, so the two screens can't diverge.
   // Net worth is a current valuation of held account balances, so it uses
   // today's historical-service rate rather than the deprecated live context.
   const valuationRows = useMemo(
     () => accountsWithLiveBalances.map((account) => ({ currency: account.currency, date: isoDate() })),
     [accountsWithLiveBalances],
   );
-  const rateResolver = useRateResolver(valuationRows, preferredCurrency);
-
-  useEffect(() => {
-    let cancelled = false;
-    // Paint initial balances immediately so the list never flashes the empty
-    // state while the (async) currency conversions resolve.
-    setAccountsWithLiveBalances((current) =>
-      current.length === 0 && accounts.length > 0
-        ? accounts.map((a) => ({ ...a, live_balance: Number(a.initial_balance || 0) }))
-        : current,
-    );
-    computeAccountBalances(accounts, expenses.items, transfers)
-      .then((next) => {
-        if (!cancelled) setAccountsWithLiveBalances(next);
-      })
-      .catch(() => {
-        // Keep the last successfully computed balances on failure
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [accounts, expenses.items, transfers]);
+  const { resolver: rateResolver } = useRateResolver(valuationRows, preferredCurrency);
 
   // Total Net Liquid Worth (converted from each account's currency to preferredCurrency)
   const totalNetLiquidWorth = accountsWithLiveBalances.reduce((sum, acc) => {
@@ -495,7 +475,7 @@ export default function AccountsScreen() {
               </Pressable>
             </View>
 
-            {transfers.slice(0, 5).map((tr) => {
+            {transfers.slice(0, 3).map((tr) => {
               const crossCurrency = tr.from_currency !== tr.to_currency;
               const fromName = tr.from_account?.name ?? '—';
               const toName = tr.to_account?.name ?? '—';

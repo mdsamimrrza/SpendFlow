@@ -21,7 +21,7 @@ import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
 import { useTheme } from '@/hooks/useTheme';
 import { Expense } from '@/types';
-import { formatMoney } from '@/utils/format';
+import { compactMoney, formatMoney } from '@/utils/format';
 
 interface FinancialInsightsProps {
   expenses: Expense[];
@@ -33,7 +33,7 @@ interface FinancialInsightsProps {
 export function FinancialInsights({ expenses, targetCurrency, flowType, onFlipFlowType }: FinancialInsightsProps) {
   const theme = useTheme();
   const { t, language } = useLanguage();
-  const rateResolver = useRateResolver(expenses, targetCurrency);
+  const { resolver: rateResolver } = useRateResolver(expenses, targetCurrency);
   const { isPrivacyMode } = usePrivacy();
   const [weekOffset, setWeekOffset] = useState<number>(0);
   const [selectedDay, setSelectedDay] = useState<{ name: string; full: string; total: number; expenses: Expense[] } | null>(null);
@@ -420,9 +420,7 @@ export function FinancialInsights({ expenses, targetCurrency, flowType, onFlipFl
                       >
                         {isPrivacyMode
                           ? '••'
-                          : day.total >= 1000
-                          ? `${(day.total / 1000).toFixed(1)}k`
-                          : Math.round(day.total)}
+                          : compactMoney(day.total)}
                       </Text>
                     ) : (
                       <Text variant="caption" muted style={{ fontSize: 9, opacity: 0.35 }}>

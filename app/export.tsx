@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, RefreshControl, ScrollView, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Animated, Platform, Pressable, RefreshControl, ScrollView, ToastAndroid, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as DocumentPicker from 'expo-document-picker';
 import {
@@ -8,6 +8,7 @@ import {
   ChevronLeft,
   FileSpreadsheet,
   FileText,
+  Info,
   Printer,
   Share2,
   Sparkles,
@@ -18,15 +19,15 @@ import {
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Text } from '@/components/ui/Text';
-import { showToast } from '@/components/ui/Toast';
 import { PERIODS } from '@/constants/app';
 import { exportCsv, exportExcel, exportPdf } from '@/services/export';
 import { importExpensesFromCsv } from '@/services/expenses';
 import { useAuth } from '@/hooks/useAuth';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
-import { buildRateResolver, type RateResolver } from '@/services/exchange';
+import { useRateResolver } from '@/hooks/useRateResolver';
 import { useExpenses } from '@/hooks/useExpenses';
 import { useLanguage } from '@/hooks/useLanguage';
+import { useSecurity } from '@/hooks/useSecurity';
 import { useTheme } from '@/hooks/useTheme';
 import { PeriodKey } from '@/types';
 import { filterExpensesByPeriod, formatMoney, sumExpenses } from '@/utils/format';
@@ -39,6 +40,61 @@ export default function ExportScreen() {
   const { rates } = useExchangeRates();
   const [period, setPeriod] = useState<PeriodKey>('month');
   const [isExporting, setIsExporting] = useState<string | null>(null);
+
+  // ── Inline status banner ──────────────────────────────────────────────────
+  // Rendered INSIDE this screen's own view tree (not the shared ToastHost):
+  // export is presented as a modal, so on Android the root host can sit in a
+  // lower window and toasts go unseen. The banner drops in below the header
+  // and auto-hides after a few seconds; tapping it dismisses early.
+  const [banner, setBanner] = useState<{ tone: 'success' | 'info' | 'error'; message: string } | null>(null);
+  const bannerOpacity = useRef(new Animated.Value(0)).current;
+  const bannerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showBanner = useCallback((tone: 'success' | 'info' | 'error', message: string) => {
+    if (bannerTimer.current) clearTimeout(bannerTimer.current);
+    console.log(`[export:${tone}] ${message}`);
+    setBanner({ tone, message });
+    Animated.timing(bannerOpacity, { toValue: 1, duration: 220, useNativeDriver: true }).start();
+    bannerTimer.current = setTimeout(() => {
+      Animated.timing(bannerOpacity, { toValue: 0, duration: 260, useNativeDriver: true }).start(({ finished }) => {
+        if (finished) setBanner(null);
+      });
+    }, 4000);
+  }, [bannerOpacity]);
+
+  // If a native step hangs (never resolves, never rejects) the try/finally
+  // would never run and all three buttons would stay disabled forever with no
+  // feedback — exactly the silent dead-end users reported. Race every export
+  // against a deadline so the UI always reports SOMETHING and always unlocks.
+  const withWatchdog = useCallback(<T,>(p: Promise<T>, label: string): Promise<T> => {
+    return Promise.race([
+      p,
+      new Promise<T>((_, reject) => {
+        setTimeout(
+          () => reject(new Error(`${label} timed out — the system save dialog may still be open. Cancel it and try again.`)),
+          30000,
+        );
+      }),
+    ]);
+  }, []);
+
+  useEffect(() => () => {
+    if (bannerTimer.current) clearTimeout(bannerTimer.current);
+  }, []);
+
+  // Native OS toast on Android: rendered by the system above every window
+  // (modal screens included) — guaranteed even if the in-screen banner or the
+  // shared ToastHost is layered out of view.
+  const notify = useCallback((tone: 'success' | 'info' | 'error', message: string) => {
+    showBanner(tone, message);
+    if (Platform.OS === 'android') {
+      ToastAndroid.show(message, ToastAndroid.LONG);
+    }
+  }, [showBanner]);
+
+  useEffect(() => {
+    console.log('[export] ExportCenter mounted — status banner build');
+  }, []);
 
   // Statements must cover the complete selected period — the default server
   // page (20 rows) would silently truncate exports for larger histories.
@@ -55,18 +111,8 @@ export default function ExportScreen() {
 
   // Snapshot-aware total: each row converts at its own date — statements
   // match History/Dashboard exactly instead of re-valuing at today's rate.
-  const [rateResolver, setRateResolver] = useState<RateResolver | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    buildRateResolver(filteredItems, preferredCurrency)
-      .then((r) => {
-        if (!cancelled) setRateResolver(r);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [filteredItems, preferredCurrency]);
+  // Shared snapshot-resolver hook (same source as the other money screens).
+  const { resolver: rateResolver } = useRateResolver(filteredItems, preferredCurrency);
 
   const totalAmount = useMemo(
     () => sumExpenses(filteredItems, preferredCurrency, rateResolver),
@@ -74,52 +120,83 @@ export default function ExportScreen() {
   );
 
   const periodLabel = PERIODS.find((p) => p.value === period)?.label || 'This Month';
+  // The Download flow opens Android's SAF folder picker — a separate system
+  // activity that fires background→active on return. Suppress the biometric
+  // lock for the export, exactly like the camera/picker round-trip.
+  const { beginSystemCapture, endSystemCapture } = useSecurity();
 
   // 1. PDF Export Handler
   async function handleExportPdf() {
     if (filteredItems.length === 0) {
-      Alert.alert('No Transactions', 'There are no expenses in the selected period to generate a statement.');
+      notify('error', 'No transactions in the selected period to generate a statement.');
       return;
     }
     setIsExporting('pdf');
+    notify('info', 'Generating PDF statement…');
+    beginSystemCapture();
+    let result: 'saved' | 'shared' | null = null;
     try {
-      await exportPdf(filteredItems, profile, preferredCurrency);
+      result = await withWatchdog(exportPdf(filteredItems, profile, preferredCurrency), 'PDF export');
     } catch (err) {
-      Alert.alert('Export Failed', err instanceof Error ? err.message : 'Could not generate PDF statement.');
+      notify('error', err instanceof Error ? err.message : 'Could not generate PDF statement.');
     } finally {
+      endSystemCapture();
       setIsExporting(null);
+    }
+    if (result === 'saved') {
+      notify('success', 'PDF statement saved to your device.');
+    } else if (result === 'shared') {
+      notify('info', 'PDF ready — finish saving it in the share sheet.');
     }
   }
 
   // 2. Excel Export Handler
   async function handleExportExcel() {
     if (filteredItems.length === 0) {
-      Alert.alert('No Transactions', 'There are no expenses in the selected period to export.');
+      notify('error', 'No transactions in the selected period to export.');
       return;
     }
     setIsExporting('excel');
+    notify('info', 'Generating Excel file…');
+    beginSystemCapture();
+    let result: 'saved' | 'shared' | null = null;
     try {
-      await exportExcel(filteredItems, preferredCurrency);
+      result = await withWatchdog(exportExcel(filteredItems, preferredCurrency), 'Excel export');
     } catch (err) {
-      Alert.alert('Export Failed', err instanceof Error ? err.message : 'Could not generate Excel spreadsheet.');
+      notify('error', err instanceof Error ? err.message : 'Could not generate Excel spreadsheet.');
     } finally {
+      endSystemCapture();
       setIsExporting(null);
+    }
+    if (result === 'saved') {
+      notify('success', 'Excel spreadsheet saved to your device.');
+    } else if (result === 'shared') {
+      notify('info', 'Excel file ready — finish saving it in the share sheet.');
     }
   }
 
   // 3. CSV Export Handler
   async function handleExportCsv() {
     if (filteredItems.length === 0) {
-      Alert.alert('No Transactions', 'There are no expenses in the selected period to export.');
+      notify('error', 'No transactions in the selected period to export.');
       return;
     }
     setIsExporting('csv');
+    notify('info', 'Generating CSV file…');
+    beginSystemCapture();
+    let result: 'saved' | 'shared' | null = null;
     try {
-      await exportCsv(filteredItems);
+      result = await withWatchdog(exportCsv(filteredItems), 'CSV export');
     } catch (err) {
-      Alert.alert('Export Failed', err instanceof Error ? err.message : 'Could not generate CSV file.');
+      notify('error', err instanceof Error ? err.message : 'Could not generate CSV file.');
     } finally {
+      endSystemCapture();
       setIsExporting(null);
+    }
+    if (result === 'saved') {
+      notify('success', 'CSV file saved to your device.');
+    } else if (result === 'shared') {
+      notify('info', 'CSV file ready — finish saving it in the share sheet.');
     }
   }
 
@@ -136,20 +213,21 @@ export default function ExportScreen() {
       // Bound the parsed payload before any processing — the row cap inside
       // importExpensesFromCsv only runs AFTER the whole file is in memory.
       if (csv.length > 2 * 1024 * 1024) {
-        Alert.alert('Import Failed', 'The CSV file is too large (max ~2 MB / 1000 rows). Split the file and try again.');
+        notify('error', 'The CSV file is too large (max ~2 MB / 1000 rows). Split the file and try again.');
         return;
       }
       const count = await importExpensesFromCsv(profile.id, csv);
-      showToast({ message: `${count} transactions were successfully imported.` });
+      notify('success', `${count} transactions were successfully imported.`);
       await expenses.refresh(true);
     } catch (error) {
-      Alert.alert('Import Failed', error instanceof Error ? error.message : 'Could not import CSV.');
+      notify('error', error instanceof Error ? error.message : 'Could not import CSV.');
     }
   }
 
   return (
+    <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
     <ScrollView
-      style={{ flex: 1, backgroundColor: theme.colors.background }}
+      style={{ flex: 1 }}
       contentContainerStyle={{ padding: theme.spacing.lg, gap: theme.spacing.lg, paddingBottom: 60 }}
       refreshControl={
         <RefreshControl
@@ -444,6 +522,70 @@ export default function ExportScreen() {
           </Text>
         </Pressable>
       </View>
+
+      {/* Build tag — if this line is NOT visible on screen, the device is
+          running a stale JS bundle and none of the export fixes are live. */}
+      <Text variant="caption" muted style={{ fontSize: 10, textAlign: 'center', opacity: 0.55 }}>
+        Export build v7 · {Platform.OS}
+      </Text>
     </ScrollView>
+
+    {/* ── INLINE STATUS BANNER — lives in this screen's own window, so it is
+        always visible (no dependence on the shared ToastHost / Android modal
+        window layering). Auto-hides; tap to dismiss. ── */}
+    {banner ? (
+      <Animated.View
+        pointerEvents="box-none"
+        style={{
+          position: 'absolute',
+          top: 18,
+          left: 16,
+          right: 16,
+          opacity: bannerOpacity,
+          zIndex: 999,
+          elevation: 12,
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 6 },
+          shadowOpacity: 0.25,
+          shadowRadius: 12,
+        }}
+      >
+        <Pressable
+          onPress={() => {
+            if (bannerTimer.current) clearTimeout(bannerTimer.current);
+            Animated.timing(bannerOpacity, { toValue: 0, duration: 180, useNativeDriver: true }).start(() => setBanner(null));
+          }}
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 10,
+            paddingVertical: 12,
+            paddingHorizontal: 14,
+            borderRadius: 16,
+            backgroundColor:
+              banner.tone === 'success'
+                ? theme.colors.income
+                : banner.tone === 'error'
+                  ? theme.colors.danger
+                  : theme.colors.primary,
+          }}
+        >
+          {banner.tone === 'success' ? (
+            <CheckCircle2 size={18} color="#FFFFFF" strokeWidth={2.4} />
+          ) : banner.tone === 'error' ? (
+            <X size={18} color="#FFFFFF" strokeWidth={2.6} />
+          ) : (
+            <Info size={18} color="#FFFFFF" strokeWidth={2.4} />
+          )}
+          <Text
+            numberOfLines={2}
+            style={{ flex: 1, fontSize: 12.5, lineHeight: 17, fontWeight: '800', color: '#FFFFFF', includeFontPadding: false }}
+          >
+            {banner.message}
+          </Text>
+        </Pressable>
+      </Animated.View>
+    ) : null}
+    </View>
   );
 }

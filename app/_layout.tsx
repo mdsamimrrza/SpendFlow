@@ -3,7 +3,7 @@ import 'react-native-url-polyfill/auto';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
-import { ActivityIndicator, Platform, View } from 'react-native';
+import { ActivityIndicator, LogBox, Platform, View } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AuthProvider } from '@/store/AuthContext';
 import { ExchangeRateProvider } from '@/store/ExchangeRateContext';
@@ -20,8 +20,17 @@ import { isSupabaseConfigured } from '@/utils/supabase';
 import { SecurityProvider } from '@/store/SecurityContext';
 import { PrivacyProvider } from '@/store/PrivacyContext';
 import { BiometricLockOverlay } from '@/components/security/BiometricLockOverlay';
+import { PasswordRecoveryModal } from '@/components/auth/PasswordRecoveryModal';
 import { initNotifications } from '@/services/notifications';
 import { registerPushToken } from '@/services/pushNotifications';
+
+// Known upstream dev-only noise (React 19 + expo-router): the initial deep
+// link URL resolves from a promise and React Navigation sets state while its
+// container is still mounting. Fires once at cold start on every dev launch;
+// never ships to production. Ignoring it keeps the red box off the screen.
+if (__DEV__) {
+  LogBox.ignoreLogs(['Can\'t perform a React state update on a component that hasn\'t mounted yet']);
+}
 
 function RootNavigator() {
   const { session, loading } = useAuth();
@@ -95,9 +104,11 @@ function RootNavigator() {
         <Stack.Screen name="export" options={{ presentation: 'modal' }} />
         <Stack.Screen name="bullion" />
         <Stack.Screen name="profile" />
+        <Stack.Screen name="bin" />
         <Stack.Screen name="profit-loss" options={{ presentation: 'modal' }} />
       </Stack>
       <AnimatedSplashScreen visible={isLoading} />
+      <PasswordRecoveryModal />
       <BiometricLockOverlay />
       <ToastHost />
     </View>

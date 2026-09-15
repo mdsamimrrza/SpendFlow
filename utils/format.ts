@@ -7,20 +7,20 @@ let globalPrivacyMode = false;
 
 const DEFAULT_RATES: Record<string, number> = {
   USD: 1.0,
-  // 83.5 INR/USD × 1.60 (NRB peg) — kept peg-consistent by construction.
-  NPR: 133.6,
-  INR: 83.5,
+  // 94.84 INR/USD × 1.60 (NRB peg) — kept peg-consistent by construction.
+  NPR: 151.74,
+  INR: 94.84,
   QAR: 3.64,
-  GBP: 0.79,
-  EUR: 0.92,
-  AED: 3.67,
+  GBP: 0.738,
+  EUR: 0.86,
+  AED: 3.6725,
   SAR: 3.75,
-  CAD: 1.36,
-  AUD: 1.52,
-  JPY: 155.0,
-  SGD: 1.35,
-  MYR: 4.70,
-  KRW: 1350.0,
+  CAD: 1.378,
+  AUD: 1.386,
+  JPY: 153.8,
+  SGD: 1.265,
+  MYR: 4.06,
+  KRW: 1341.0,
 };
 
 export function convertCurrency(
@@ -60,6 +60,7 @@ export function setGlobalPrivacyMode(enabled: boolean) {
  * The stored figure is in profile.budget_currency (falls back to the preferred
  * currency for legacy rows saved before budget currency was tracked), so a
  * budget saved as 36,000 INR renders as its NPR equivalent instead of 36,000 NPR.
+ * Now uses RateResolver for historical rate consistency instead of live rates.
  */
 export function getMonthlyBudget(
   profile?: {
@@ -67,7 +68,7 @@ export function getMonthlyBudget(
     budget_currency?: string | null;
     preferred_currency?: string;
   } | null,
-  rates?: Record<string, number>,
+  resolver?: RateResolver | null,
   targetCurrency?: string,
 ): number {
   const raw = profile?.monthly_budget ? Number(profile.monthly_budget) : 0;
@@ -75,7 +76,15 @@ export function getMonthlyBudget(
   const from = (profile?.budget_currency || profile?.preferred_currency || 'NPR').toUpperCase();
   const to = (targetCurrency || profile?.preferred_currency || 'NPR').toUpperCase();
 
-  return from === to ? raw : convertCurrency(raw, from, to, rates);
+  if (from === to) return raw;
+  
+  // Use RateResolver for historical rate consistency
+  if (resolver) {
+    return resolver.convert(raw, from, to, isoDate());
+  }
+  
+  // Fallback to DEFAULT_RATES if no resolver available
+  return convertCurrency(raw, from, to);
 }
 
 export interface BudgetMetrics {
@@ -90,8 +99,9 @@ export interface BudgetMetrics {
 /**
  * Calculates financial budget metrics (spent, budget, remaining, percentage, ratio)
  * with mathematical invariance across display currencies.
- * The budget amount converts using Today's Current/Live Rate (rates), while the percentage
- * is evaluated in canonical base USD so switching display currency never alters percentages.
+ * The percentage is evaluated by converting both expenses and budget to the budget's
+ * currency using the SAME RateResolver (historical rates), so switching display currency
+ * never alters percentages.
  */
 export function calculateBudgetMetrics(
   expenses: Expense[],
@@ -102,7 +112,6 @@ export function calculateBudgetMetrics(
   } | null,
   targetCurrency = 'NPR',
   resolver?: RateResolver | null,
-  rates?: Record<string, number>,
 ): BudgetMetrics {
   const rawBudget = profile?.monthly_budget ? Number(profile.monthly_budget) : 0;
   const budgetCurrency = (profile?.budget_currency || profile?.preferred_currency || 'NPR').toUpperCase();
@@ -134,8 +143,13 @@ export function calculateBudgetMetrics(
   const percentage = Math.round(ratio * 100);
   const isOverBudget = rawBudget > 0 && spentInBudgetCcy > rawBudget;
 
-  // 2. Display formatting in targetCurrency using Live Rates for budget and RateResolver for spent
-  const budget = getMonthlyBudget(profile, rates, displayCurrency);
+  // 2. Display formatting in targetCurrency using RateResolver for both spent and budget
+  //    (convert rawBudget from budgetCurrency to displayCurrency via RateResolver at today's date)
+  const budget = budgetCurrency === displayCurrency
+    ? rawBudget
+    : resolver
+      ? resolver.convert(rawBudget, budgetCurrency, displayCurrency, isoDate())
+      : rawBudget;
   const spent = resolver
     ? sumExpenses(expenses, displayCurrency, resolver, 'expense')
     : 0;
@@ -152,7 +166,8 @@ export function calculateBudgetMetrics(
 }
 
 /**
- * Returns a category's budget converted into the target currency using Today's Current/Live Rate.
+ * Returns a category's budget converted into the target currency using RateResolver
+ * for historical rate consistency instead of live rates.
  */
 export function getCategoryBudget(
   rawCategoryBudget: number | null | undefined,
@@ -161,32 +176,101 @@ export function getCategoryBudget(
     preferred_currency?: string;
   } | null,
   targetCurrency = 'NPR',
-  rates?: Record<string, number>,
+  resolver?: RateResolver | null,
 ): number {
   const raw = rawCategoryBudget ? Number(rawCategoryBudget) : 0;
   if (!raw || raw <= 0) return 0;
   const from = (profile?.budget_currency || profile?.preferred_currency || 'NPR').toUpperCase();
   const to = targetCurrency.toUpperCase();
 
-  return from === to ? raw : convertCurrency(raw, from, to, rates);
+  if (from === to) return raw;
+  
+  // Use RateResolver for historical rate consistency
+  if (resolver) {
+    return resolver.convert(raw, from, to, isoDate());
+  }
+  
+  // Fallback to DEFAULT_RATES if no resolver available
+  return convertCurrency(raw, from, to);
 }
 
 function isGlobalPrivacyMode() {
   return globalPrivacyMode;
 }
 
+/**
+ * Currencies whose one unit is worth roughly a dollar or more (or less than
+ * ~2 units per USD) — whole-unit rounding would collapse distinct amounts
+ * (₹40, ₹168, ₹195, ₹225 all becoming "$0"/"$2"), so they get 2 decimals
+ * when the value is small enough for the decimals to matter.
+ */
+const TWO_DECIMAL_CURRENCIES = new Set(['USD', 'GBP', 'AED', 'SAR', 'QAR', 'AUD', 'CAD', 'MYR']);
+
+/**
+ * Master currency display formatter — the single source of truth for every
+ * user-facing monetary value in the app.
+ *
+ * Data precision vs display precision: amounts keep their full decimals in
+ * the DB and in every calculation; ONLY this presentation layer rounds.
+ * Large-unit currencies (NPR, INR, KRW, JPY) round to whole units (half
+ * away from zero: 0.50 → 1, -451.73 → -452, -0.40 → 0, never "-0"). Dollar-
+ * scale currencies (USD, GBP, AED, SAR, QAR, AUD, CAD, MYR) keep 2 decimals
+ * below 1,000 units so cross-currency values don't collapse ("$0" for a ₹40
+ * expense, or ₹168/₹195/₹225 all showing "$2"); at 1,000+ the cents rarely
+ * matter and whole units keep totals compact. Totals must always be computed
+ * from precise values and passed here already-summed — never sum rounded
+ * display outputs.
+ */
+export function formatCurrency(amount: number, currencyCode: string, locale = 'en-NP'): string {
+  const value = Number(amount);
+  const safe = Number.isFinite(value) ? value : 0;
+  const code = (currencyCode || 'NPR').toUpperCase();
+  const useDecimals = TWO_DECIMAL_CURRENCIES.has(code) && Math.abs(safe) < 1000;
+  // Pre-round with exact half-away-from-zero semantics so Intl only ever
+  // formats a fixed-precision value — this also normalizes -0.4/-0 to plain
+  // 0 ("$0", never "-$0") and keeps rounding identical on every JS engine.
+  const digits = useDecimals ? 2 : 0;
+  const scale = Math.pow(10, digits);
+  const rounded = Math.sign(safe) * Math.round(Math.abs(safe) * scale) / scale || 0;
+  try {
+    return new Intl.NumberFormat(locale, {
+      style: 'currency',
+      currency: code,
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    }).format(rounded);
+  } catch {
+    // Unknown currency code / unsupported locale — fall back to a plain
+    // grouped number instead of throwing in a render path.
+    return `${code} ${rounded.toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
+  }
+}
+
 export function formatMoney(amount: number, currency = 'NPR', isPrivate?: boolean) {
   const shouldMask = isPrivate !== undefined ? isPrivate : globalPrivacyMode;
   if (shouldMask) {
     const symbol = CURRENCY_DETAILS[(currency || 'NPR') as keyof typeof CURRENCY_DETAILS]?.symbol ?? currency;
-    return `${symbol} ••••••`;
+    return `${symbol} •••••`;
   }
 
-  return new Intl.NumberFormat('en-NP', {
-    style: 'currency',
-    currency,
-    maximumFractionDigits: 2,
-  }).format(amount);
+  return formatCurrency(amount, currency);
+}
+
+/**
+ * Compact display form for tight chart labels (e.g. "1.7k", "23.4k") — rounds
+ * visually to at most one decimal in thousands; underlying values stay precise.
+ */
+export function compactMoney(amount: number): string {
+  const value = Number(amount);
+  const safe = Number.isFinite(value) ? value : 0;
+  // Threshold on the ROUNDED value so 999.6 compact-formats as "1k" rather
+  // than rendering the inconsistent "1000".
+  const rounded = Math.round(safe);
+  if (Math.abs(rounded) >= 1000) {
+    const k = rounded / 1000;
+    return `${Math.abs(k) >= 100 ? Math.round(k) : Math.round(k * 10) / 10}k`;
+  }
+  return String(rounded);
 }
 
 export function isoDate(date = new Date()) {
@@ -246,6 +330,24 @@ export function getSafeMonthDate(year: number, month: number, targetDay: number)
   const maxDaysInMonth = new Date(year, month + 1, 0).getDate();
   const safeDay = Math.min(Math.max(Number(targetDay) || 1, 1), maxDaysInMonth);
   return new Date(year, month, safeDay);
+}
+
+/**
+ * Normalize a stored profile's budget-cycle window into valid parameters:
+ * start day clamped to 1–31 (1 = the standard calendar-cycle sentinel), and
+ * an out-of-range/absent end day collapses to null (= last day of cycle).
+ * THE single source for reading cycle settings — budget cards previously ran
+ * byte-identical inline clamp pairs while other screens passed raw `?? 1`
+ * values, so corrupt cached settings behaved differently per screen.
+ */
+export function getNormalizedCycle(profile?: {
+  cycle_start_day?: number | null;
+  cycle_end_day?: number | null;
+} | null): { startDay: number; endDay: number | null } {
+  const startDay = Math.min(Math.max(Number(profile?.cycle_start_day) || 1, 1), 31);
+  const endRaw = Number(profile?.cycle_end_day);
+  const endDay = endRaw >= 1 && endRaw <= 31 ? endRaw : null;
+  return { startDay, endDay };
 }
 
 /**
@@ -455,16 +557,20 @@ export function sumExpenses(
   resolver: RateResolver | null = null,
   typeFilter: 'all' | 'expense' | 'income' = 'expense',
 ) {
-  return expenses.reduce((total, expense) => {
+  // Integer minor-unit accumulation: each line item is already 2-dp from the
+  // resolver's round2, so summing whole minor units is exact — float64 residue
+  // can never build up across thousands of rows. Divided once at the boundary.
+  const totalMinor = expenses.reduce((total, expense) => {
     const isIncome = expense.type === 'income';
     if (typeFilter === 'expense' && isIncome) return total;
     if (typeFilter === 'income' && !isIncome) return total;
 
     const amount = Number(expense.amount) || 0;
     return resolver
-      ? total + resolver.convert(amount, expense.currency || 'NPR', targetCurrency, expense.date)
+      ? total + Math.round(resolver.convert(amount, expense.currency || 'NPR', targetCurrency, expense.date) * 100)
       : total;
   }, 0);
+  return totalMinor / 100;
 }
 
 export function sumIncome(
@@ -515,6 +621,9 @@ export function groupByCategory(
   typeFilter: 'all' | 'expense' | 'income' = 'expense',
 ) {
   const map = new Map<string, { label: string; icon: string; color: string; total: number }>();
+  // Integer minor-unit accumulation (see sumExpenses) — exact across thousands
+  // of rows; converted once per row, summed as whole minor units.
+  const minorByCategory = new Map<string, number>();
   expenses.forEach((expense) => {
     const isIncome = (expense.type || 'expense') === 'income';
     if (typeFilter === 'expense' && isIncome) return;
@@ -524,18 +633,24 @@ export function groupByCategory(
     // Category aggregates are historical financial values. Never substitute a
     // current market rate while the snapshot resolver is still loading.
     const converted = resolver
-      ? resolver.convert(amount, expense.currency || 'NPR', targetCurrency, expense.date)
+      ? Math.round(resolver.convert(amount, expense.currency || 'NPR', targetCurrency, expense.date) * 100)
       : 0;
     const categoryName = expense.categories?.name ?? 'Other';
-    const current = map.get(categoryName) ?? {
-      label: categoryName,
-      icon: expense.categories?.icon ?? '💳',
-      color: expense.categories?.color ?? '#0F9F8E',
-      total: 0,
-    };
-    current.total += converted;
-    map.set(categoryName, current);
+    minorByCategory.set(categoryName, (minorByCategory.get(categoryName) || 0) + converted);
+    if (!map.has(categoryName)) {
+      map.set(categoryName, {
+        label: categoryName,
+        icon: expense.categories?.icon ?? '💳',
+        color: expense.categories?.color ?? '#0F9F8E',
+        total: 0,
+      });
+    }
   });
+
+  for (const [categoryName, totalMinor] of minorByCategory) {
+    const entry = map.get(categoryName);
+    if (entry) entry.total = totalMinor / 100;
+  }
 
   return Array.from(map.values()).sort((a, b) => b.total - a.total);
 }

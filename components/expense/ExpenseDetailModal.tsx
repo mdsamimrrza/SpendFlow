@@ -16,6 +16,7 @@ import {
   Edit3,
   Image as ImageIcon,
   Landmark,
+  StickyNote,
   Tag,
   Trash2,
   Wallet,
@@ -428,16 +429,35 @@ export function ExpenseDetailModal({
                   </View>
                 ) : null}
 
-                {/* Notes (if any) */}
+                {/* Notes (if any) — same label-left / value-right layout as every row */}
                 {expense.notes ? (
                   <>
                     <View style={{ height: 1, backgroundColor: theme.colors.border, opacity: 0.6 }} />
-                    <View style={{ gap: 4 }}>
-                      <Text variant="caption" muted style={{ fontSize: 11, fontWeight: '600', textTransform: 'uppercase' }}>
-                        {t('expense_notes') || 'Notes'}
-                      </Text>
-                      <Text style={{ fontSize: 13, color: theme.colors.textMuted, fontStyle: 'italic', lineHeight: 18 }}>
-                        "{expense.notes}"
+                    <View
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'flex-start',
+                        justifyContent: 'space-between',
+                        gap: 12,
+                      }}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingTop: 3 }}>
+                        <StickyNote size={16} color={theme.colors.textMuted} />
+                        <Text variant="caption" muted style={{ fontSize: 12 }}>
+                          {t('expense_notes') || 'Notes'}
+                        </Text>
+                      </View>
+                      <Text
+                        style={{
+                          flexShrink: 1,
+                          textAlign: 'right',
+                          fontSize: 13,
+                          fontWeight: '700',
+                          color: theme.colors.text,
+                          lineHeight: 18,
+                        }}
+                      >
+                        {expense.notes}
                       </Text>
                     </View>
                   </>

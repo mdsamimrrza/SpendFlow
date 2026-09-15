@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { Animated, Pressable, StyleSheet, View } from 'react-native';
-import { Fingerprint, Lock, LogOut, ScanFace, ShieldCheck } from 'lucide-react-native';
+import { Fingerprint, KeyRound, Lock, ScanFace, ShieldCheck } from 'lucide-react-native';
 import { SpendFlowSealLogo } from '@/components/ui/SpendFlowSealLogo';
 import { Text } from '@/components/ui/Text';
 import { useAuth } from '@/hooks/useAuth';
@@ -10,14 +10,18 @@ import { useTheme } from '@/hooks/useTheme';
 
 export function BiometricLockOverlay() {
   const { isLocked, authenticate, biometricTypeName } = useSecurity();
-  const { signOut } = useAuth();
+  const { session, lockToLogin } = useAuth();
   const { t } = useLanguage();
   const theme = useTheme();
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
-  // Auto trigger authentication when overlay appears
+  // Auto trigger authentication when overlay appears — but ONLY when the
+  // overlay is actually visible (a live session behind it). While soft-locked
+  // the login page is the gate and fires its own prompt; a stray auto-prompt
+  // here would occupy the authenticator's re-entry guard and silently
+  // swallow the login page's prompt.
   useEffect(() => {
-    if (isLocked) {
+    if (isLocked && session) {
       void authenticate();
 
       // Continuous subtle breathing animation on the lock glyph
@@ -36,9 +40,11 @@ export function BiometricLockOverlay() {
         ]),
       ).start();
     }
-  }, [authenticate, isLocked, pulseAnim]);
+  }, [authenticate, isLocked, pulseAnim, session]);
 
-  if (!isLocked) return null;
+  // The overlay gates a LIVE session. No session (soft-locked to the login
+  // page, or signed out) → the login page itself is the gate; never cover it.
+  if (!isLocked || !session) return null;
 
   const isFaceId = biometricTypeName.toLowerCase().includes('face');
 
@@ -118,10 +124,11 @@ export function BiometricLockOverlay() {
         </Pressable>
       </View>
 
-      {/* Footer: Fallback Sign Out */}
+      {/* Footer: Fall back to the login page — the session stays remembered
+          on this device, so biometric quick login is offered there too. */}
       <View style={styles.footer}>
         <Pressable
-          onPress={() => void signOut()}
+          onPress={() => void lockToLogin()}
           hitSlop={14}
           style={{
             flexDirection: 'row',
@@ -135,9 +142,9 @@ export function BiometricLockOverlay() {
             borderColor: theme.colors.border,
           }}
         >
-          <LogOut size={14} color={theme.colors.textMuted} />
+          <KeyRound size={14} color={theme.colors.textMuted} />
           <Text variant="caption" style={{ color: theme.colors.textMuted, fontWeight: '600' }}>
-            {t('settings_sign_out')}
+            {t('security_use_password')}
           </Text>
         </Pressable>
       </View>

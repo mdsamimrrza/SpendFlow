@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Transfer, TransferInput } from '@/types';
 import { getRate } from '@/services/exchange';
+import { validateAmount } from '@/services/validation';
 import { supabase } from '@/utils/supabase';
 
 const TRANSFERS_CACHE_PREFIX = '@spendflow_cached_transfers_';
@@ -76,11 +77,8 @@ export async function listTransfers(
  * converted amount, so balances stay historically accurate.
  */
 export async function createTransfer(userId: string, input: TransferInput): Promise<Transfer> {
-  const amount = Number(input.amount);
+  const amount = validateAmount(input.amount, 'Enter a valid amount to transfer.');
   const fee = Number(input.fee || 0);
-  if (!Number.isFinite(amount) || amount <= 0) {
-    throw new Error('Enter a valid amount to transfer.');
-  }
   if (!input.from_account_id || !input.to_account_id) {
     throw new Error('Select both the source and destination accounts.');
   }

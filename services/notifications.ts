@@ -117,12 +117,98 @@ const THRESHOLDS = [
 // In-memory registry to prevent concurrent / duplicate notifications
 const notifiedThresholdsMemory = new Set<string>();
 
+// ── Shared threshold-alert engine ──────────────────────────────────────────
+// The budget and category-budget alerts used to duplicate this whole flow
+// (bracket scan, per-month dedupe via memory + AsyncStorage, "mark this
+// bracket and all lower brackets" backfill suppression, permission →
+// scheduleLocal → saveNotification tail). Dedupe rules drifting between the
+// two paths is a silent double-/missed-alert bug factory, so every threshold
+// feature goes through this engine — new scopes add a config, not a copy.
+interface ThresholdBracket {
+  percent: number;
+}
+
+async function fireThresholdAlert<T extends ThresholdBracket>(config: {
+  spend: number;
+  budget: number;
+  table: readonly T[];
+  /** Storage/memory dedupe keys for the current month. Formats are already
+   *  persisted on real devices — never change these strings. */
+  keyFor: (monthKey: string, percent: number) => { memory: string; storage: string };
+  /** Extra precondition (e.g. missing category id). Evaluated before anything. */
+  enabled?: boolean;
+  currency?: string;
+  buildMessage: (bracket: T, pct: number) => {
+    title: string;
+    body: string;
+    pushData: Record<string, unknown>;
+    dbType: string;
+    dbData: Record<string, unknown>;
+  };
+}): Promise<void> {
+  const { spend, budget, table, keyFor, currency = 'NPR' } = config;
+  if (Platform.OS === 'web' || config.enabled === false || !budget || budget <= 0) return;
+
+  const monthKey = new Date().toISOString().slice(0, 7); // e.g. "2026-08"
+  const pct = Math.floor((spend / budget) * 100);
+
+  // The SINGLE HIGHEST bracket matching the current percentage: 51% → 50,
+  // 76% → 75, 100%+ → 100.
+  const bracket = [...table].reverse().find((item) => pct >= item.percent);
+  if (!bracket) return;
+
+  const target = keyFor(monthKey, bracket.percent);
+  if (notifiedThresholdsMemory.has(target.memory)) return;
+  const alreadySent = await AsyncStorage.getItem(target.storage).catch(() => null);
+  if (alreadySent) {
+    notifiedThresholdsMemory.add(target.memory);
+    return;
+  }
+
+  // Mark this bracket AND ALL LOWER BRACKETS as sent IMMEDIATELY, so a later
+  // check never backfires a skipped milestone (hitting 50% kills the 25%).
+  for (const item of table) {
+    if (item.percent <= bracket.percent) {
+      const lower = keyFor(monthKey, item.percent);
+      notifiedThresholdsMemory.add(lower.memory);
+      await AsyncStorage.setItem(lower.storage, 'true').catch(() => {});
+    }
+  }
+
+  const hasPermission = await requestNotificationPermissions();
+  if (!hasPermission) return;
+
+  const message = config.buildMessage(bracket, pct);
+  await scheduleLocal({
+    content: {
+      title: message.title,
+      body: message.body,
+      data: message.pushData,
+      sound: true,
+      // @ts-expect-error channelId is supported on Android
+      channelId: 'default',
+    },
+    trigger: null, // Send immediately
+  });
+  void saveNotification(_currentUserId, message.dbType, message.title, message.body, message.dbData);
+}
+
+const budgetAlertKeys = (monthKey: string, percent: number) => ({
+  memory: `${monthKey}_${percent}`,
+  storage: `@spendflow_alert_sent_${monthKey}_${percent}`,
+});
+
+const categoryAlertKeys = (categoryId: string) => (monthKey: string, percent: number) => ({
+  memory: `cat_${monthKey}_${categoryId}_${percent}`,
+  storage: `@spendflow_cat_alert_sent_${monthKey}_${categoryId}_${percent}`,
+});
+
 export async function resetBudgetAlertHistory(monthKey?: string): Promise<void> {
   const currentMonthKey = monthKey || new Date().toISOString().slice(0, 7);
   for (const item of THRESHOLDS) {
-    notifiedThresholdsMemory.delete(`${currentMonthKey}_${item.percent}`);
-    const storageKey = `@spendflow_alert_sent_${currentMonthKey}_${item.percent}`;
-    await AsyncStorage.removeItem(storageKey).catch(() => {});
+    const keys = budgetAlertKeys(currentMonthKey, item.percent);
+    notifiedThresholdsMemory.delete(keys.memory);
+    await AsyncStorage.removeItem(keys.storage).catch(() => {});
   }
 }
 
@@ -131,64 +217,26 @@ export async function checkAndNotifyBudgetThreshold(
   monthlyBudget: number,
   currency = 'NPR',
 ): Promise<void> {
-  if (Platform.OS === 'web' || !monthlyBudget || monthlyBudget <= 0) return;
-
-  const currentMonthKey = new Date().toISOString().slice(0, 7); // e.g. "2026-08"
-  const pct = Math.floor((monthTotal / monthlyBudget) * 100);
-
-  // Find the SINGLE HIGHEST threshold bracket that matches the current percentage
-  // e.g. at 51%, currentBracket is 50%. At 76%, it is 75%. At 100%+, it is 100%.
-  const currentBracket = [...THRESHOLDS].reverse().find((item) => pct >= item.percent);
-  if (!currentBracket) return;
-
-  const targetStorageKey = `@spendflow_alert_sent_${currentMonthKey}_${currentBracket.percent}`;
-  const memoryKey = `${currentMonthKey}_${currentBracket.percent}`;
-
-  // Check if this specific bracket has already been sent this month
-  if (notifiedThresholdsMemory.has(memoryKey)) {
-    return;
-  }
-
-  const alreadySent = await AsyncStorage.getItem(targetStorageKey).catch(() => null);
-  if (alreadySent) {
-    notifiedThresholdsMemory.add(memoryKey);
-    return;
-  }
-
-  // Mark this bracket AND ALL LOWER BRACKETS as sent/acknowledged IMMEDIATELY
-  // So the app will NEVER backfill or trigger lower milestone notifications (e.g. 25% when reaching 50%)
-  for (const item of THRESHOLDS) {
-    if (item.percent <= currentBracket.percent) {
-      notifiedThresholdsMemory.add(`${currentMonthKey}_${item.percent}`);
-      const storageKey = `@spendflow_alert_sent_${currentMonthKey}_${item.percent}`;
-      await AsyncStorage.setItem(storageKey, 'true').catch(() => {});
-    }
-  }
-
-  const hasPermission = await requestNotificationPermissions();
-  if (hasPermission) {
-    let bodyMsg = '';
-    if (currentBracket.percent >= 100) {
-      const excess = monthTotal - monthlyBudget;
-      bodyMsg = `You have spent ${formatMoney(monthTotal, currency)} against your ${formatMoney(monthlyBudget, currency)} limit (Over by ${formatMoney(excess, currency)}).`;
-    } else {
-      const remaining = monthlyBudget - monthTotal;
-      bodyMsg = `You have used ${pct}% (${formatMoney(monthTotal, currency)}) of your ${formatMoney(monthlyBudget, currency)} budget. ${formatMoney(remaining, currency)} remaining.`;
-    }
-
-    await scheduleLocal({
-      content: {
-        title: currentBracket.title,
-        body: bodyMsg,
-        data: { type: 'budget_threshold', percent: currentBracket.percent },
-        sound: true,
-        // @ts-expect-error channelId is supported on Android
-        channelId: 'default',
-      },
-      trigger: null, // Send immediately
-    });
-    void saveNotification(_currentUserId, 'budget_threshold', currentBracket.title, bodyMsg, { percent: currentBracket.percent });
-  }
+  await fireThresholdAlert({
+    spend: monthTotal,
+    budget: monthlyBudget,
+    table: THRESHOLDS,
+    keyFor: budgetAlertKeys,
+    currency,
+    buildMessage: (bracket, pct) => {
+      const body =
+        bracket.percent >= 100
+          ? `You have spent ${formatMoney(monthTotal, currency)} against your ${formatMoney(monthlyBudget, currency)} limit (Over by ${formatMoney(monthTotal - monthlyBudget, currency)}).`
+          : `You have used ${pct}% (${formatMoney(monthTotal, currency)}) of your ${formatMoney(monthlyBudget, currency)} budget. ${formatMoney(monthlyBudget - monthTotal, currency)} remaining.`;
+      return {
+        title: bracket.title,
+        body,
+        pushData: { type: 'budget_threshold', percent: bracket.percent },
+        dbType: 'budget_threshold',
+        dbData: { percent: bracket.percent },
+      };
+    },
+  });
 }
 
 // Category Budget Thresholds (Strictly 90% and 100% only)
@@ -205,65 +253,29 @@ export async function checkAndNotifyCategoryBudgetThreshold(
   categoryMonthlyBudget: number,
   currency = 'NPR',
 ): Promise<void> {
-  if (Platform.OS === 'web' || !categoryMonthlyBudget || categoryMonthlyBudget <= 0 || !categoryId) return;
-
-  const currentMonthKey = new Date().toISOString().slice(0, 7); // e.g. "2026-08"
-  const pct = Math.floor((monthCategoryTotal / categoryMonthlyBudget) * 100);
-
-  // Check only 90% and 100% thresholds
-  const currentBracket = [...CATEGORY_THRESHOLDS].reverse().find((item) => pct >= item.percent);
-  if (!currentBracket) return;
-
-  const targetStorageKey = `@spendflow_cat_alert_sent_${currentMonthKey}_${categoryId}_${currentBracket.percent}`;
-  const memoryKey = `cat_${currentMonthKey}_${categoryId}_${currentBracket.percent}`;
-
-  if (notifiedThresholdsMemory.has(memoryKey)) {
-    return;
-  }
-
-  const alreadySent = await AsyncStorage.getItem(targetStorageKey).catch(() => null);
-  if (alreadySent) {
-    notifiedThresholdsMemory.add(memoryKey);
-    return;
-  }
-
-  // Mark this bracket and lower category brackets as sent
-  for (const item of CATEGORY_THRESHOLDS) {
-    if (item.percent <= currentBracket.percent) {
-      notifiedThresholdsMemory.add(`cat_${currentMonthKey}_${categoryId}_${item.percent}`);
-      const storageKey = `@spendflow_cat_alert_sent_${currentMonthKey}_${categoryId}_${item.percent}`;
-      await AsyncStorage.setItem(storageKey, 'true').catch(() => {});
-    }
-  }
-
-  const hasPermission = await requestNotificationPermissions();
-  if (hasPermission) {
-    const cleanName = cleanCategoryLabel(categoryName) || 'Category';
-    const isExceeded = currentBracket.percent >= 100;
-    const title = `${currentBracket.emoji} ${cleanName}: ${isExceeded ? 'Budget Exceeded!' : '90% Budget Alert'}`;
-    let bodyMsg = '';
-
-    if (isExceeded) {
-      const excess = monthCategoryTotal - categoryMonthlyBudget;
-      bodyMsg = `${categoryIcon} You have spent ${formatMoney(monthCategoryTotal, currency)} of your ${formatMoney(categoryMonthlyBudget, currency)} ${cleanName} limit (Over by ${formatMoney(excess, currency)}).`;
-    } else {
-      const remaining = categoryMonthlyBudget - monthCategoryTotal;
-      bodyMsg = `${categoryIcon} You have used ${pct}% (${formatMoney(monthCategoryTotal, currency)}) of your ${formatMoney(categoryMonthlyBudget, currency)} ${cleanName} budget. ${formatMoney(remaining, currency)} remaining.`;
-    }
-
-    await scheduleLocal({
-      content: {
+  await fireThresholdAlert({
+    spend: monthCategoryTotal,
+    budget: categoryMonthlyBudget,
+    table: CATEGORY_THRESHOLDS,
+    keyFor: categoryAlertKeys(categoryId),
+    enabled: Boolean(categoryId),
+    currency,
+    buildMessage: (bracket, pct) => {
+      const cleanName = cleanCategoryLabel(categoryName) || 'Category';
+      const isExceeded = bracket.percent >= 100;
+      const title = `${bracket.emoji} ${cleanName}: ${isExceeded ? 'Budget Exceeded!' : '90% Budget Alert'}`;
+      const body = isExceeded
+        ? `${categoryIcon} You have spent ${formatMoney(monthCategoryTotal, currency)} of your ${formatMoney(categoryMonthlyBudget, currency)} ${cleanName} limit (Over by ${formatMoney(monthCategoryTotal - categoryMonthlyBudget, currency)}).`
+        : `${categoryIcon} You have used ${pct}% (${formatMoney(monthCategoryTotal, currency)}) of your ${formatMoney(categoryMonthlyBudget, currency)} ${cleanName} budget. ${formatMoney(categoryMonthlyBudget - monthCategoryTotal, currency)} remaining.`;
+      return {
         title,
-        body: bodyMsg,
-        data: { type: 'category_budget_threshold', categoryId, percent: currentBracket.percent },
-        sound: true,
-        // @ts-expect-error channelId is supported on Android
-        channelId: 'default',
-      },
-      trigger: null, // Send immediately
-    });
-    void saveNotification(_currentUserId, 'category_budget_threshold', title, bodyMsg, { categoryId, percent: currentBracket.percent });
-  }
+        body,
+        pushData: { type: 'category_budget_threshold', categoryId, percent: bracket.percent },
+        dbType: 'category_budget_threshold',
+        dbData: { categoryId, percent: bracket.percent },
+      };
+    },
+  });
 }
 
 // Helper to ensure clean, human-readable category names and strip raw database IDs / UUIDs

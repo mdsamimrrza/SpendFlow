@@ -23,12 +23,13 @@ import { PressableScale } from '@/components/ui/PressableScale';
 import { Text } from '@/components/ui/Text';
 import { showToast } from '@/components/ui/Toast';
 import { useAuth } from '@/hooks/useAuth';
-import { useExchangeRates } from '@/hooks/useExchangeRates';
+import { useRateResolver } from '@/hooks/useRateResolver';
 import { useLanguage } from '@/hooks/useLanguage';
 import { useTheme } from '@/hooks/useTheme';
 import { listCategories, updateCategoryBudget } from '@/services/categories';
 import { Category } from '@/types';
 import { formatMoney, getMonthlyBudget } from '@/utils/format';
+import { Expense } from '@/types';
 
 interface CategoryBudgetFormModalProps {
   visible: boolean;
@@ -43,7 +44,6 @@ export function CategoryBudgetFormModal({
 }: CategoryBudgetFormModalProps) {
   const theme = useTheme();
   const { profile } = useAuth();
-  const { rates } = useExchangeRates();
   const { t } = useLanguage();
   const [categories, setCategories] = useState<Category[]>([]);
   const [selectedCatId, setSelectedCatId] = useState<string | null>(null);
@@ -52,7 +52,9 @@ export function CategoryBudgetFormModal({
   const [alert, setAlert] = useState<{ title: string; message: string } | null>(null);
 
   const currency = profile?.preferred_currency ?? 'NPR';
-  const monthlyOverall = getMonthlyBudget(profile, rates);
+  // Create a minimal rateResolver for budget conversion (no expenses needed for this context)
+  const { resolver: rateResolver } = useRateResolver([] as Expense[], currency);
+  const monthlyOverall = getMonthlyBudget(profile, rateResolver);
 
   useEffect(() => {
     if (visible && profile?.id) {

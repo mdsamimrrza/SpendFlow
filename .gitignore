@@ -5,6 +5,7 @@ node_modules/
 
 # ── Environment & Secrets ─────────────────────────────────────────────────────
 .env
+.env.maintenance
 .env.local
 .env*.local
 *.pem
@@ -69,6 +70,9 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# ── Agent local working files (session plans — not repo material) ─────────────
+.zcode/
 
 # ── Temp ──────────────────────────────────────────────────────────────────────
 .temp/

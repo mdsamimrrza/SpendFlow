@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // USD per 1 unit of currency. Pegs are exact and permanent — never hit the API for these.
 const PEGGED_USD_PER_UNIT: Record<string, number> = {
@@ -19,17 +20,18 @@ export const NPR_PER_INR = 1.6;
 // Last-resort approximation when neither DB cache nor the API can answer.
 // Pegged currencies (QAR/AED/SAR) are resolved by PEGGED_USD_PER_UNIT instead,
 // and NPR is derived from INR (see fallbackUsdPerUnit) — so NPR has no entry
-// here by design.
+// here by design. Values refreshed 2026-09-09; keep roughly current-era so the
+// worst case is a small drift, never the old ~12% INR gap.
 const FALLBACK_UNITS_PER_USD: Record<string, number> = {
   USD: 1,
-  INR: 83.5,
+  INR: 94.84,
   QAR: 3.64,
-  GBP: 0.79,
-  MYR: 4.70,
-  KRW: 1350.0,
-  JPY: 155.0,
-  AUD: 1.52,
-  CAD: 1.36,
+  GBP: 0.738,
+  MYR: 4.06,
+  KRW: 1341.0,
+  JPY: 153.8,
+  AUD: 1.386,
+  CAD: 1.378,
 };
 
 // ── Session rate memory ─────────────────────────────────────────────────────
@@ -51,6 +53,7 @@ function rememberRate(currency: string, date: string, rate: number): void {
     rate,
     expiresAt: date >= todayIso() ? Date.now() + RATE_MEMORY_TODAY_TTL_MS : Number.POSITIVE_INFINITY,
   });
+  scheduleRateMemorySave();
 }
 
 function recallRate(currency: string, date: string): number | null {
@@ -61,6 +64,120 @@ function recallRate(currency: string, date: string): number | null {
     return null;
   }
   return entry.rate;
+}
+
+// ── Rate-memory persistence (cold-start latency fix, 2026-09-15) ────────────
+// The memory above used to die with the process: EVERY app relaunch re-paid a
+// DB round trip (per-date INR rows for NPR users especially) plus a possibly
+// 8s live-quote fetch before `useRateResolver` settled — so the dashboard
+// skeleton-gated even when the expense cache had painted instantly. Historical
+// rates are frozen facts, so the memory is persisted to disk; a relaunch
+// answers them locally and the first paint waits on nothing.
+const RATE_MEMORY_KEY = '@spen…y_v1';
+const RATE_MEMORY_MAX_AGE_DAYS = 400;
+const RATE_MEMORY_MAX_ENTRIES = 2500;
+
+type PersistedRateEntry = { r: number; e: number | null }; // null = "never expires"
+
+let rateMemoryLoaded: Promise<void> | null = null;
+
+/** Load the persisted memory ONCE per process; safe to await from every path. */
+function ensureRateMemoryLoaded(): Promise<void> {
+  if (!rateMemoryLoaded) {
+    rateMemoryLoaded = (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(RATE_MEMORY_KEY);
+        if (!raw) return;
+        const parsed = JSON.parse(raw) as Record<string, PersistedRateEntry>;
+        const floorDate = new Date(Date.now() - RATE_MEMORY_MAX_AGE_DAYS * 86_400_000)
+          .toISOString()
+          .slice(0, 10);
+        const now = Date.now();
+        for (const [k, v] of Object.entries(parsed)) {
+          if (!v || typeof v.r !== 'number' || v.r <= 0) continue;
+          const date = k.split('|')[1] ?? '';
+          if (date < floorDate) continue;
+          const expiresAt = v.e === null ? Number.POSITIVE_INFINITY : v.e;
+          if (expiresAt !== Number.POSITIVE_INFINITY && now > expiresAt) continue;
+          // Session memory wins over disk if both hold the key.
+          if (!memoryRateCache.has(k)) memoryRateCache.set(k, { rate: v.r, expiresAt });
+        }
+      } catch {
+        // Corrupt/absent storage: cold process memory, exactly the old behavior.
+      }
+    })();
+  }
+  return rateMemoryLoaded;
+}
+
+let rateMemorySaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Debounced best-effort persist after every rememberRate burst. */
+function scheduleRateMemorySave(): void {
+  if (rateMemorySaveTimer) clearTimeout(rateMemorySaveTimer);
+  rateMemorySaveTimer = setTimeout(() => {
+    rateMemorySaveTimer = null;
+    void (async () => {
+      try {
+        const floorDate = new Date(Date.now() - RATE_MEMORY_MAX_AGE_DAYS * 86_400_000)
+          .toISOString()
+          .slice(0, 10);
+        const now = Date.now();
+        const alive: Array<[string, { rate: number; expiresAt: number }]> = [];
+        for (const [k, v] of memoryRateCache) {
+          const date = k.split('|')[1] ?? '';
+          if (date < floorDate || (v.expiresAt !== Number.POSITIVE_INFINITY && now > v.expiresAt)) {
+            memoryRateCache.delete(k);
+            continue;
+          }
+          alive.push([k, v]);
+        }
+        if (alive.length > RATE_MEMORY_MAX_ENTRIES) {
+          // ISO dates sort chronologically: keep the newest, drop the oldest.
+          alive.sort((a, b) => ((a[0].split('|')[1] ?? '') < (b[0].split('|')[1] ?? '') ? 1 : -1));
+          alive.length = RATE_MEMORY_MAX_ENTRIES;
+        }
+        const out: Record<string, PersistedRateEntry> = {};
+        for (const [k, v] of alive) out[k] = { r: v.rate, e: v.expiresAt === Number.POSITIVE_INFINITY ? null : v.expiresAt };
+        await AsyncStorage.setItem(RATE_MEMORY_KEY, JSON.stringify(out));
+      } catch {
+        // Best-effort: a failed write just means the next launch is slower, never wrong.
+      }
+    })();
+  }, 800);
+}
+
+/**
+ * Seed today's floating-currency rates from the app-level live fetch
+ * (store/ExchangeRateContext, which every launch performs anyway) so the
+ * dashboard's resolver build answers `pair.d >= todayIso()` misses from memory
+ * instead of starting a duplicate provider round trip. Input is UNITS PER 1
+ * USD (er-api basis); memory stores USD per unit. Pegged currencies and USD
+ * are skipped (resolved by constants), NPR by the INR derivation at read time.
+ */
+export function seedTodayRatesFromUnitsPerUsd(unitsPerUsd: Record<string, number>): void {
+  const today = todayIso();
+  for (const [ccy, u] of Object.entries(unitsPerUsd)) {
+    const c = ccy.toUpperCase();
+    if (c === 'USD' || c === 'NPR' || PEGGED_USD_PER_UNIT[c] !== undefined) continue;
+    const units = Number(u);
+    if (units > 0) rememberRate(c, today, round8(1 / units));
+  }
+}
+
+/** fetch + JSON with a hard timeout — a hanging provider must never stall a resolver build. */
+async function fetchJsonWithTimeout(url: string, timeoutMs: number): Promise<unknown | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { headers: { Accept: 'application/json' }, signal: controller.signal });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export interface SnapshotRow {
@@ -101,20 +218,29 @@ export function createExchangeService(client: SupabaseClient) {
     // Server-side only. This module is also imported by the backfill script,
     // which runs in Node with real secrets. The EXPO_PUBLIC_ fallback was
     // removed — provider API keys must never be bundled into the client.
+    //
+    // Tier chain, each timeout-bounded so a hanging provider can never stall
+    // the build: Frankfurter (keyless ECB data, covers every fetched
+    // currency, weekends resolve to the prior fix) → its .dev mirror →
+    // exchangerate.host with the server-side access key when one is present.
+    const symbols = encodeURIComponent(currency);
+    const candidates: string[] = [
+      `https://api.frankfurter.app/${date}?from=USD&to=${symbols}`,
+      `https://api.frankfurter.dev/v1/${date}?base=USD&symbols=${symbols}`,
+    ];
     const accessKey = process.env.EXCHANGE_RATE_HOST_ACCESS_KEY;
-    const url = new URL(`https://api.exchangerate.host/${date}`);
-    url.searchParams.set('base', 'USD');
-    url.searchParams.set('symbols', currency);
-    if (accessKey) url.searchParams.set('access_key', accessKey);
-    try {
-      const res = await fetch(url.toString(), { headers: { Accept: 'application/json' } });
-      if (!res.ok) return null;
-      const data = await res.json();
-      const units = Number(data?.rates?.[currency]);
-      return units > 0 ? units : null;
-    } catch {
-      return null;
+    if (accessKey) {
+      candidates.push(`https://api.exchangerate.host/${date}?base=USD&symbols=${symbols}&access_key=${accessKey}`);
     }
+
+    for (const url of candidates) {
+      const data = (await fetchJsonWithTimeout(url, 8_000)) as
+        | { rates?: Record<string, unknown> }
+        | null;
+      const units = Number(data?.rates?.[currency]);
+      if (units > 0) return units;
+    }
+    return null;
   }
 
   // One query serves the whole exchange_rates table (writes are restricted to
@@ -174,23 +300,26 @@ export function createExchangeService(client: SupabaseClient) {
     const fallbackApi =
       process.env.EXPO_PUBLIC_EXCHANGE_RATE_FALLBACK_API_URL ||
       'https://api.exchangerate-api.com/v4/latest/USD';
-    for (const url of [primary, fallbackApi]) {
-      try {
-        const res = await fetch(url, { headers: { Accept: 'application/json' } });
-        if (!res.ok) continue;
-        const data = await res.json();
-        if (data?.rates && typeof data.rates === 'object') {
-          latestUnits = data.rates as Record<string, number>;
-          // Nepal–India peg: never consume a market NPR rate — derive it.
-          const inrPerUsd = Number(latestUnits.INR);
-          if (Number.isFinite(inrPerUsd) && inrPerUsd > 0) {
-            latestUnits.NPR = inrPerUsd * NPR_PER_INR;
-          }
-          latestAt = Date.now();
-          return latestUnits;
+    // Server-side bonus tier: the keyed exchangerate-api.com account serves
+    // fresh quotes even when the two free endpoints both fail. The key env var
+    // is intentionally not EXPO_PUBLIC_-prefixed so it never reaches the client.
+    const keyedUrl = process.env.EXCHANGE_RATE_API_KEY
+      ? `https://v6.exchangerate-api.com/v6/${process.env.EXCHANGE_RATE_API_KEY}/latest/USD`
+      : null;
+    const urls = keyedUrl ? [primary, fallbackApi, keyedUrl] : [primary, fallbackApi];
+    for (const url of urls) {
+      const data = (await fetchJsonWithTimeout(url, 8_000)) as
+        | { rates?: Record<string, number> }
+        | null;
+      if (data?.rates && typeof data.rates === 'object') {
+        latestUnits = data.rates;
+        // Nepal–India peg: never consume a market NPR rate — derive it.
+        const inrPerUsd = Number(latestUnits.INR);
+        if (Number.isFinite(inrPerUsd) && inrPerUsd > 0) {
+          latestUnits.NPR = inrPerUsd * NPR_PER_INR;
         }
-      } catch {
-        // try the next source
+        latestAt = Date.now();
+        return latestUnits;
       }
     }
     return null;
@@ -198,6 +327,8 @@ export function createExchangeService(client: SupabaseClient) {
 
   async function getRate(currency: string, date: string): Promise<number> {
     const ccy = (currency || 'USD').toUpperCase();
+    // Persisted memory must be in place before any recall — one-time await.
+    await ensureRateMemoryLoaded();
     // Nepal–India peg: NPR is derived from the same date's INR rate — never
     // fetched, never read from exchange_rates, never upserted.
     if (ccy === 'NPR') {
@@ -317,7 +448,10 @@ export function createExchangeService(client: SupabaseClient) {
       }
     }
 
-    // Session memory answers repeats instantly (screen switches, re-renders).
+    // Session memory (seeded from disk on first use — see ensureRateMemoryLoaded)
+    // answers repeats and yesterday's dates instantly, so a relaunch settles
+    // the resolver locally with no DB round trip at all.
+    await ensureRateMemoryLoaded();
     for (const [k, pair] of [...missing]) {
       const remembered = recallRate(pair.c, pair.d);
       if (remembered !== null) {

@@ -15,6 +15,14 @@ interface SecurityContextValue {
   authenticate: () => Promise<boolean>;
   toggleBiometric: (enabled: boolean) => Promise<boolean>;
   unlockManually: () => void;
+  /**
+   * Wraps a system capture (camera / photo picker). Those run as separate
+   * Android activities, which fires a background→active transition on return —
+   * without this, the biometric lock re-prompts after EVERY receipt photo.
+   * Always pair with `endSystemCapture` in a finally block.
+   */
+  beginSystemCapture: () => void;
+  endSystemCapture: () => void;
 }
 
 export const SecurityContext = createContext<SecurityContextValue | null>(null);
@@ -27,6 +35,14 @@ export function SecurityProvider({ children }: PropsWithChildren) {
   const [biometricTypeName, setBiometricTypeName] = useState('Fingerprint');
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
   const isAuthenticatingRef = useRef(false);
+  // System-capture suppression (see beginSystemCapture). The grace timestamp
+  // covers the race where the picker's promise settles after the 'active'
+  // event, and caps the exposure if a capture is abandoned without settling:
+  // the suppression is consumed on the first return within the window, after
+  // which normal background→active locking resumes.
+  const captureCountRef = useRef(0);
+  const captureGraceUntilRef = useRef(0);
+  const CAPTURE_GRACE_MS = 2 * 60 * 1000;
 
   // 1. Check Hardware & Enrolled Biometrics
   useEffect(() => {
@@ -132,6 +148,16 @@ export function SecurityProvider({ children }: PropsWithChildren) {
     setIsLocked(false);
   }, []);
 
+  const beginSystemCapture = useCallback(() => {
+    captureCountRef.current += 1;
+  }, []);
+
+  const endSystemCapture = useCallback(() => {
+    // Clamp at 0: the suppression may already have been force-consumed by the
+    // grace logic if the capture was abandoned without settling.
+    captureCountRef.current = Math.max(0, captureCountRef.current - 1);
+  }, []);
+
   const authenticateRef = useRef(authenticate);
   authenticateRef.current = authenticate;
 
@@ -140,12 +166,26 @@ export function SecurityProvider({ children }: PropsWithChildren) {
     if (!isBiometricEnabled || Platform.OS === 'web') return;
 
     const subscription = AppState.addEventListener('change', (nextAppState) => {
-      if (
-        appStateRef.current.match(/inactive|background/) &&
-        nextAppState === 'active'
-      ) {
-        setIsLocked(true);
-        void authenticateRef.current?.();
+      const leaving = appStateRef.current.match(/inactive|background/) !== null;
+      const enteringBackground = nextAppState.match(/inactive|background/) !== null;
+      if (leaving && enteringBackground && captureCountRef.current > 0) {
+        // App is being covered by the camera/picker while a capture is in
+        // flight — arm the trust window instead of preparing to lock.
+        captureGraceUntilRef.current = Date.now() + CAPTURE_GRACE_MS;
+      }
+      if (leaving && nextAppState === 'active') {
+        if (
+          captureCountRef.current > 0 ||
+          Date.now() < captureGraceUntilRef.current
+        ) {
+          // Returning from a system capture with the photo — trust this one
+          // resume, then re-arm locking for any later genuine background.
+          captureCountRef.current = 0;
+          captureGraceUntilRef.current = 0;
+        } else {
+          setIsLocked(true);
+          void authenticateRef.current?.();
+        }
       }
       appStateRef.current = nextAppState;
     });
@@ -164,8 +204,10 @@ export function SecurityProvider({ children }: PropsWithChildren) {
       authenticate,
       toggleBiometric,
       unlockManually,
+      beginSystemCapture,
+      endSystemCapture,
     }),
-    [authenticate, biometricTypeName, isBiometricEnabled, isBiometricSupported, isLocked, toggleBiometric, unlockManually],
+    [authenticate, beginSystemCapture, biometricTypeName, endSystemCapture, isBiometricEnabled, isBiometricSupported, isLocked, toggleBiometric, unlockManually],
   );
 
   return <SecurityContext.Provider value={value}>{children}</SecurityContext.Provider>;

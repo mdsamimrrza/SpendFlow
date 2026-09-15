@@ -3,11 +3,11 @@ import { getKathmanduToday, OfficialNepalGoldRate } from '@/services/nepalGold';
 
 const DEFAULT_RATES: Record<string, number> = {
   USD: 1.0,
-  // 83.5 INR/USD × 1.60 (NRB peg) — kept peg-consistent by construction.
-  NPR: 133.6,
-  INR: 83.5,
+  // 94.84 INR/USD × 1.60 (NRB peg) — kept peg-consistent by construction.
+  NPR: 151.74,
+  INR: 94.84,
   QAR: 3.64,
-  GBP: 0.79,
+  GBP: 0.738,
 };
 
 function convertCurrency(
@@ -65,9 +65,125 @@ export interface BullionHistoryPoint {
   price: number;
 }
 
-const BULLION_CACHE_KEY = '@spendflow_bullion_rates_v1';
+/** One day of raw metal prices in USD per troy ounce. */
+export interface BullionHistoryRow {
+  date: string; // yyyy-mm-dd
+  goldUsdPerOz: number;
+  silverUsdPerOz: number;
+}
+
+const BULLION_HISTORY_CACHE_PREFIX = '@spendflow_bullion_history_';
+
+/** Historical metal prices per market day, or [] when unavailable. */
+export async function fetchBullionMetalHistory(days = 120): Promise<BullionHistoryRow[]> {
+  const cacheKey = `${BULLION_HISTORY_CACHE_PREFIX}${days}`;
+  const readCache = async (): Promise<BullionHistoryRow[] | null> => {
+    try {
+      const raw = await AsyncStorage.getItem(cacheKey);
+      if (raw) {
+        const parsed = JSON.parse(raw) as { at: number; rows: BullionHistoryRow[] };
+        // One fetch per day is plenty — metal history only appends.
+        if (Date.now() - parsed.at < 24 * 60 * 60 * 1000) return parsed.rows;
+      }
+    } catch {
+      // fall through to fetch
+    }
+    return null;
+  };
+
+  const cached = await readCache();
+  if (cached) return cached;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const range = days <= 60 ? '3mo' : days <= 200 ? '1y' : '2y';
+    const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+    let rows: BullionHistoryRow[] = [];
+
+    // 1. Edge Function (server-side Yahoo fetch — works on every platform).
+    // Required on WEB: Yahoo's chart API sends no CORS headers, so a browser
+    // fetch is blocked and the app would always show "history unavailable".
+    // The gateway requires the publishable anon key even on a public function:
+    // keyless requests are rejected 401 before the function body runs.
+    if (supabaseUrl) {
+      try {
+        const anonKey = process.env.EXPO_PUBLIC_SUPABASE_KEY;
+        const headers: Record<string, string> = { Accept: 'application/json' };
+        if (anonKey) {
+          headers.apikey = anonKey;
+          headers.Authorization = `Bearer ${anonKey}`;
+        }
+        const res = await fetch(`${supabaseUrl}/functions/v1/bullion-history?days=${days}`, {
+          headers,
+          signal: controller.signal,
+        });
+        if (res.ok) {
+          const data = await res.json() as { rows?: BullionHistoryRow[] };
+          rows = Array.isArray(data.rows) ? data.rows : [];
+        }
+      } catch {
+        // fall through to direct fetch
+      }
+    }
+
+    // 2. Direct Yahoo (native only — no CORS enforcement there).
+    if (rows.length === 0) {
+      const url = (symbol: string) =>
+        `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=${range}`;
+      const ua = { Accept: 'application/json', 'User-Agent': 'Mozilla/5.0 (SpendFlow)' };
+      const [goldRes, silverRes] = await Promise.all([
+        fetch(url('GC=F'), { headers: ua, signal: controller.signal }),
+        fetch(url('SI=F'), { headers: ua, signal: controller.signal }),
+      ]);
+      if (!goldRes.ok || !silverRes.ok) return [];
+      const parse = async (res: Response) => {
+        const data = await res.json() as {
+          chart?: { result?: Array<{ timestamp?: number[]; indicators?: { quote?: Array<{ close?: (number | null)[] }> } }> };
+        };
+        const result = data.chart?.result?.[0];
+        const ts = result?.timestamp ?? [];
+        const closes = result?.indicators?.quote?.[0]?.close ?? [];
+        const byDate = new Map<string, number>();
+        ts.forEach((t, i) => {
+          const close = closes[i];
+          if (!close) return;
+          byDate.set(new Date(t * 1000).toISOString().slice(0, 10), close);
+        });
+        return byDate;
+      };
+      const goldByDate = await parse(goldRes);
+      const silverByDate = await parse(silverRes);
+
+      for (const [date, gold] of goldByDate) {
+        const silver = silverByDate.get(date);
+        if (silver) rows.push({ date, goldUsdPerOz: gold, silverUsdPerOz: silver });
+      }
+      rows.sort((a, b) => a.date.localeCompare(b.date));
+    }
+
+    const trimmed = rows.slice(-days);
+
+    if (trimmed.length > 0) {
+      await AsyncStorage.setItem(cacheKey, JSON.stringify({ at: Date.now(), rows: trimmed })).catch(() => undefined);
+    }
+    return trimmed;
+  } catch {
+    // Offline / blocked: reuse any stale cache rather than nothing.
+    try {
+      const raw = await AsyncStorage.getItem(cacheKey);
+      return raw ? (JSON.parse(raw) as { rows: BullionHistoryRow[] }).rows : [];
+    } catch {
+      return [];
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+}
 const GRAMS_PER_TROY_OUNCE = 31.1034768;
 const GRAMS_PER_TOLA = 11.6638;
+
+const BULLION_CACHE_KEY = '@spendflow_bullion_rates_v1';
 
 // Fallback rates if completely offline on first launch
 const FALLBACK_BULLION: BullionRates = {
@@ -221,7 +337,16 @@ export async function fetchLiveBullionRates(): Promise<BullionRates> {
 /**
  * Fetches and locks the rate according to the official local market fixing schedule.
  * Once fetched for the current session (e.g. 10:30 AM in Nepal), it remains locked throughout the day.
+ *
+ * `isManualRefresh=false` (screen open / market switch) still serves the
+ * session cache — the lock keeps the "official fix" semantics — but only
+ * while it's fresh (AUTO_CACHE_MAX_AGE_MS). An older cached copy means the
+ * user is returning hours later: fetch live so opening the screen always
+ * shows current data without a manual refresh. A manual refresh bypasses the
+ * cache age entirely.
  */
+const AUTO_CACHE_MAX_AGE_MS = 15 * 60 * 1000;
+
 export async function fetchMarketFixedBullionRates(currency = 'NPR', isManualRefresh = false): Promise<BullionRates> {
   const session = getMarketSessionInfo(currency);
 
@@ -229,7 +354,10 @@ export async function fetchMarketFixedBullionRates(currency = 'NPR', isManualRef
     try {
       const cachedSession = await AsyncStorage.getItem(session.sessionKey);
       if (cachedSession) {
-        return JSON.parse(cachedSession) as BullionRates;
+        const parsed = JSON.parse(cachedSession) as BullionRates;
+        const cachedAt = parsed.updatedAt ? Date.parse(parsed.updatedAt) : NaN;
+        const ageOk = Number.isFinite(cachedAt) && Date.now() - cachedAt < AUTO_CACHE_MAX_AGE_MS;
+        if (ageOk) return parsed;
       }
     } catch {
       // ignore
@@ -391,11 +519,215 @@ export function applyOfficialNepalRates(
 }
 
 /**
- * Historical chart data comes ONLY from verified stored records
- * (`market_gold_rates` via `getOfficialNepalHistory`). The previous synthetic
- * trend generator (macro drift + sinusoidal waves around the live price) was
- * removed: a financial app must never present fabricated values as historical
- * market observations. Markets without stored history render the explicit
- * "Historical data unavailable" state instead.
+ * Nepal's historical chart data comes ONLY from verified stored records
+ * (`market_gold_rates` via `getOfficialNepalHistory`). Markets without an
+ * official daily fix use `buildBullionMarketHistoryAll` below — real observed
+ * metal futures closes, converted at the SAME historical FX rates and through
+ * the SAME calibration/rounding as the live board. Nothing synthetic: a
+ * financial app must never present fabricated values as historical market
+ * observations.
  */
+
+// Pegged currencies are exact constants (AGENTS.md §5) — never fetched.
+const BULLION_PEGGED_UNITS_PER_USD: Record<string, number> = {
+  USD: 1,
+  QAR: 3.64,
+  AED: 3.6725,
+  SAR: 3.75,
+};
+// NPR = INR × 1.60 (NRB peg); KRW/JPY float via Frankfurter like the rest.
+const NPR_PER_INR = 1.6;
+
+/** units of `currency` per 1 USD on each date — pegs constant, floats historical. */
+async function fetchHistoricalUnitsPerUsd(
+  dates: string[],
+  currency: string,
+): Promise<Map<string, number>> {
+  const ccy = currency.toUpperCase();
+  const map = new Map<string, number>();
+  const peg = BULLION_PEGGED_UNITS_PER_USD[ccy];
+  if (peg !== undefined) {
+    dates.forEach((d) => map.set(d, peg));
+    return map;
+  }
+  // NPR derives from the same date's INR rate.
+  const target = ccy === 'NPR' ? 'INR' : ccy;
+
+  const first = dates[0];
+  const last = dates[dates.length - 1];
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const res = await fetch(`https://api.frankfurter.app/${first}..${last}?from=USD&to=${target}`, {
+      headers: { Accept: 'application/json' },
+      signal: controller.signal,
+    });
+    if (res.ok) {
+      const data = (await res.json()) as { rates?: Record<string, Record<string, number>> };
+      for (const [date, pairs] of Object.entries(data.rates ?? {})) {
+        const units = Number(pairs[target]);
+        if (units > 0) map.set(date, ccy === 'NPR' ? units * NPR_PER_INR : units);
+      }
+    }
+  } catch {
+    // offline → empty map; caller falls back to static DEFAULT_RATES per date
+  } finally {
+    clearTimeout(timer);
+  }
+  return map;
+}
+
+/**
+ * Builds ALL FOUR benchmark series (gold/silver × tola/10g) for a market in
+ * one pass — one metal-history fetch, one historical-FX fetch — so the
+ * secondary board can show the chart for whichever benchmark card the user
+ * selects and real day-over-day deltas on every card. Same calibration and
+ * rounding as the live board (`computeBullionPrices`).
+ */
+export async function buildBullionMarketHistoryAll(
+  targetCurrency: string,
+  days = 120,
+): Promise<Record<'gold_tola' | 'silver_tola' | 'gold_10g' | 'silver_10g', BullionHistoryPoint[]>> {
+  const ccy = targetCurrency.toUpperCase();
+  const rows = await fetchBullionMetalHistory(days);
+
+  const empty = {
+    gold_tola: [] as BullionHistoryPoint[],
+    silver_tola: [] as BullionHistoryPoint[],
+    gold_10g: [] as BullionHistoryPoint[],
+    silver_10g: [] as BullionHistoryPoint[],
+  };
+  if (rows.length < 2) return empty;
+
+  const ratesByDate = await fetchHistoricalUnitsPerUsd(rows.map((r) => r.date), ccy);
+  const staticRate = ccy === 'NPR' ? 151.74 : DEFAULT_RATES[ccy] ?? 1;
+
+  const isNPR = ccy === 'NPR';
+  const isINR = ccy === 'INR';
+  const goldMultiplier = isNPR ? 1.20649 : isINR ? 1.0918 : 1.0;
+  const silverMultiplier = isNPR ? 1.22765 : isINR ? 1.0918 : 1.0;
+
+  const series = {
+    gold_tola: [] as BullionHistoryPoint[],
+    silver_tola: [] as BullionHistoryPoint[],
+    gold_10g: [] as BullionHistoryPoint[],
+    silver_10g: [] as BullionHistoryPoint[],
+  };
+  for (const row of rows) {
+    const unitsPerUsd = ratesByDate.get(row.date) ?? staticRate;
+    if (!(unitsPerUsd > 0)) continue;
+
+    const goldUsdPerGram = row.goldUsdPerOz / GRAMS_PER_TROY_OUNCE;
+    const silverUsdPerGram = row.silverUsdPerOz / GRAMS_PER_TROY_OUNCE;
+    // unitsPerUsd is "local units per 1 USD" — same direction as
+    // convertCurrency(amount, 'USD', target) in this file: multiply.
+    const goldLocalPerGram = goldUsdPerGram * unitsPerUsd * goldMultiplier;
+    const silverLocalPerGram = silverUsdPerGram * unitsPerUsd * silverMultiplier;
+
+    // Same market-board rounding as the single-metric builder below.
+    let goldTola = goldLocalPerGram * GRAMS_PER_TOLA;
+    if (isNPR) goldTola = Math.round(goldTola / 500) * 500;
+    else if (isINR) goldTola = Math.round(goldTola);
+    let silverTola = silverLocalPerGram * GRAMS_PER_TOLA;
+    if (isNPR) silverTola = Math.round(silverTola / 5) * 5;
+    else if (isINR) silverTola = Math.round(silverTola);
+    const goldPer10g = isNPR || isINR ? Math.round(goldLocalPerGram * 10) : goldLocalPerGram * 10;
+    const silverPer10g = isNPR || isINR ? Math.round(silverLocalPerGram * 10) : silverLocalPerGram * 10;
+
+    const push = (
+      bucket: BullionHistoryPoint[],
+      price: number,
+    ) => {
+      if (price > 0) {
+        bucket.push({
+          date: row.date,
+          label: row.date.slice(5),
+          fullDate: row.date,
+          price: Math.round(price),
+        });
+      }
+    };
+    push(series.gold_tola, goldTola);
+    push(series.silver_tola, silverTola);
+    push(series.gold_10g, goldPer10g);
+    push(series.silver_10g, silverPer10g);
+  }
+  return series;
+}
+
+/**
+ * Builds the per-market historical price series for one benchmark metric
+ * (e.g. gold per tola in NPR). Every point = real futures close × historical
+ * FX × the market's calibration multiplier, rounded exactly like the live
+ * board (`computeBullionPrices`), so the chart matches the displayed price.
+ * Prefer `buildBullionMarketHistoryAll` when multiple metrics are needed —
+ * it shares the metal-history and FX fetches across all four series.
+ */
+export async function buildBullionMarketHistory(
+  targetCurrency: string,
+  days = 120,
+  metric: 'gold_tola' | 'silver_tola' | 'gold_10g' | 'silver_10g' = 'gold_tola',
+): Promise<BullionHistoryPoint[]> {
+  const ccy = targetCurrency.toUpperCase();
+  const rows = await fetchBullionMetalHistory(days);
+  if (rows.length < 2) return [];
+
+  const ratesByDate = await fetchHistoricalUnitsPerUsd(rows.map((r) => r.date), ccy);
+  const staticRate = ccy === 'NPR' ? 151.74 : DEFAULT_RATES[ccy] ?? 1;
+
+  const isNPR = ccy === 'NPR';
+  const isINR = ccy === 'INR';
+  const goldMultiplier = isNPR ? 1.20649 : isINR ? 1.0918 : 1.0;
+  const silverMultiplier = isNPR ? 1.22765 : isINR ? 1.0918 : 1.0;
+
+  const points: BullionHistoryPoint[] = [];
+  for (const row of rows) {
+    const unitsPerUsd = ratesByDate.get(row.date) ?? staticRate;
+    if (!(unitsPerUsd > 0)) continue;
+
+    const goldUsdPerGram = row.goldUsdPerOz / GRAMS_PER_TROY_OUNCE;
+    const silverUsdPerGram = row.silverUsdPerOz / GRAMS_PER_TROY_OUNCE;
+    // unitsPerUsd is "local units per 1 USD" — same direction as
+    // convertCurrency(amount, 'USD', target) in this file: multiply.
+    const goldLocalPerGram = goldUsdPerGram * unitsPerUsd * goldMultiplier;
+    const silverLocalPerGram = silverUsdPerGram * unitsPerUsd * silverMultiplier;
+
+    let price: number;
+    switch (metric) {
+      case 'gold_tola': {
+        let tola = goldLocalPerGram * GRAMS_PER_TOLA;
+        if (isNPR) tola = Math.round(tola / 500) * 500;
+        else if (isINR) tola = Math.round(tola);
+        price = tola;
+        break;
+      }
+      case 'gold_10g': {
+        const per10g = goldLocalPerGram * 10;
+        price = isNPR || isINR ? Math.round(per10g) : per10g;
+        break;
+      }
+      case 'silver_tola': {
+        let tola = silverLocalPerGram * GRAMS_PER_TOLA;
+        if (isNPR) tola = Math.round(tola / 5) * 5;
+        else if (isINR) tola = Math.round(tola);
+        price = tola;
+        break;
+      }
+      case 'silver_10g': {
+        const per10g = silverLocalPerGram * 10;
+        price = isNPR || isINR ? Math.round(per10g) : per10g;
+        break;
+      }
+    }
+    if (price > 0) {
+      points.push({
+        date: row.date,
+        label: row.date.slice(5),
+        fullDate: row.date,
+        price: Math.round(price),
+      });
+    }
+  }
+  return points;
+}
 

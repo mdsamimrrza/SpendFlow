@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -14,17 +14,21 @@ import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import {
-  ArrowLeft,
   AtSign,
+  CalendarDays,
   Camera,
   Check,
+  ChevronLeft,
+  ChevronRight,
+  Fingerprint,
   Image as ImageIcon,
   KeyRound,
   LogOut,
   Mail,
+  Pencil,
   ShieldAlert,
+  ShieldCheck,
   Trash2,
-  User,
   X,
 } from 'lucide-react-native';
 import { Avatar } from '@/components/ui/Avatar';
@@ -33,6 +37,7 @@ import { Text } from '@/components/ui/Text';
 import { showToast } from '@/components/ui/Toast';
 import { useAuth } from '@/hooks/useAuth';
 import { useLanguage } from '@/hooks/useLanguage';
+import { useSecurity } from '@/hooks/useSecurity';
 import { useTheme } from '@/hooks/useTheme';
 import {
   changePassword,
@@ -46,19 +51,34 @@ import {
 
 export default function ProfileScreen() {
   const { profile, refreshProfile } = useAuth();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const theme = useTheme();
   const router = useRouter();
+  const { isBiometricEnabled, biometricTypeName, isBiometricSupported, beginSystemCapture, endSystemCapture } = useSecurity();
 
   const displayName = profile?.display_name || profile?.email?.split('@')[0] || 'SpendFlow User';
   const userEmail = profile?.email || '';
+
+  // "Member since" line on the identity card — localized month-year stamp.
+  const memberSince = useMemo(() => {
+    if (!profile?.created_at) return null;
+    try {
+      return new Intl.DateTimeFormat(language === 'hi' ? 'hi-IN' : language === 'ne' ? 'ne-NP' : 'en-US', {
+        month: 'short',
+        year: 'numeric',
+      }).format(new Date(profile.created_at));
+    } catch {
+      return null;
+    }
+  }, [profile?.created_at, language]);
 
   // ── Avatar ──
   const [avatarSheetOpen, setAvatarSheetOpen] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
 
-  // ── Name ──
+  // ── Name (inline reveal editor on the identity card) ──
   const [nameInput, setNameInput] = useState(profile?.display_name ?? '');
+  const [nameEditOpen, setNameEditOpen] = useState(false);
   const [savingName, setSavingName] = useState(false);
 
   // ── Email change (OTP verified against the CURRENT email first) ──
@@ -121,9 +141,17 @@ export default function ProfileScreen() {
         quality: 0.8,
         base64: true,
       };
-      const result = fromCamera
-        ? await ImagePicker.launchCameraAsync(options)
-        : await ImagePicker.launchImageLibraryAsync(options);
+      // Same capture suppression as the receipt flow: the camera/picker is a
+      // separate Android activity and would re-trigger the biometric lock.
+      beginSystemCapture();
+      let result;
+      try {
+        result = fromCamera
+          ? await ImagePicker.launchCameraAsync(options)
+          : await ImagePicker.launchImageLibraryAsync(options);
+      } finally {
+        endSystemCapture();
+      }
 
       if (result.canceled || !result.assets[0]) return;
       const asset = result.assets[0];
@@ -170,11 +198,15 @@ export default function ProfileScreen() {
 
   async function handleSaveName() {
     const trimmed = nameInput.trim();
-    if (!trimmed || trimmed === profile?.display_name) return;
+    if (!trimmed || trimmed === profile?.display_name) {
+      setNameEditOpen(false);
+      return;
+    }
     setSavingName(true);
     try {
       await updateProfile({ display_name: trimmed });
       await refreshProfile(true);
+      setNameEditOpen(false);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
       showToast({ message: `Name updated to "${trimmed}"` });
     } catch (err) {
@@ -254,8 +286,8 @@ export default function ProfileScreen() {
   }
 
   async function handleSavePassword() {
-    if (newPassword.length < 6) {
-      setPasswordError('New password must be at least 6 characters.');
+    if (newPassword.length < 8) {
+      setPasswordError('New password must be at least 8 characters.');
       return;
     }
     if (newPassword !== confirmPassword) {
@@ -299,25 +331,6 @@ export default function ProfileScreen() {
     fontSize: 11,
   };
 
-  const menuCardStyle = {
-    borderRadius: 20,
-    backgroundColor: theme.colors.surface,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    overflow: 'hidden' as const,
-  };
-
-  const rowPressable = () => ({ pressed }: { pressed: boolean }) => ({
-    flexDirection: 'row' as const,
-    alignItems: 'center' as const,
-    justifyContent: 'space-between' as const,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    backgroundColor: pressed
-      ? (theme.isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)')
-      : 'transparent',
-  });
-
   const iconBadgeStyle = (tint: string) => ({
     width: 38,
     height: 38,
@@ -350,32 +363,35 @@ export default function ProfileScreen() {
     color: theme.colors.text,
   });
 
-  const formButtonRowStyle = { flexDirection: 'row' as const, gap: 10, marginTop: 4 };
+  const formButtonRowStyle = { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 10, marginTop: 4 };
 
   const secondaryButtonStyle = {
     flex: 1,
-    paddingVertical: 12,
+    height: 46,
     borderRadius: theme.radius.md,
     backgroundColor: theme.colors.surfaceElevated,
     borderWidth: 1,
     borderColor: theme.colors.border,
     alignItems: 'center' as const,
+    justifyContent: 'center' as const,
   };
 
   const primaryButtonStyle = {
     flex: 1,
-    paddingVertical: 12,
+    height: 46,
     borderRadius: theme.radius.md,
     backgroundColor: theme.colors.primary,
     alignItems: 'center' as const,
+    justifyContent: 'center' as const,
   };
 
   const dangerButtonStyle = {
     flex: 1,
-    paddingVertical: 12,
+    height: 46,
     borderRadius: theme.radius.md,
     backgroundColor: theme.colors.danger,
     alignItems: 'center' as const,
+    justifyContent: 'center' as const,
   };
 
   return (
@@ -411,7 +427,7 @@ export default function ProfileScreen() {
             borderColor: theme.colors.border,
           }}
         >
-          <ArrowLeft size={16} color={theme.colors.text} />
+          <ChevronLeft size={17} color={theme.colors.text} />
         </Pressable>
 
         <View style={{ alignItems: 'center' }}>
@@ -428,159 +444,355 @@ export default function ProfileScreen() {
 
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ padding: 16, gap: 20, paddingBottom: 48 }}
+        contentContainerStyle={{ padding: 16, gap: 22, paddingBottom: 48 }}
         keyboardShouldPersistTaps="handled"
         automaticallyAdjustKeyboardInsets
       >
-        {/* ── AVATAR HERO ── */}
-        <View style={{ alignItems: 'center', gap: 10, marginTop: 8 }}>
-          <Pressable
-            onPress={() => setAvatarSheetOpen(true)}
-            disabled={uploadingAvatar}
-            style={({ pressed }) => ({ opacity: pressed ? 0.85 : 1 })}
-          >
-            <View style={{ position: 'relative' }}>
-              <Avatar uri={profile?.avatar_url} name={displayName} size={104} />
-              {uploadingAvatar ? (
+        {/* ══════════════ 1. IDENTITY HERO CARD ══════════════ */}
+        {/* Avatar, name, and verified email fused into one gradient banner.
+            Editing the photo happens right here — tap the camera chip. */}
+        <View
+          style={{
+            borderRadius: 24,
+            padding: 20,
+            gap: 16,
+            borderWidth: 1.5,
+            borderColor: theme.isDark ? 'rgba(129, 140, 248, 0.35)' : theme.colors.primary,
+            backgroundColor: theme.isDark ? '#111827' : theme.colors.cardHighlight,
+            shadowColor: theme.isDark ? '#818CF8' : '#0F5C4D',
+            shadowOffset: { width: 0, height: 10 },
+            shadowOpacity: theme.isDark ? 0.18 : 0.12,
+            shadowRadius: 24,
+            elevation: 6,
+          }}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
+            <Pressable
+              onPress={() => setAvatarSheetOpen(true)}
+              disabled={uploadingAvatar}
+              style={({ pressed }) => ({ opacity: pressed ? 0.85 : 1 })}
+            >
+              <View style={{ position: 'relative' }}>
+                <Avatar uri={profile?.avatar_url} name={displayName} size={78} />
+                {uploadingAvatar ? (
+                  <View
+                    style={{
+                      position: 'absolute',
+                      width: 78,
+                      height: 78,
+                      borderRadius: theme.radius.full,
+                      backgroundColor: 'rgba(0,0,0,0.45)',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <ActivityIndicator color="#FFFFFF" />
+                  </View>
+                ) : null}
+                {/* Compact camera chip — bottom-right, pixel-locked */}
                 <View
                   style={{
                     position: 'absolute',
-                    width: 104,
-                    height: 104,
-                    borderRadius: theme.radius.full,
-                    backgroundColor: 'rgba(0,0,0,0.45)',
+                    bottom: -2,
+                    right: -2,
+                    width: 27,
+                    height: 27,
+                    borderRadius: 14,
+                    backgroundColor: theme.colors.primary,
+                    borderWidth: 2.5,
+                    borderColor: theme.isDark ? '#111827' : theme.colors.cardHighlight,
                     alignItems: 'center',
                     justifyContent: 'center',
                   }}
                 >
-                  <ActivityIndicator color="#FFFFFF" />
+                  <Camera size={13} color="#FFFFFF" />
+                </View>
+              </View>
+            </Pressable>
+
+            <View style={{ flex: 1, gap: 3 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Text
+                  style={{ fontSize: 19, fontWeight: '900', color: theme.colors.text, letterSpacing: -0.3, flex: 1 }}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.7}
+                >
+                  {displayName}
+                </Text>
+                <ShieldCheck size={17} color={theme.colors.success} />
+              </View>
+              <Text variant="caption" muted numberOfLines={1} style={{ fontSize: 12 }}>
+                {userEmail || 'SpendFlow Account'}
+              </Text>
+              {memberSince ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3 }}>
+                  <CalendarDays size={11} color={theme.colors.faint} />
+                  <Text variant="caption" style={{ fontSize: 10.5, color: theme.colors.faint, fontWeight: '600' }}>
+                    {t('profile_member_since') || 'Member since'} {memberSince}
+                  </Text>
                 </View>
               ) : null}
-              {/* Camera badge — pixel-locked so it never shifts while uploading */}
-              <View
+            </View>
+          </View>
+
+          {/* Inline display-name editor — pencil reveals the input in place,
+              no modal. Save button appears only while the name differs. */}
+          {nameEditOpen ? (
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 10,
+                padding: 10,
+                borderRadius: 16,
+                backgroundColor: theme.isDark ? 'rgba(17, 24, 39, 0.6)' : theme.colors.surface,
+                borderWidth: 1.5,
+                borderColor: theme.colors.border,
+              }}
+            >
+              <TextInput
+                autoFocus
+                value={nameInput}
+                onChangeText={setNameInput}
+                onEndEditing={handleSaveName}
+                onSubmitEditing={handleSaveName}
+                placeholder={t('profile_name_placeholder') || 'Enter your name'}
+                placeholderTextColor={theme.colors.textMuted}
+                returnKeyType="done"
+                maxLength={60}
                 style={{
-                  position: 'absolute',
-                  bottom: 0,
-                  right: 0,
-                  width: 32,
-                  height: 32,
-                  borderRadius: 16,
+                  flex: 1,
+                  height: 42,
+                  borderRadius: theme.radius.md,
+                  borderWidth: 1.5,
+                  borderColor: theme.colors.border,
+                  backgroundColor: theme.colors.surfaceElevated,
+                  paddingHorizontal: 12,
+                  fontSize: 15,
+                  fontWeight: '600',
+                  color: theme.colors.text,
+                }}
+              />
+              <Pressable
+                onPress={handleSaveName}
+                disabled={savingName || !nameInput.trim() || nameInput.trim() === profile?.display_name}
+                style={({ pressed }) => ({
+                  width: 42,
+                  height: 42,
+                  borderRadius: theme.radius.md,
                   backgroundColor: theme.colors.primary,
-                  borderWidth: 2.5,
-                  borderColor: theme.colors.background,
                   alignItems: 'center',
                   justifyContent: 'center',
-                }}
+                  opacity:
+                    savingName || !nameInput.trim() || nameInput.trim() === profile?.display_name
+                      ? 0.4
+                      : pressed
+                        ? 0.8
+                        : 1,
+                })}
               >
-                <Camera size={15} color="#FFFFFF" />
-              </View>
+                {savingName ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Check size={18} color="#FFFFFF" />
+                )}
+              </Pressable>
+              <Pressable
+                onPress={() => {
+                  setNameInput(profile?.display_name ?? '');
+                  setNameEditOpen(false);
+                }}
+                disabled={savingName}
+                hitSlop={6}
+                style={({ pressed }) => ({
+                  width: 42,
+                  height: 42,
+                  borderRadius: theme.radius.md,
+                  backgroundColor: theme.colors.surfaceElevated,
+                  borderWidth: 1.5,
+                  borderColor: theme.colors.border,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  opacity: pressed ? 0.7 : 1,
+                })}
+              >
+                <X size={16} color={theme.colors.text} />
+              </Pressable>
             </View>
-          </Pressable>
+          ) : (
+            <Pressable
+              onPress={() => {
+                setNameInput(profile?.display_name ?? '');
+                setNameEditOpen(true);
+              }}
+              style={({ pressed }) => ({
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 7,
+                paddingVertical: 10.5,
+                borderRadius: 14,
+                borderWidth: 1.5,
+                borderStyle: 'dashed',
+                borderColor: theme.isDark ? 'rgba(129, 140, 248, 0.4)' : theme.colors.border,
+                backgroundColor: pressed
+                  ? theme.isDark
+                    ? 'rgba(129, 140, 248, 0.08)'
+                    : 'rgba(15, 92, 77, 0.06)'
+                  : 'transparent',
+              })}
+            >
+              <Pencil size={14} color={theme.colors.primary} />
+              <Text style={{ fontSize: 13.5, fontWeight: '800', color: theme.colors.primary }}>
+                {t('profile_edit_identity') || 'Edit Display Name'}
+              </Text>
+            </Pressable>
+          )}
+        </View>
 
-          <View style={{ alignItems: 'center', gap: 2 }}>
-            <Text style={{ fontSize: 19, fontWeight: '800', color: theme.colors.text, letterSpacing: -0.3 }}>
-              {displayName}
+        {/* ══════════════ 2. PROTECTION STATUS STRIP ══════════════ */}
+        {/* Live glance: email verified + app-lock state, mirrored from the
+            SecurityContext — reassures without opening Settings. */}
+        <View
+          style={{
+            flexDirection: 'row',
+            gap: 10,
+          }}
+        >
+          <View
+            style={{
+              flex: 1,
+              gap: 6,
+              paddingVertical: 12,
+              paddingHorizontal: 12,
+              borderRadius: 16,
+              backgroundColor: theme.colors.surface,
+              borderWidth: 1,
+              borderColor: theme.isDark ? 'rgba(16, 185, 129, 0.3)' : '#CFE3D6',
+              alignItems: 'flex-start',
+            }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+              <ShieldCheck size={13} color={theme.colors.success} />
+              <Text
+                variant="caption"
+                style={{ fontSize: 10, fontWeight: '800', color: theme.colors.textMuted, letterSpacing: 0.5, textTransform: 'uppercase' }}
+                numberOfLines={1}
+              >
+                {t('profile_email_status') || 'Email'}
+              </Text>
+            </View>
+            <Text
+              style={{ fontSize: 12.5, fontWeight: '900', color: theme.colors.success }}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.7}
+            >
+              {t('profile_status_verified') || 'Verified & Secured'}
             </Text>
-            <Text variant="caption" muted style={{ fontSize: 12 }}>
-              {userEmail || 'SpendFlow Account'}
+          </View>
+
+          <View
+            style={{
+              flex: 1,
+              gap: 6,
+              paddingVertical: 12,
+              paddingHorizontal: 12,
+              borderRadius: 16,
+              backgroundColor: theme.colors.surface,
+              borderWidth: 1,
+              borderColor: isBiometricEnabled
+                ? theme.isDark
+                  ? 'rgba(16, 185, 129, 0.3)'
+                  : '#CFE3D6'
+                : theme.colors.border,
+              alignItems: 'flex-start',
+            }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+              <Fingerprint size={13} color={isBiometricEnabled ? theme.colors.success : theme.colors.textMuted} />
+              <Text
+                variant="caption"
+                style={{ fontSize: 10, fontWeight: '800', color: theme.colors.textMuted, letterSpacing: 0.5, textTransform: 'uppercase' }}
+                numberOfLines={1}
+              >
+                {t('profile_app_lock_status') || 'App Lock'}
+              </Text>
+            </View>
+            <Text
+              style={{
+                fontSize: 12.5,
+                fontWeight: '900',
+                color: isBiometricEnabled ? theme.colors.success : theme.colors.textMuted,
+              }}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.7}
+            >
+              {isBiometricEnabled
+                ? biometricTypeName || 'Biometric'
+                : isBiometricSupported
+                  ? t('profile_app_lock_off') || 'Off — Enable in Settings'
+                  : t('profile_app_lock_unsupported') || 'Not Supported'}
             </Text>
           </View>
         </View>
 
-        {/* ── ACCOUNT INFORMATION ── */}
+        {/* ══════════════ 3. ACCOUNT ACTIONS (2×2 TILE GRID) ══════════════ */}
+        {/* Flat tappable tiles replace the stacked list — each opens its
+            flow directly, chevron points at the modal it launches. */}
         <View style={{ gap: 10 }}>
           <Text style={sectionLabelStyle}>
             {t('profile_section_account') || 'Account Information'}
           </Text>
 
-          <View style={menuCardStyle}>
-            {/* Display name */}
-            <View style={{ paddingHorizontal: 16, paddingVertical: 14, gap: 8 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
-                <View style={iconBadgeStyle(theme.isDark ? 'rgba(129, 140, 248, 0.15)' : '#DCE9E3')}>
-                  <User size={19} color={theme.colors.primary} />
-                </View>
-                <View style={{ flex: 1, gap: 6 }}>
-                  <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
-                    {t('profile_display_name') || 'Display Name'}
-                  </Text>
-                  <TextInput
-                    value={nameInput}
-                    onChangeText={setNameInput}
-                    onEndEditing={handleSaveName}
-                    placeholder={t('profile_name_placeholder') || 'Enter your name'}
-                    placeholderTextColor={theme.colors.textMuted}
-                    returnKeyType="done"
-                    style={{
-                      height: 44,
-                      borderRadius: theme.radius.md,
-                      borderWidth: 1.5,
-                      borderColor: theme.colors.border,
-                      backgroundColor: theme.colors.surfaceElevated,
-                      paddingHorizontal: 12,
-                      fontSize: 15,
-                      fontWeight: '600',
-                      color: theme.colors.text,
-                    }}
-                  />
-                </View>
-                <Pressable
-                  onPress={handleSaveName}
-                  disabled={savingName || !nameInput.trim() || nameInput.trim() === profile?.display_name}
-                  style={({ pressed }) => ({
-                    width: 38,
-                    height: 38,
-                    borderRadius: 19,
-                    backgroundColor: theme.colors.primary,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    opacity: savingName || !nameInput.trim() || nameInput.trim() === profile?.display_name ? 0.4 : pressed ? 0.8 : 1,
-                  })}
-                >
-                  {savingName ? (
-                    <ActivityIndicator size="small" color="#FFFFFF" />
-                  ) : (
-                    <Check size={17} color="#FFFFFF" />
-                  )}
-                </Pressable>
-              </View>
-            </View>
-
-            <View style={{ height: 1, backgroundColor: theme.colors.border, marginHorizontal: 16, opacity: 0.6 }} />
-
-            {/* Email */}
+          <View style={{ flexDirection: 'row', gap: 10, alignItems: 'stretch' }}>
+            {/* Tile: Email */}
             <Pressable
               onPress={openEmailModal}
-              style={rowPressable()}
+              style={({ pressed }) => ({
+                flex: 1,
+                gap: 10,
+                padding: 14,
+                borderRadius: 18,
+                backgroundColor: theme.colors.surface,
+                borderWidth: 1,
+                borderColor: pressed
+                  ? theme.colors.primary
+                  : theme.colors.border,
+                opacity: pressed ? 0.85 : 1,
+              })}
             >
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, flex: 1 }}>
-                <View style={iconBadgeStyle(theme.isDark ? 'rgba(129, 140, 248, 0.15)' : '#DCE9E3')}>
-                  <AtSign size={19} color={theme.colors.primary} />
-                </View>
-                <View style={{ flex: 1, paddingRight: 8 }}>
-                  <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
-                    {t('profile_email') || 'Email Address'}
-                  </Text>
-                  <Text variant="caption" muted numberOfLines={1} style={{ fontSize: 12 }}>
-                    {userEmail}
-                  </Text>
-                </View>
+              <View
+                style={{
+                  width: 38,
+                  height: 38,
+                  borderRadius: 12,
+                  backgroundColor: theme.colors.primaryLight,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <AtSign size={19} color={theme.colors.primary} />
               </View>
-              <Text style={{ fontSize: 13, fontWeight: '700', color: theme.colors.primary }}>
-                {t('profile_email_change') || 'Change'}
-              </Text>
+              <View style={{ flex: 1, gap: 2 }}>
+                <Text style={{ fontSize: 13.5, fontWeight: '800', color: theme.colors.text }}>
+                  {t('profile_email') || 'Email Address'}
+                </Text>
+                <Text variant="caption" muted numberOfLines={1} style={{ fontSize: 10.5 }}>
+                  {userEmail}
+                </Text>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                <Text style={{ fontSize: 12, fontWeight: '800', color: theme.colors.primary }}>
+                  {t('profile_email_change') || 'Change'}
+                </Text>
+                <ChevronRight size={13} color={theme.colors.primary} />
+              </View>
             </Pressable>
-          </View>
-        </View>
 
-        {/* ── SECURITY ── */}
-        <View style={{ gap: 10 }}>
-          <Text style={sectionLabelStyle}>
-            {t('profile_section_security') || 'Security'}
-          </Text>
-
-          <View style={menuCardStyle}>
-            {/* Change password */}
+            {/* Tile: Password */}
             <Pressable
               onPress={() => {
                 setCurrentPassword('');
@@ -589,74 +801,187 @@ export default function ProfileScreen() {
                 setPasswordError('');
                 setPasswordModalOpen(true);
               }}
-              style={rowPressable()}
+              style={({ pressed }) => ({
+                flex: 1,
+                gap: 10,
+                padding: 14,
+                borderRadius: 18,
+                backgroundColor: theme.colors.surface,
+                borderWidth: 1,
+                borderColor: pressed
+                  ? theme.colors.primary
+                  : theme.colors.border,
+                opacity: pressed ? 0.85 : 1,
+              })}
             >
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, flex: 1 }}>
-                <View style={iconBadgeStyle(theme.isDark ? 'rgba(129, 140, 248, 0.15)' : '#DCE9E3')}>
-                  <KeyRound size={19} color={theme.colors.primary} />
-                </View>
-                <View style={{ flex: 1, paddingRight: 8 }}>
-                  <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
-                    {t('profile_change_password') || 'Change Password'}
-                  </Text>
-                  <Text variant="caption" muted style={{ fontSize: 12 }}>
-                    {t('profile_change_password_sub') || 'Verify your current password first'}
-                  </Text>
-                </View>
+              <View
+                style={{
+                  width: 38,
+                  height: 38,
+                  borderRadius: 12,
+                  backgroundColor: theme.colors.primaryLight,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <KeyRound size={19} color={theme.colors.primary} />
+              </View>
+              <View style={{ flex: 1, gap: 2 }}>
+                <Text style={{ fontSize: 13.5, fontWeight: '800', color: theme.colors.text }}>
+                  {t('profile_change_password') || 'Change Password'}
+                </Text>
+                <Text variant="caption" muted numberOfLines={1} style={{ fontSize: 10.5 }}>
+                  {t('profile_change_password_sub') || 'Verify your current password first'}
+                </Text>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                <Text style={{ fontSize: 12, fontWeight: '800', color: theme.colors.primary }}>
+                  {t('profile_tile_open') || 'Open'}
+                </Text>
+                <ChevronRight size={13} color={theme.colors.primary} />
+              </View>
+            </Pressable>
+          </View>
+
+          <View style={{ flexDirection: 'row', gap: 10, alignItems: 'stretch' }}>
+            {/* Tile: Sessions */}
+            <Pressable
+              onPress={() => setSignOutAllOpen(true)}
+              style={({ pressed }) => ({
+                flex: 1,
+                gap: 10,
+                padding: 14,
+                borderRadius: 18,
+                backgroundColor: theme.colors.surface,
+                borderWidth: 1,
+                borderColor: pressed
+                  ? theme.colors.warning
+                  : theme.colors.border,
+                opacity: pressed ? 0.85 : 1,
+              })}
+            >
+              <View
+                style={{
+                  width: 38,
+                  height: 38,
+                  borderRadius: 12,
+                  backgroundColor: theme.colors.brassTint,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <LogOut size={19} color={theme.colors.warning} />
+              </View>
+              <View style={{ flex: 1, gap: 2 }}>
+                <Text style={{ fontSize: 13.5, fontWeight: '800', color: theme.colors.text }}>
+                  {t('profile_signout_all') || 'Sign Out All Devices'}
+                </Text>
+                <Text variant="caption" muted numberOfLines={2} style={{ fontSize: 10.5 }}>
+                  {t('profile_signout_all_sub') || 'Ends every active session for this account'}
+                </Text>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                <Text style={{ fontSize: 12, fontWeight: '800', color: theme.colors.warning }}>
+                  {t('profile_tile_sessions') || 'Sessions'}
+                </Text>
+                <ChevronRight size={13} color={theme.colors.warning} />
               </View>
             </Pressable>
 
-            <View style={{ height: 1, backgroundColor: theme.colors.border, marginHorizontal: 16, opacity: 0.6 }} />
-
-            {/* Sign out all devices */}
+            {/* Tile: App Lock → routes to Settings (the single source of
+                truth for the biometric toggle) */}
             <Pressable
-              onPress={() => setSignOutAllOpen(true)}
-              style={rowPressable()}
+              onPress={() => router.push('/(tabs)/settings' as any)}
+              style={({ pressed }) => ({
+                flex: 1,
+                gap: 10,
+                padding: 14,
+                borderRadius: 18,
+                backgroundColor: theme.colors.surface,
+                borderWidth: 1,
+                borderColor: pressed
+                  ? theme.colors.primary
+                  : theme.colors.border,
+                opacity: pressed ? 0.85 : 1,
+              })}
             >
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, flex: 1 }}>
-                <View style={iconBadgeStyle(theme.colors.brassTint)}>
-                  <LogOut size={19} color={theme.colors.warning} />
-                </View>
-                <View style={{ flex: 1, paddingRight: 8 }}>
-                  <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
-                    {t('profile_signout_all') || 'Sign Out All Devices'}
-                  </Text>
-                  <Text variant="caption" muted style={{ fontSize: 12 }}>
-                    {t('profile_signout_all_sub') || 'Ends every active session for this account'}
-                  </Text>
-                </View>
+              <View
+                style={{
+                  width: 38,
+                  height: 38,
+                  borderRadius: 12,
+                  backgroundColor: theme.colors.primaryLight,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Fingerprint size={19} color={theme.colors.primary} />
+              </View>
+              <View style={{ flex: 1, gap: 2 }}>
+                <Text style={{ fontSize: 13.5, fontWeight: '800', color: theme.colors.text }}>
+                  {t('profile_app_lock_title') || 'App Lock & Biometrics'}
+                </Text>
+                <Text variant="caption" muted numberOfLines={2} style={{ fontSize: 10.5 }}>
+                  {t('profile_app_lock_sub') || 'Face ID / Fingerprint protection lives in Settings'}
+                </Text>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                <Text style={{ fontSize: 12, fontWeight: '800', color: theme.colors.primary }}>
+                  {t('profile_tile_manage') || 'Manage'}
+                </Text>
+                <ChevronRight size={13} color={theme.colors.primary} />
               </View>
             </Pressable>
           </View>
         </View>
 
-        {/* ── DANGER ZONE ── */}
+        {/* ══════════════ 4. DANGER ZONE ══════════════ */}
+        {/* Deliberately stark: a single enclosed red cell, unlike the
+            friendly tiles above — destruction should look different. */}
         <View style={{ gap: 10 }}>
           <Text style={[sectionLabelStyle, { color: theme.colors.danger }]}>
             {t('profile_section_danger') || 'Danger Zone'}
           </Text>
 
-          <View style={[menuCardStyle, { borderColor: theme.isDark ? 'rgba(239, 68, 68, 0.35)' : '#F1DCD3' }]}>
-            <Pressable
-              onPress={() => setDeleteModalOpen(true)}
-              style={rowPressable()}
+          <Pressable
+            onPress={() => setDeleteModalOpen(true)}
+            style={({ pressed }) => ({
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 14,
+              padding: 16,
+              borderRadius: 18,
+              borderWidth: 1.5,
+              borderStyle: 'dashed',
+              borderColor: theme.isDark ? 'rgba(239, 68, 68, 0.5)' : theme.colors.danger,
+              backgroundColor: pressed ? theme.colors.rustTint : 'transparent',
+              opacity: pressed ? 0.85 : 1,
+            })}
+          >
+            <View
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: 13,
+                backgroundColor: theme.colors.rustTint,
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderWidth: 1,
+                borderColor: theme.isDark ? 'rgba(239, 68, 68, 0.4)' : '#F1DCD3',
+              }}
             >
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, flex: 1 }}>
-                <View style={iconBadgeStyle(theme.colors.rustTint)}>
-                  <Trash2 size={19} color={theme.colors.danger} />
-                </View>
-                <View style={{ flex: 1, paddingRight: 8 }}>
-                  <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.danger }}>
-                    {t('profile_delete_account') || 'Delete Account & Data'}
-                  </Text>
-                  <Text variant="caption" muted style={{ fontSize: 12 }}>
-                    {t('profile_delete_account_sub') || 'Permanently wipes everything — requires email OTP'}
-                  </Text>
-                </View>
-              </View>
-              <ShieldAlert size={17} color={theme.colors.danger} />
-            </Pressable>
-          </View>
+              <Trash2 size={19} color={theme.colors.danger} />
+            </View>
+            <View style={{ flex: 1, gap: 3 }}>
+              <Text style={{ fontSize: 14.5, fontWeight: '800', color: theme.colors.danger }}>
+                {t('profile_delete_account') || 'Delete Account & Data'}
+              </Text>
+              <Text variant="caption" muted style={{ fontSize: 11 }}>
+                {t('profile_delete_account_sub') || 'Permanently wipes everything — requires email OTP'}
+              </Text>
+            </View>
+            <ShieldAlert size={17} color={theme.colors.danger} />
+          </Pressable>
         </View>
       </ScrollView>
 
@@ -877,7 +1202,12 @@ export default function ProfileScreen() {
 
                 <View style={formButtonRowStyle}>
                   <Pressable onPress={() => setEmailModalOpen(false)} style={secondaryButtonStyle}>
-                    <Text style={{ fontWeight: '700', color: theme.colors.text }}>
+                    <Text
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.7}
+                      style={{ fontWeight: '700', color: theme.colors.text }}
+                    >
                       {t('common_cancel') || 'Cancel'}
                     </Text>
                   </Pressable>
@@ -890,7 +1220,12 @@ export default function ProfileScreen() {
                     {sendingEmailOtp ? (
                       <ActivityIndicator size="small" color="#FFFFFF" />
                     ) : (
-                      <Text style={{ fontWeight: '800', color: '#FFFFFF' }}>
+                      <Text
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.7}
+                        style={{ fontWeight: '800', color: '#FFFFFF' }}
+                      >
                         {t('profile_email_send_code') || 'Send Security Code'}
                       </Text>
                     )}
@@ -981,7 +1316,12 @@ export default function ProfileScreen() {
                     disabled={verifyingEmailOtp}
                     style={secondaryButtonStyle}
                   >
-                    <Text style={{ fontWeight: '700', color: theme.colors.text }}>
+                    <Text
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.7}
+                      style={{ fontWeight: '700', color: theme.colors.text }}
+                    >
                       {t('profile_email_back') || 'Back'}
                     </Text>
                   </Pressable>
@@ -994,7 +1334,12 @@ export default function ProfileScreen() {
                     {verifyingEmailOtp ? (
                       <ActivityIndicator size="small" color="#FFFFFF" />
                     ) : (
-                      <Text style={{ fontWeight: '800', color: '#FFFFFF' }}>
+                      <Text
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.7}
+                        style={{ fontWeight: '800', color: '#FFFFFF' }}
+                      >
                         {t('profile_email_verify') || 'Verify & Update'}
                       </Text>
                     )}
@@ -1073,7 +1418,7 @@ export default function ProfileScreen() {
 
               <View style={{ gap: 6 }}>
                 <Text variant="label" style={{ fontSize: 12 }}>
-                  {t('profile_password_new') || 'New Password (min 6 characters)'}
+                  {t('profile_password_new') || 'New Password (min 8 characters)'}
                 </Text>
                 <TextInput
                   value={newPassword}
@@ -1109,7 +1454,12 @@ export default function ProfileScreen() {
 
             <View style={formButtonRowStyle}>
               <Pressable onPress={() => setPasswordModalOpen(false)} style={secondaryButtonStyle}>
-                <Text style={{ fontWeight: '700', color: theme.colors.text }}>
+                <Text
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.7}
+                  style={{ fontWeight: '700', color: theme.colors.text }}
+                >
                   {t('common_cancel') || 'Cancel'}
                 </Text>
               </Pressable>
@@ -1122,7 +1472,12 @@ export default function ProfileScreen() {
                 {savingPassword ? (
                   <ActivityIndicator size="small" color="#FFFFFF" />
                 ) : (
-                  <Text style={{ fontWeight: '800', color: '#FFFFFF' }}>
+                  <Text
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.7}
+                    style={{ fontWeight: '800', color: '#FFFFFF' }}
+                  >
                     {t('profile_password_save') || 'Change Password'}
                   </Text>
                 )}
@@ -1185,7 +1540,12 @@ export default function ProfileScreen() {
                 disabled={signingOutAll}
                 style={secondaryButtonStyle}
               >
-                <Text style={{ fontWeight: '700', color: theme.colors.text }}>
+                <Text
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.7}
+                  style={{ fontWeight: '700', color: theme.colors.text }}
+                >
                   {t('common_cancel') || 'Cancel'}
                 </Text>
               </Pressable>
@@ -1198,7 +1558,12 @@ export default function ProfileScreen() {
                 {signingOutAll ? (
                   <ActivityIndicator size="small" color="#FFFFFF" />
                 ) : (
-                  <Text style={{ fontWeight: '800', color: '#FFFFFF' }}>
+                  <Text
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.7}
+                    style={{ fontWeight: '800', color: '#FFFFFF' }}
+                  >
                     {t('profile_signout_all_go') || 'Sign Out All'}
                   </Text>
                 )}

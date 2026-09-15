@@ -1,0 +1,34 @@
+# Supabase project configuration (committed).
+#
+# SECURITY CONTRACT: every edge function in this project is deployed with
+# gateway JWT verification ON, with exactly one exception (send-password-reset
+# below). The gateway cryptographically verifies Bearer JWTs (rejecting forged
+# signatures) BEFORE any function code runs. Two functions additionally do
+# their own caller checks:
+#   - fetch-nepal-gold-rate: exact service-role key match OR real HS256
+#     signature verification of a legacy JWT (cron-only tool)
+#   - delete-account: amr otp/magiclink freshness window (OTP-minted session
+#     required; fail-closed without amr)
+# Never deploy these with `--no-verify-jwt` — the gateway layer plus the
+# in-function checks are the contract.
+project_id = "stisbfahlhquaqhrifjh"
+
+[functions.bullion-history]
+verify_jwt = true
+
+[functions.delete-account]
+verify_jwt = true
+
+[functions.fetch-nepal-gold-rate]
+verify_jwt = true
+
+[functions.send-security-otp]
+verify_jwt = true
+
+# The ONLY verify_jwt = false function: forgot-password is used BY signed-out
+# users, so no caller JWT can exist. Its abuse surface is bounded by the
+# DB-backed per-email 60s cooldown inside the function (stamped for both
+# found and not-found outcomes) and the fact that it can do nothing beyond a
+# recovery-mail send.
+[functions.send-password-reset]
+verify_jwt = false

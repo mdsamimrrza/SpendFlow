@@ -13,9 +13,9 @@ import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import {
   AlertCircle,
-  ArrowDown,
   ArrowLeft,
   ArrowLeftRight,
+  ArrowUpDown,
   Check,
   ChevronDown,
   Wallet,
@@ -26,14 +26,13 @@ import { Button } from '@/components/ui/Button';
 import { CategoryIcon } from '@/components/ui/CategoryIcon';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Text } from '@/components/ui/Text';
-import { showToast } from '@/components/ui/Toast';
+import { showToast, ToastHost } from '@/components/ui/Toast';
 import { countryFlag } from '@/constants/countries';
 import { useAuth } from '@/hooks/useAuth';
-import { useExpenses } from '@/hooks/useExpenses';
+import { useAccountBalances } from '@/hooks/useAccountBalances';
 import { useLanguage } from '@/hooks/useLanguage';
-import { useTransfers } from '@/hooks/useTransfers';
 import { useTheme } from '@/hooks/useTheme';
-import { computeAccountBalances, listBankAccounts, seedDefaultAccounts } from '@/services/bankAccounts';
+import { listBankAccounts, seedDefaultAccounts } from '@/services/bankAccounts';
 import { getRate } from '@/services/exchange';
 import { BankAccount } from '@/types';
 import { getErrorMessage } from '@/utils/errors';
@@ -76,10 +75,11 @@ export default function TransferScreen() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [accountModalOpen, setAccountModalOpen] = useState(false);
 
-  // Live balances need every transaction plus transfers (the same trio the
-  // Accounts screen uses), so the guard reflects real post-transfer availability.
-  const expenses = useExpenses(userId, { fetchAll: true });
-  const { transfers, save } = useTransfers(userId);
+  // One shared source of truth for live balances (the exact hook the Accounts
+  // and expense screens consume), so the available-funds guard can never read
+  // a different balance than the rest of the app.
+  const { balanceById, transfers: transfersHook } = useAccountBalances(userId, accounts);
+  const { save } = transfersHook;
 
   const loadAccounts = useCallback(async () => {
     if (!userId) {
@@ -103,32 +103,14 @@ export default function TransferScreen() {
     void loadAccounts();
   }, [loadAccounts]);
 
-  const [accountsWithLiveBalances, setAccountsWithLiveBalances] = useState<
-    (BankAccount & { live_balance: number })[]
-  >([]);
-
-  useEffect(() => {
-    let cancelled = false;
-    computeAccountBalances(accounts, expenses.items, transfers)
-      .then((next) => {
-        if (!cancelled) setAccountsWithLiveBalances(next);
-      })
-      .catch(() => {
-        // Keep the last successfully computed balances on failure
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [accounts, expenses.items, transfers]);
-
   const liveBalanceOf = useCallback(
     (id: string | null) => {
       if (!id) return 0;
-      const entry = accountsWithLiveBalances.find((a) => a.id === id);
-      if (entry) return entry.live_balance;
+      const entry = balanceById.get(id);
+      if (entry !== undefined) return entry;
       return Number(accounts.find((a) => a.id === id)?.initial_balance ?? 0);
     },
-    [accountsWithLiveBalances, accounts],
+    [balanceById, accounts],
   );
 
   const fromAccount = accounts.find((a) => a.id === fromId) ?? null;
@@ -519,8 +501,17 @@ export default function TransferScreen() {
 
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginVertical: -8 }}>
                 <View style={{ flex: 1, height: 1, backgroundColor: theme.colors.border }} />
-                <View
-                  style={{
+                <Pressable
+                  accessibilityLabel={t('transfer_swap_accounts')}
+                  disabled={!fromId || !toId}
+                  onPress={() => {
+                    const prevFrom = fromId;
+                    const prevTo = toId;
+                    setFromId(prevTo);
+                    setToId(prevFrom);
+                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+                  }}
+                  style={({ pressed }) => ({
                     width: 30,
                     height: 30,
                     borderRadius: 15,
@@ -529,10 +520,11 @@ export default function TransferScreen() {
                     borderColor: `${theme.colors.primary}35`,
                     alignItems: 'center',
                     justifyContent: 'center',
-                  }}
+                    opacity: !fromId || !toId ? 0.4 : pressed ? 0.7 : 1,
+                  })}
                 >
-                  <ArrowDown size={15} color={theme.colors.primary} />
-                </View>
+                  <ArrowUpDown size={15} color={theme.colors.primary} />
+                </Pressable>
                 <View style={{ flex: 1, height: 1, backgroundColor: theme.colors.border }} />
               </View>
 
@@ -829,6 +821,9 @@ export default function TransferScreen() {
         onSaved={loadAccounts}
         accountToEdit={null}
       />
+      {/* Local host: transfer is modal-presented, so the root ToastHost sits
+          in a lower Android window. Topmost-host arbitration is the dedupe. */}
+      <ToastHost />
     </KeyboardAvoidingView>
   );
 }

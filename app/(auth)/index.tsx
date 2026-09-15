@@ -1,7 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import {
   ActivityIndicator,
+  Animated,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -9,24 +11,33 @@ import {
   ScrollView,
   TextInput,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as Haptics from 'expo-haptics';
-import { Eye, EyeOff, KeyRound, Lock, Mail, ShieldCheck, User, X } from 'lucide-react-native';
+import * as AppleAuthentication from 'expo-apple-authentication';
+import { Eye, EyeOff, Fingerprint, KeyRound, Lock, Mail, ScanFace, ShieldCheck, User, X } from 'lucide-react-native';
 import Svg, { Path } from 'react-native-svg';
 import { z } from 'zod';
 import { SpendFlowSealLogo } from '@/components/ui/SpendFlowSealLogo';
+import { showToast } from '@/components/ui/Toast';
 import { Text } from '@/components/ui/Text';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
 import { useAuth } from '@/hooks/useAuth';
 import { useLanguage } from '@/hooks/useLanguage';
+import { useSecurity } from '@/hooks/useSecurity';
 import { useTheme } from '@/hooks/useTheme';
-import { resetPassword, signInWithEmail, signInWithGoogle, signUpWithEmail } from '@/services/auth';
+import { resetPassword, signInWithEmail, signInWithApple, signInWithGoogle, signUpWithEmail } from '@/services/auth';
 
 const schema = z.object({
   email: z.string().email('Please enter a valid email address'),
-  password: z.string().min(6, 'Password must be at least 6 characters'),
+  // The zod rule only enforces presence — one form serves BOTH signin and
+  // signup. The 8-char minimum for NEW accounts is enforced in submit()
+  // (signup branch only), so existing users with 6-7 char passwords can
+  // still sign in; they only meet the bar when changing their password
+  // (profile.tsx) or creating a new account.
+  password: z.string().min(1, 'Please enter your password'),
   displayName: z.string().optional(),
 });
 
@@ -58,7 +69,8 @@ function GoogleIcon({ size = 20 }: { size?: number }) {
 
 export default function AuthScreen() {
   const router = useRouter();
-  const { refreshSession } = useAuth();
+  const { refreshSession, softLocked, softLockRestored, unlockWithRememberedSession } = useAuth();
+  const { isBiometricEnabled, isBiometricSupported, biometricTypeName, authenticate, unlockManually, beginSystemCapture, endSystemCapture } = useSecurity();
   const { language, setLanguage, t } = useLanguage();
   const theme = useTheme();
 
@@ -66,7 +78,21 @@ export default function AuthScreen() {
   const [status, setStatus] = useState<{ text: string; type: 'error' | 'success' | 'info' } | null>(null);
   const [emailLoading, setEmailLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [appleLoading, setAppleLoading] = useState(false);
+  // Sign in with Apple renders only where the device supports it (real iOS
+  // device / configured simulator). Checked once on mount.
+  const [appleAvailable, setAppleAvailable] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  // Biometric quick unlock (soft-locked remembered session)
+  const [biometricBusy, setBiometricBusy] = useState(false);
+  const autoPromptedRef = useRef(false);
+  // Bank-style biometric-first hero: shown for a remembered session, with a
+  // password/Google fallback link that reveals the full form.
+  const [bioFirstDismissed, setBioFirstDismissed] = useState(false);
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const bioFlipAnim = useRef(new Animated.Value(0)).current;
+  // Sign In ↔ Sign Up card flip (same spring the expense/income cards use).
+  const formFlipAnim = useRef(new Animated.Value(1)).current;
 
   // Focus states for responsive active glow border
   const [emailFocused, setEmailFocused] = useState(false);
@@ -78,11 +104,107 @@ export default function AuthScreen() {
   const [resetEmail, setResetEmail] = useState('');
   const [resetStatus, setResetStatus] = useState<{ text: string; type: 'error' | 'success' } | null>(null);
   const [resetLoading, setResetLoading] = useState(false);
+  const [resetCooldown, setResetCooldown] = useState(0);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: { email: '', password: '', displayName: '' },
   });
+
+  useEffect(() => {
+    if (Platform.OS !== 'ios') return;
+    AppleAuthentication.isAvailableAsync()
+      .then(setAppleAvailable)
+      .catch(() => setAppleAvailable(false));
+  }, []);
+
+  // ── Biometric quick unlock ────────────────────────────────────────────────
+  // The scan button shows whenever the user enabled the biometric toggle in
+  // Settings. With a remembered (soft-locked) session it restores it; without
+  // one it explains that quick unlock activates after the first sign-in.
+  const handleBiometricUnlock = useCallback(async () => {
+    if (biometricBusy) return;
+    setBiometricBusy(true);
+    try {
+      const ok = await authenticate();
+      if (ok) {
+        if (softLocked) {
+          unlockWithRememberedSession();
+        } else {
+          showToast({
+            message: `Sign in once to enable ${biometricTypeName} login`,
+            type: 'info',
+          });
+        }
+      }
+    } finally {
+      setBiometricBusy(false);
+    }
+  }, [authenticate, biometricBusy, softLocked, unlockWithRememberedSession]);
+
+  useEffect(() => {
+    // Auto-fire only when a remembered session from a PREVIOUS run is
+    // actually waiting. After a manual "use password" on the app-lock
+    // overlay, softLockRestored is false — the user already declined one
+    // biometric prompt this session, so never stack a second one here.
+    if (!softLocked || !softLockRestored || !isBiometricEnabled || !isBiometricSupported) return;
+    if (autoPromptedRef.current) return;
+    autoPromptedRef.current = true;
+    void handleBiometricUnlock();
+    // isBiometricEnabled flips after the async preference load — re-running
+    // this effect then is what fires the auto-prompt on cold start.
+  }, [handleBiometricUnlock, isBiometricEnabled, isBiometricSupported, softLocked]);
+
+  // ── Screen-size adaptation: comfortable spacing on phones, a wider
+  // column on tablets/desktop windows, tighter padding on short screens.
+  const { width: winWidth, height: winHeight } = useWindowDimensions();
+
+  // ── Dynamic layout ────────────────────────────────────────────────────────
+  const showBiometricUnlock = isBiometricEnabled && isBiometricSupported;
+  // Bank-style: a remembered session from a previous run + biometrics leads
+  // with the scan card. A soft-lock the user just created by tapping "use
+  // password" this same session skips the card — the form IS the answer.
+  const bioFirstView = showBiometricUnlock && softLocked && softLockRestored && !bioFirstDismissed;
+  const contentMaxWidth = winWidth >= 1024 ? 520 : winWidth >= 768 ? 480 : 420;
+
+  // ── Keyboard responsiveness ──────────────────────────────────────────────
+  // Reserve the keyboard's height as bottom scroll padding while it is open,
+  // so the focused input can always rise above it. This works regardless of
+  // the Android windowSoftInputMode (resize AND pan builds).
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  useEffect(() => {
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvt, (e) => {
+      setKeyboardHeight(e?.endCoordinates?.height ?? 0);
+    });
+    const hideSub = Keyboard.addListener(hideEvt, () => setKeyboardHeight(0));
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  // Scanner breathing pulse while the bank-style unlock card is on screen.
+  useEffect(() => {
+    if (!bioFirstView) return;
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1.08, duration: 1200, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 1200, useNativeDriver: true }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [bioFirstView, pulseAnim]);
+
+  // Card flip-in (rotateY 90° → 0°) whenever the biometric hero appears —
+  // the same spring the expense/income flow cards use.
+  useEffect(() => {
+    if (!bioFirstView) return;
+    bioFlipAnim.setValue(0);
+    Animated.spring(bioFlipAnim, { toValue: 1, friction: 8, tension: 70, useNativeDriver: true }).start();
+  }, [bioFirstView, bioFlipAnim]);
 
   useEffect(() => {
     // 1. Parse any error descriptions from OAuth redirects
@@ -146,14 +268,21 @@ export default function AuthScreen() {
     };
   }, []);
 
+  // Submitting credentials IS the identity proof — clear any pending app
+  // lock up-front (no session exists mid-login, so nothing is exposed) so
+  // the biometric overlay never re-prompts right after a password login.
   function switchMode(nextMode: 'signin' | 'signup') {
     void Haptics.selectionAsync().catch(() => undefined);
     setMode(nextMode);
     setStatus(null);
+    // Flip the form card in — mirrors the expense/income card animation.
+    formFlipAnim.setValue(0);
+    Animated.spring(formFlipAnim, { toValue: 1, friction: 8, tension: 70, useNativeDriver: true }).start();
   }
 
   async function submit(values: FormValues) {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
+    unlockManually();
     setEmailLoading(true);
     setStatus(null);
     try {
@@ -161,17 +290,25 @@ export default function AuthScreen() {
       if (mode === 'signin') {
         const res = await signInWithEmail(email, values.password);
         if (res?.session) {
+          unlockManually();
           setStatus(null);
           router.replace('/(tabs)');
           return;
         }
         const s = await refreshSession();
         if (s) {
+          unlockManually();
           setStatus(null);
           router.replace('/(tabs)');
           return;
         }
       } else {
+        // New accounts meet the 8-char bar (existing accounts are exempt —
+        // enforced only on change, in profile.tsx).
+        if (values.password.length < 8) {
+          setStatus({ text: 'Password must be at least 8 characters.', type: 'error' });
+          return;
+        }
         const res = await signUpWithEmail(email, values.password, values.displayName?.trim());
         if (res?.session) {
           setStatus(null);
@@ -195,6 +332,11 @@ export default function AuthScreen() {
 
   async function handleGoogleSignIn() {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+    unlockManually();
+    // The OAuth browser trip backgrounds the app — arm the system-trip
+    // suppression so the return isn't treated as a lock-worthy resume.
+    beginSystemCapture();
+    setTimeout(() => endSystemCapture(), 5000);
     setGoogleLoading(true);
     setStatus(null);
     try {
@@ -223,6 +365,39 @@ export default function AuthScreen() {
     }
   }
 
+  async function handleAppleSignIn() {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+    unlockManually();
+    beginSystemCapture();
+    setTimeout(() => endSystemCapture(), 5000);
+    setAppleLoading(true);
+    setStatus(null);
+    try {
+      const res = await signInWithApple();
+      if (res && 'session' in res && res.session) {
+        setStatus(null);
+        setAppleLoading(false);
+        router.replace('/(tabs)');
+        return;
+      }
+      const s = await refreshSession();
+      if (s) {
+        setStatus(null);
+        setAppleLoading(false);
+        router.replace('/(tabs)');
+        return;
+      }
+
+      setTimeout(() => {
+        setAppleLoading(false);
+      }, 3500);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Apple sign-in was cancelled.';
+      setStatus({ text: msg, type: 'error' });
+      setAppleLoading(false);
+    }
+  }
+
   function handleOpenForgotPassword() {
     const currentEmail = form.getValues('email')?.trim() || '';
     setResetEmail(currentEmail);
@@ -231,6 +406,7 @@ export default function AuthScreen() {
   }
 
   async function handleSendPasswordReset() {
+    if (resetLoading || resetCooldown > 0) return;
     if (!resetEmail.trim() || !resetEmail.includes('@')) {
       setResetStatus({ text: 'Please enter a valid email address.', type: 'error' });
       return;
@@ -239,11 +415,33 @@ export default function AuthScreen() {
     setResetLoading(true);
     setResetStatus(null);
     try {
-      await resetPassword(resetEmail.trim());
-      setResetStatus({
-        text: 'Password reset link sent! Check your email inbox.',
-        type: 'success',
-      });
+      const outcome = await resetPassword(resetEmail.trim());
+      if (outcome === 'sent') {
+        // 60s resend cooldown — mirrors the server-side gate enforced by the
+        // send-password-reset function (which stamps the same window even for
+        // not-found attempts, so the UI timer and the DB never disagree).
+        setResetCooldown(60);
+        setResetStatus({
+          text:
+            'Reset link sent! Open the email on this phone and tap "Choose a new password" — SpendFlow will open and ask you to set a new one.',
+          type: 'success',
+        });
+      } else if (outcome === 'no_account') {
+        setResetStatus({
+          text: 'No SpendFlow account exists for this email. Check the address or create an account first.',
+          type: 'error',
+        });
+      } else if (outcome === 'cooldown') {
+        setResetCooldown(60);
+        setResetStatus({
+          text: 'Too many attempts — please wait 60 seconds and try again.',
+          type: 'error',
+        });
+      } else if (outcome === 'invalid') {
+        setResetStatus({ text: 'Please enter a valid email address.', type: 'error' });
+      } else {
+        setResetStatus({ text: 'Failed to send password reset link. Try again in a moment.', type: 'error' });
+      }
     } catch (error) {
       setResetStatus({
         text: error instanceof Error ? error.message : 'Failed to send password reset link.',
@@ -254,6 +452,12 @@ export default function AuthScreen() {
     }
   }
 
+  useEffect(() => {
+    if (resetCooldown <= 0) return;
+    const t = setTimeout(() => setResetCooldown((s) => s - 1), 1000);
+    return () => clearTimeout(t);
+  }, [resetCooldown]);
+
   function showValidationError() {
     const firstError = Object.values(form.formState.errors)[0]?.message;
     setStatus({
@@ -261,6 +465,17 @@ export default function AuthScreen() {
       type: 'error',
     });
   }
+
+  // Sign In ↔ Sign Up card flip style — the same rotateY spring the
+  // expense/income flow cards use on the dashboard.
+  const formFlipStyle = {
+    opacity: formFlipAnim,
+    transform: [
+      { perspective: 900 },
+      { rotateY: formFlipAnim.interpolate({ inputRange: [0, 1], outputRange: ['90deg', '0deg'] }) },
+      { scale: formFlipAnim.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1] }) },
+    ],
+  };
 
   // Theme-aware styles matching ledger design
   const inputBgColor = theme.isDark ? '#111827' : '#FFFFFF';
@@ -306,18 +521,25 @@ export default function AuthScreen() {
       ) : null}
 
       <ScrollView
+        style={{ flex: 1 }}
         keyboardShouldPersistTaps="handled"
         automaticallyAdjustKeyboardInsets
         contentContainerStyle={{
           flexGrow: 1,
-          justifyContent: 'center',
           alignItems: 'center',
-          paddingHorizontal: 16,
-          paddingVertical: 12,
+          paddingHorizontal: winWidth >= 600 ? 24 : 16,
+          paddingTop: winHeight < 640 ? 36 : 72,
+          paddingBottom:
+            Platform.OS === 'android' && keyboardHeight > 0
+              ? keyboardHeight + 24
+              : winHeight < 640
+              ? 10
+              : 24,
         }}
         showsVerticalScrollIndicator={false}
       >
-        <View style={{ width: '100%', maxWidth: 420, gap: 12 }}>
+        <View style={{ width: '100%', maxWidth: contentMaxWidth, gap: winHeight < 640 ? 12 : 16, flexGrow: 1, justifyContent: bioFirstView ? 'flex-start' : 'flex-start' }}>
+
           {/* Top Bar Controls (Language Pill + Theme Toggle) */}
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
             <View
@@ -374,15 +596,19 @@ export default function AuthScreen() {
             <ThemeToggle />
           </View>
 
-          {/* ── HERO BRAND HEADER: SINGLE GOLDEN 'S' SEAL + TITLE + SUBTITLE ── */}
-          <View style={{ alignItems: 'center', gap: 3, width: '100%', marginTop: 2, marginBottom: 2 }}>
-            <SpendFlowSealLogo size={54} isDark={theme.isDark} />
+          {/* Centering spacers: in biometric-first view the logo + unlock card
+              sit centered below the top bar — the logo biased slightly up. */}
+          {bioFirstView ? <View style={{ flex: 1 }} /> : null}
+
+          {/* ── HERO BRAND HEADER: GOLDEN 'S' SEAL + TITLE + TAGLINE ── */}
+          <View style={{ alignItems: 'center', gap: 6, width: '100%', marginTop: 4, marginBottom: 2 }}>
+            <SpendFlowSealLogo size={76} isDark={theme.isDark} />
 
             <Text
               style={{
-                fontSize: 28,
+                fontSize: 30,
                 fontWeight: '900',
-                letterSpacing: -0.5,
+                letterSpacing: -0.6,
                 color: theme.colors.text,
                 fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',
                 textAlign: 'center',
@@ -394,10 +620,10 @@ export default function AuthScreen() {
 
             <Text
               style={{
-                fontSize: 13,
+                fontSize: 13.5,
                 color: theme.colors.textMuted,
                 fontWeight: '500',
-                letterSpacing: 0.2,
+                letterSpacing: 0.3,
                 textAlign: 'center',
               }}
             >
@@ -405,16 +631,143 @@ export default function AuthScreen() {
             </Text>
           </View>
 
+          {/* ── BANK-STYLE BIOMETRIC FIRST UNLOCK (remembered session) ──
+              Like banking apps: the scan IS the login. Shown only when the
+              user enabled the biometric toggle AND a session is remembered
+              on this device — a first-time visitor never sees it. */}
+          {bioFirstView ? (
+            <Animated.View
+              style={[
+                {
+                  width: '100%',
+                  backgroundColor: cardBgColor,
+                  borderRadius: 24,
+                  borderWidth: 1.2,
+                  borderColor: cardBorderColor,
+                  paddingVertical: 40,
+                  paddingHorizontal: 20,
+                  alignItems: 'center',
+                  gap: 16,
+                  shadowColor: '#000000',
+                  shadowOffset: { width: 0, height: 4 },
+                  shadowOpacity: theme.isDark ? 0.35 : 0.06,
+                  shadowRadius: 12,
+                  elevation: 3,
+                },
+                {
+                  opacity: bioFlipAnim,
+                  transform: [
+                    { perspective: 900 },
+                    { rotateY: bioFlipAnim.interpolate({ inputRange: [0, 1], outputRange: ['90deg', '0deg'] }) },
+                    { scale: bioFlipAnim.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1] }) },
+                  ],
+                },
+              ]}
+            >
+              <View style={{ alignItems: 'center', gap: 4 }}>
+                <Text style={{ fontSize: 18, fontWeight: '900', letterSpacing: -0.3, color: theme.colors.text }}>
+                  Unlock SpendFlow
+                </Text>
+                <Text style={{ fontSize: 12.5, color: theme.colors.textMuted, fontWeight: '500', textAlign: 'center' }}>
+                  Use {biometricTypeName} for quick, secure access — no password needed.
+                </Text>
+              </View>
+
+              <Animated.View style={{ transform: [{ scale: pulseAnim }], marginVertical: 4 }}>
+                <View
+                  style={{
+                    width: 120,
+                    height: 120,
+                    borderRadius: 60,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    borderWidth: 1.5,
+                    borderColor: theme.isDark ? 'rgba(129,140,248,0.35)' : 'rgba(15,92,77,0.25)',
+                    borderStyle: 'dashed',
+                  }}
+                >
+                <Pressable
+                  onPress={() => void handleBiometricUnlock()}
+                  disabled={biometricBusy}
+                  style={({ pressed }) => ({
+                    width: 96,
+                    height: 96,
+                    borderRadius: 48,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    backgroundColor: theme.isDark
+                      ? (pressed ? '#1E293B' : '#161B22')
+                      : (pressed ? theme.colors.primaryStrong : theme.colors.primary),
+                    borderWidth: 2,
+                    borderColor: theme.isDark ? theme.colors.primary : '#A8791F',
+                    shadowColor: theme.colors.primary,
+                    shadowOffset: { width: 0, height: 6 },
+                    shadowOpacity: 0.3,
+                    shadowRadius: 12,
+                    elevation: 8,
+                    opacity: biometricBusy ? 0.7 : 1,
+                  })}
+                >
+                  {biometricBusy ? (
+                    <ActivityIndicator color={theme.isDark ? theme.colors.primary : '#FFFFFF'} />
+                  ) : biometricTypeName.toLowerCase().includes('face') ? (
+                    <ScanFace size={44} color={theme.isDark ? theme.colors.primary : '#FFFFFF'} strokeWidth={2.2} />
+                  ) : (
+                    <Fingerprint size={44} color={theme.isDark ? theme.colors.primary : '#FFFFFF'} strokeWidth={2.2} />
+                  )}
+                </Pressable>
+                </View>
+              </Animated.View>
+
+              <Text style={{ fontSize: 13, fontWeight: '700', color: theme.colors.primary }}>
+                {biometricBusy ? t('security_unlock_btn') : biometricTypeName}
+              </Text>
+
+              <Pressable
+                onPress={() => setBioFirstDismissed(true)}
+                hitSlop={10}
+                style={({ pressed }) => ({
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 8,
+                  marginTop: 6,
+                  paddingVertical: 12,
+                  paddingHorizontal: 22,
+                  borderRadius: theme.radius.full,
+                  backgroundColor: theme.isDark ? 'rgba(129,140,248,0.16)' : 'rgba(15,92,77,0.10)',
+                  borderWidth: 1.5,
+                  borderColor: theme.colors.primary,
+                  opacity: pressed ? 0.8 : 1,
+                })}
+              >
+                <KeyRound size={14} color={theme.colors.primary} />
+                <Text
+                  style={{
+                    fontSize: 13,
+                    color: theme.colors.primary,
+                    fontWeight: '800',
+                    letterSpacing: 0.2,
+                  }}
+                >
+                  {t('auth_quick_login_fallback')}
+                </Text>
+              </Pressable>
+            </Animated.View>
+          ) : null}
+
+          {bioFirstView ? <View style={{ flex: 1.6 }} /> : null}
+
           {/* ── AUTH MAIN FORM CARD ── */}
+          <Animated.View style={bioFirstView ? { display: 'none' } : ([{ width: '100%' }, formFlipStyle] as any)}>
           <View
             style={{
               width: '100%',
               backgroundColor: cardBgColor,
-              borderRadius: 20,
+              borderRadius: 24,
               borderWidth: 1.2,
               borderColor: cardBorderColor,
-              padding: 16,
-              gap: 12,
+              padding: 20,
+              gap: 14,
               shadowColor: '#000000',
               shadowOffset: { width: 0, height: 4 },
               shadowOpacity: theme.isDark ? 0.35 : 0.06,
@@ -443,8 +796,8 @@ export default function AuthScreen() {
                     <View
                       style={{
                         width: '100%',
-                        minHeight: 50,
-                        borderRadius: 12,
+                        minHeight: 52,
+                        borderRadius: 14,
                         backgroundColor: inputBgColor,
                         borderWidth: 1.5,
                         borderColor: nameFocused ? focusBorderColor : inputBorderNormal,
@@ -552,7 +905,7 @@ export default function AuthScreen() {
                   textTransform: 'uppercase',
                 }}
               >
-                PASSWORD
+                PASSWORD{mode === 'signup' ? ' (MIN 8 CHARACTERS)' : ''}
               </Text>
               <Controller
                 control={form.control}
@@ -674,46 +1027,91 @@ export default function AuthScreen() {
               </View>
             ) : null}
 
-            {/* Primary Submit Button (Sign in / Create account) */}
-            <Pressable
-              onPress={form.handleSubmit(submit, showValidationError)}
-              disabled={emailLoading || googleLoading}
-              style={({ pressed }) => ({
-                width: '100%',
-                height: 46,
-                borderRadius: 12,
-                backgroundColor: primaryButtonColor,
-                alignItems: 'center',
-                justifyContent: 'center',
-                marginTop: 2,
-                opacity: emailLoading ? 0.8 : pressed ? 0.9 : 1,
-                shadowColor: primaryButtonColor,
-                shadowOffset: { width: 0, height: 3 },
-                shadowOpacity: 0.22,
-                shadowRadius: 6,
-                elevation: 3,
-              })}
-            >
-              {emailLoading ? (
-                <ActivityIndicator color="#FFFFFF" />
-              ) : (
-                <Text style={{ fontSize: 15, fontWeight: '700', color: '#FFFFFF' }}>
-                  {mode === 'signin' ? 'Sign in' : 'Create account'}
-                </Text>
-              )}
-            </Pressable>
-          </View>
+            {/* Primary Submit + Biometric row: the CTA takes ~75-80% of the
+                card width; the circular scanner sits beside it. Without the
+                biometric toggle the button is simply full-width. */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 2 }}>
+              <Pressable
+                onPress={form.handleSubmit(submit, showValidationError)}
+                disabled={emailLoading || googleLoading}
+                style={({ pressed }) => ({
+                  flex: 1,
+                  height: 52,
+                  borderRadius: 14,
+                  backgroundColor: primaryButtonColor,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  opacity: emailLoading ? 0.8 : pressed ? 0.9 : 1,
+                  shadowColor: primaryButtonColor,
+                  shadowOffset: { width: 0, height: 3 },
+                  shadowOpacity: 0.22,
+                  shadowRadius: 6,
+                  elevation: 3,
+                })}
+              >
+                {emailLoading ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={{ fontSize: 16, fontWeight: '800', color: '#FFFFFF', letterSpacing: 0.2 }}>
+                    {mode === 'signin' ? 'Sign In' : 'Create Account'}
+                  </Text>
+                )}
+              </Pressable>
 
-          {/* ── DIVIDER: OR CONTINUE WITH ── */}
-          <View
-            style={{
-              width: '100%',
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 12,
-              marginVertical: 2,
-            }}
-          >
+              {/* Biometric scanner on SIGN IN only — and only when a session is
+                  actually remembered (soft-locked). Without one, a successful
+                  scan could only ever answer "sign in first", which is exactly
+                  the confusing bounce users hit after their session expired.
+                  Meaningless during first-time account creation anyway. */}
+              {showBiometricUnlock && mode === 'signin' && softLocked ? (
+                <Pressable
+                  onPress={() => void handleBiometricUnlock()}
+                  disabled={biometricBusy}
+                  style={({ pressed }) => ({
+                    width: 52,
+                    height: 52,
+                    borderRadius: 26,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    backgroundColor: theme.isDark
+                      ? (pressed ? '#1E293B' : '#161B22')
+                      : (pressed ? theme.colors.primaryStrong : theme.colors.primary),
+                    borderWidth: 2,
+                    borderColor: theme.isDark ? theme.colors.primary : '#A8791F',
+                    shadowColor: theme.colors.primary,
+                    shadowOffset: { width: 0, height: 4 },
+                    shadowOpacity: 0.28,
+                    shadowRadius: 8,
+                    elevation: 6,
+                    opacity: biometricBusy ? 0.7 : 1,
+                  })}
+                >
+                  {biometricBusy ? (
+                    <ActivityIndicator color={theme.isDark ? theme.colors.primary : '#FFFFFF'} />
+                  ) : biometricTypeName.toLowerCase().includes('face') ? (
+                    <ScanFace size={24} color={theme.isDark ? theme.colors.primary : '#FFFFFF'} strokeWidth={2.2} />
+                  ) : (
+                    <Fingerprint size={24} color={theme.isDark ? theme.colors.primary : '#FFFFFF'} strokeWidth={2.2} />
+                  )}
+                </Pressable>
+              ) : null}
+            </View>
+          </View>
+          </Animated.View>
+
+          {/* ── SOCIAL SIGN-IN GROUP ── */}
+          {!bioFirstView && (
+          <View style={{ gap: 12 }}>
+            {/* ── DIVIDER: OR CONTINUE WITH ── */}
+            <View
+              style={{
+                width: '100%',
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 12,
+                marginVertical: 2,
+              }}
+            >
             <View style={{ flex: 1, height: 1, backgroundColor: cardBorderColor }} />
             <Text
               style={{
@@ -732,11 +1130,11 @@ export default function AuthScreen() {
           {/* ── GOOGLE SIGN IN BUTTON ── */}
           <Pressable
             onPress={handleGoogleSignIn}
-            disabled={emailLoading || googleLoading}
+            disabled={emailLoading || googleLoading || appleLoading}
             style={({ pressed }) => ({
               width: '100%',
-              height: 46,
-              borderRadius: 12,
+              height: 52,
+              borderRadius: 14,
               backgroundColor: cardBgColor,
               borderWidth: 1.2,
               borderColor: cardBorderColor,
@@ -757,41 +1155,69 @@ export default function AuthScreen() {
             ) : (
               <>
                 <GoogleIcon size={19} />
-                <Text style={{ fontSize: 15, fontWeight: '600', color: textColor }}>
-                  Google
+                <Text style={{ fontSize: 15, fontWeight: '700', color: textColor }}>
+                  Continue with Google
                 </Text>
               </>
             )}
           </Pressable>
 
-          {/* ── BOTTOM FOOTER: TOGGLE SIGN IN / SIGN UP ── */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, marginTop: 4, width: '100%' }}>
-            <Text style={{ fontSize: 14, color: theme.colors.textMuted }}>
-              {mode === 'signin' ? 'New here?' : 'Already have an account?'}
-            </Text>
-            <Pressable
-              onPress={() => switchMode(mode === 'signin' ? 'signup' : 'signin')}
-              hitSlop={8}
-            >
-              <Text
+          {/* ── APPLE SIGN IN BUTTON (iOS ONLY — App Store Guideline 4.8) ── */}
+          {Platform.OS === 'ios' && appleAvailable && (
+            <View pointerEvents={appleLoading ? 'none' : 'auto'} style={{ width: '100%' }}>
+              <AppleAuthentication.AppleAuthenticationButton
+                buttonType={AppleAuthentication.AppleAuthenticationButtonType.CONTINUE}
+                buttonStyle={
+                  theme.isDark
+                    ? AppleAuthentication.AppleAuthenticationButtonStyle.WHITE
+                    : AppleAuthentication.AppleAuthenticationButtonStyle.BLACK
+                }
+                cornerRadius={12}
                 style={{
-                  fontSize: 14,
-                  fontWeight: '800',
-                  color: primaryButtonColor,
+                  width: '100%',
+                  height: 46,
+                  opacity: appleLoading ? 0.75 : 1,
                 }}
-              >
-                {mode === 'signin' ? 'Create an account' : 'Sign in'}
-              </Text>
-            </Pressable>
+                onPress={handleAppleSignIn}
+              />
+            </View>
+          )}
           </View>
+          )}
 
-          {/* Cloud Security Indicator */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, marginTop: 6, width: '100%' }}>
-            <ShieldCheck size={13} color={theme.colors.success} />
-            <Text variant="caption" muted style={{ fontSize: 11 }}>
-              End-to-End Encrypted Cloud Storage
-            </Text>
+          {/* ── FOOTER GROUP: MODE TOGGLE + SECURITY NOTE ── */}
+          {!bioFirstView && (
+          <View style={{ gap: 12 }}>
+            {/* ── BOTTOM FOOTER: TOGGLE SIGN IN / SIGN UP ── */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, width: '100%' }}>
+              <Text style={{ fontSize: 14, color: theme.colors.textMuted }}>
+                {mode === 'signin' ? 'New here?' : 'Already have an account?'}
+              </Text>
+              <Pressable
+                onPress={() => switchMode(mode === 'signin' ? 'signup' : 'signin')}
+                hitSlop={8}
+              >
+                <Text
+                  style={{
+                    fontSize: 14,
+                    fontWeight: '800',
+                    color: primaryButtonColor,
+                  }}
+                >
+                  {mode === 'signin' ? 'Create an account' : 'Sign in'}
+                </Text>
+              </Pressable>
+            </View>
+
+            {/* Cloud Security Indicator */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, marginTop: 2, width: '100%' }}>
+              <ShieldCheck size={13} color={theme.colors.success} />
+              <Text variant="caption" muted style={{ fontSize: 11 }}>
+                End-to-End Encrypted Cloud Storage
+              </Text>
+            </View>
           </View>
+          )}
         </View>
       </ScrollView>
 
@@ -873,7 +1299,8 @@ export default function AuthScreen() {
             </View>
 
             <Text muted style={{ fontSize: 13, lineHeight: 18 }}>
-              Enter your account email address below to receive password recovery instructions.
+              Enter your account email below. The reset link opens SpendFlow directly and asks you
+              to set a new password.
             </Text>
 
             {/* Email Input */}
@@ -958,38 +1385,51 @@ export default function AuthScreen() {
             ) : null}
 
             {/* Actions */}
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 4 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 4 }}>
               <Pressable
                 onPress={() => setForgotModalOpen(false)}
                 disabled={resetLoading}
                 style={{
                   flex: 1,
-                  paddingVertical: 12,
+                  height: 46,
                   borderRadius: 12,
                   backgroundColor: theme.colors.surfaceElevated,
                   borderWidth: 1,
                   borderColor: theme.colors.border,
                   alignItems: 'center',
+                  justifyContent: 'center',
                 }}
               >
-                <Text style={{ fontWeight: '700', color: theme.colors.text }}>Cancel</Text>
+                <Text
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.7}
+                  style={{ fontWeight: '700', color: theme.colors.text }}
+                >
+                  Cancel
+                </Text>
               </Pressable>
 
               <Pressable
                 onPress={handleSendPasswordReset}
-                disabled={resetLoading || !resetEmail.trim()}
+                disabled={resetLoading || !resetEmail.trim() || resetCooldown > 0}
                 style={{
                   flex: 1.4,
-                  paddingVertical: 12,
+                  height: 46,
                   borderRadius: 12,
                   backgroundColor: primaryButtonColor,
                   alignItems: 'center',
                   justifyContent: 'center',
-                  opacity: resetLoading || !resetEmail.trim() ? 0.6 : 1,
+                  opacity: resetLoading || !resetEmail.trim() || resetCooldown > 0 ? 0.6 : 1,
                 }}
               >
-                <Text style={{ fontWeight: '800', color: '#FFFFFF' }}>
-                  {resetLoading ? 'Sending...' : 'Send Link'}
+                <Text
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.7}
+                  style={{ fontWeight: '800', color: '#FFFFFF' }}
+                >
+                  {resetLoading ? 'Sending...' : resetCooldown > 0 ? `Resend in ${resetCooldown}s` : 'Send Link'}
                 </Text>
               </Pressable>
             </View>

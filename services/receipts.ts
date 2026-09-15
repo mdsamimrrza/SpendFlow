@@ -5,8 +5,10 @@ import { supabase } from '@/utils/supabase';
 export const RECEIPT_BUCKET = 'receipts';
 
 // Must stay in sync with the bucket's allowed_mime_types / file_size_limit
-// configured in supabase/migrations/20260908000000_security_hardening.sql.
-const MAX_RECEIPT_BYTES = 10 * 1024 * 1024; // 10 MiB
+// configured in supabase/migrations (4 MiB — captures are downscaled to a
+// 1600px long edge at quality 0.65 before upload, so a receipt is typically
+// 150-350 KB; the cap is the safety net for edge cases).
+const MAX_RECEIPT_BYTES = 4 * 1024 * 1024; // 4 MiB
 
 const ALLOWED_MIME_TYPES = new Set([
   'image/jpeg',
@@ -166,7 +168,7 @@ export async function uploadReceipt(
   if (base64Data) {
     const encoded = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
     if (Math.floor(encoded.length * 0.75) > MAX_RECEIPT_BYTES) {
-      throw new Error('Receipt image is too large (max 10 MB).');
+      throw new Error('Receipt image is too large (max 4 MB).');
     }
   }
 
@@ -184,7 +186,7 @@ export async function uploadReceipt(
     const response = await fetch(uri);
     fileData = await response.blob();
     if (fileData instanceof Blob && fileData.size > MAX_RECEIPT_BYTES) {
-      throw new Error('Receipt image is too large (max 10 MB).');
+      throw new Error('Receipt image is too large (max 4 MB).');
     }
   } else {
     // 3. Android / iOS: Read local file URI using expo-file-system
@@ -192,7 +194,7 @@ export async function uploadReceipt(
       encoding: 'base64',
     });
     if (Math.floor(base64.length * 0.75) > MAX_RECEIPT_BYTES) {
-      throw new Error('Receipt image is too large (max 10 MB).');
+      throw new Error('Receipt image is too large (max 4 MB).');
     }
     fileData = decodeBase64ToArrayBuffer(base64);
   }

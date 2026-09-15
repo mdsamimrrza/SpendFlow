@@ -96,6 +96,11 @@ EXPO_PUBLIC_SUPABASE_KEY=your-supabase-key
 EXPO_PUBLIC_EXCHANGE_RATE_API_KEY=your-exchange-rate-key
 ```
 
+> **Auth/OTP email sender (custom SMTP):** all user emails are sent by
+> Supabase Auth itself — configure Gmail SMTP once in the Dashboard per
+> [docs/custom-smtp-email.md](docs/custom-smtp-email.md). SMTP credentials
+> belong in `.env.maintenance`, never in the client `.env`.
+
 ---
 
 ## 5. Running in Development Mode

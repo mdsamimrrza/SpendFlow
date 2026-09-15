@@ -28,7 +28,7 @@ import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
 import { useTheme } from '@/hooks/useTheme';
 import { Category, Expense } from '@/types';
-import { convertCurrency, currentMonthRange, formatMoney, formatTime12, getCategoryBudget, getCycleMeta } from '@/utils/format';
+import { convertCurrency, currentMonthRange, formatMoney, formatTime12, getCategoryBudget, getCycleMeta, getNormalizedCycle } from '@/utils/format';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -56,12 +56,11 @@ export function BudgetProgress({
   const [selectedDrawerCatId, setSelectedDrawerCatId] = useState<string | null>(null);
 
   const currency = targetCurrency ?? profile?.preferred_currency ?? 'NPR';
-  const rateResolver = useRateResolver(expenses, currency);
+  const { resolver: rateResolver } = useRateResolver(expenses, currency);
 
-  // Cycle-aware reporting month window (supports custom cycle_start_day 2–31 and cycle_end_day)
-  const cycleStartDay = Math.min(Math.max(Number(profile?.cycle_start_day) || 1, 1), 31);
-  const cycleEndDayRaw = Number(profile?.cycle_end_day);
-  const cycleEndDay = cycleEndDayRaw >= 1 && cycleEndDayRaw <= 31 ? cycleEndDayRaw : null;
+  // Cycle-aware reporting month window (shared normalizer: start clamped to
+  // 1–31, invalid end day → null — see utils/format.ts)
+  const { startDay: cycleStartDay, endDay: cycleEndDay } = getNormalizedCycle(profile);
   const cycleMeta = getCycleMeta(cycleStartDay, cycleEndDay);
   const cycleRange = currentMonthRange(cycleStartDay, cycleEndDay);
 
@@ -70,7 +69,7 @@ export function BudgetProgress({
   );
 
   const totalAllocated = budgetedCategories.reduce(
-    (sum, c) => sum + getCategoryBudget(c.budget_monthly, profile, currency, rates),
+    (sum, c) => sum + getCategoryBudget(c.budget_monthly, profile, currency, rateResolver),
     0,
   );
 
@@ -188,7 +187,7 @@ export function BudgetProgress({
         <View style={{ gap: 10 }}>
           {visibleCategories.map((category) => {
             const rawCap = Number(category.budget_monthly);
-            const budget = getCategoryBudget(rawCap, profile, currency, rates);
+            const budget = getCategoryBudget(rawCap, profile, currency, rateResolver);
             const categoryExpenses = expenses.filter(
               (e) => e.category_id === category.id && e.date >= cycleRange.from && e.date <= cycleRange.to,
             );
@@ -207,7 +206,7 @@ export function BudgetProgress({
 
             const ratio = rawCap > 0 ? spentInBudgetCcy / rawCap : 0;
             const pct = Math.round(ratio * 100);
-            const isOver = budgetBaseUsd > 0 && spentBaseUsd > budgetBaseUsd;
+            const isOver = rawCap > 0 && spentInBudgetCcy > rawCap;
             const isWarning = pct >= 80 && !isOver;
 
             let statusColor = category.color || theme.colors.primary;

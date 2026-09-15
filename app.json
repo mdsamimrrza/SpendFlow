@@ -11,7 +11,7 @@
 
     "ios": {
       "bundleIdentifier": "com.samimrrza.spendflow",
-      "supportsTablet": true
+      "supportsTablet": false
     },
 
     "android": {
@@ -37,6 +37,27 @@
     "plugins": [
       "expo-router",
       [
+        "expo-image-picker",
+        {
+          "cameraPermission": "Allow SpendFlow to photograph receipts so amounts and details can be filled in automatically.",
+          "photoLibraryPermission": "Allow SpendFlow to attach receipt photos from your library."
+        }
+      ],
+      "expo-apple-authentication",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#F2EFE9",
+          "dark": {
+            "image": "./assets/splash-icon-dark.png",
+            "backgroundColor": "#0B0F19"
+          }
+        }
+      ],
+      [
         "expo-notifications",
         {
           "icon": "./assets/android-icon-monochrome.png",
@@ -52,7 +73,8 @@
       "expo-secure-store",
       "expo-sharing",
       "expo-status-bar",
-      "expo-web-browser"
+      "expo-web-browser",
+      "./plugins/with-android-build-config"
     ],
 
     "experiments": {

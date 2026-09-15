@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Animated, Easing, Modal, Pressable, View } from 'react-native';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { Animated, Easing, Modal, Platform, Pressable, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AlertCircle, CheckCircle2, Info } from 'lucide-react-native';
 import { useTheme } from '@/hooks/useTheme';
@@ -26,8 +26,40 @@ type ToastListener = (toast: ToastData) => void;
 const toastListeners = new Set<ToastListener>();
 let nextToastId = 1;
 
+// ── Multi-host arbitration ───────────────────────────────────────────────────
+// Screens presented with presentation:'modal' (Export, Transfer, Profit & Loss,
+// expense/add) live in their own native window on Android, which renders ABOVE
+// the app-root ToastHost — a toast fired from there would be invisible. Those
+// screens therefore mount their own <ToastHost />; only the most recently
+// mounted (topmost) host actually renders, so a toast never shows twice and
+// the root host takes over again once the modal screen unmounts.
+const hostStack: number[] = [];
+const hostRefreshers = new Set<() => void>();
+let nextHostId = 1;
+
+function useTopmostHost(): boolean {
+  const idRef = useRef<number>(0);
+  if (!idRef.current) idRef.current = nextHostId++;
+  const [, refresh] = useReducer((x: number) => x + 1, 0);
+
+  useEffect(() => {
+    hostStack.push(idRef.current);
+    hostRefreshers.add(refresh);
+    // Let every host (this one included) re-evaluate who is topmost.
+    hostRefreshers.forEach((r) => r());
+    return () => {
+      hostRefreshers.delete(refresh);
+      const idx = hostStack.indexOf(idRef.current);
+      if (idx >= 0) hostStack.splice(idx, 1);
+      hostRefreshers.forEach((r) => r());
+    };
+  }, [refresh]);
+
+  return hostStack[hostStack.length - 1] === idRef.current;
+}
+
 /**
- * Fire-and-forget toast rendered top-right by the single <ToastHost /> mounted
+ * Fire-and-forget toast rendered top-center by the single <ToastHost /> mounted
  * at the app root. Safe to call from anywhere — screens, handlers, services.
  * The host renders through a transparent Modal that only mounts while toasts
  * are visible, so toasts also appear above screens presented as modals and
@@ -46,8 +78,8 @@ const TOAST_ICONS: Record<ToastType, typeof CheckCircle2> = {
   info: Info,
 };
 
-/** Slide-in distance from the right edge (px). */
-const ENTER_OFFSET = 140;
+/** Slide-in distance from above (px). */
+const ENTER_OFFSET = 60;
 
 function ToastCard({
   toast,
@@ -62,7 +94,7 @@ function ToastCard({
 }) {
   const theme = useTheme();
   const opacity = useRef(new Animated.Value(0)).current;
-  const translateX = useRef(new Animated.Value(ENTER_OFFSET)).current;
+  const translateY = useRef(new Animated.Value(-ENTER_OFFSET)).current;
 
   const accent =
     toast.type === 'success'
@@ -72,11 +104,11 @@ function ToastCard({
         : theme.colors.primary;
   const Icon = TOAST_ICONS[toast.type];
 
-  // Slide in from the right edge, then start the auto-dismiss countdown.
+  // Drop in from the top edge, then start the auto-dismiss countdown.
   useEffect(() => {
     Animated.parallel([
       Animated.timing(opacity, { toValue: 1, duration: 220, useNativeDriver: true }),
-      Animated.timing(translateX, {
+      Animated.timing(translateY, {
         toValue: 0,
         duration: 340,
         easing: Easing.out(Easing.cubic),
@@ -86,15 +118,15 @@ function ToastCard({
 
     const timer = setTimeout(() => onRequestDismiss(toast.id), toast.duration);
     return () => clearTimeout(timer);
-  }, [toast, onRequestDismiss, opacity, translateX]);
+  }, [toast, onRequestDismiss, opacity, translateY]);
 
-  // Slide back out and only then report removal so the card unmounts smoothly.
+  // Slide back up and only then report removal so the card unmounts smoothly.
   useEffect(() => {
     if (!exiting) return;
     Animated.parallel([
       Animated.timing(opacity, { toValue: 0, duration: 180, useNativeDriver: true }),
-      Animated.timing(translateX, {
-        toValue: ENTER_OFFSET,
+      Animated.timing(translateY, {
+        toValue: -ENTER_OFFSET,
         duration: 260,
         easing: Easing.in(Easing.cubic),
         useNativeDriver: true,
@@ -102,10 +134,10 @@ function ToastCard({
     ]).start(({ finished }) => {
       if (finished) onDismissed(toast.id);
     });
-  }, [exiting, toast, onDismissed, opacity, translateX]);
+  }, [exiting, toast, onDismissed, opacity, translateY]);
 
   return (
-    <Animated.View style={{ opacity, transform: [{ translateX }] }}>
+    <Animated.View style={{ opacity, transform: [{ translateY }] }}>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={toast.message}
@@ -118,12 +150,13 @@ function ToastCard({
           paddingLeft: 12,
           paddingRight: 18,
           borderRadius: 18,
-          backgroundColor: theme.colors.surface,
+          // Solid accent fill — impossible to miss at a glance.
+          backgroundColor: accent,
           borderWidth: 1,
-          borderColor: theme.colors.border,
+          borderColor: 'rgba(255,255,255,0.25)',
           shadowColor: '#000',
           shadowOffset: { width: 0, height: 8 },
-          shadowOpacity: 0.22,
+          shadowOpacity: 0.28,
           shadowRadius: 16,
           elevation: 14,
         }}
@@ -135,10 +168,10 @@ function ToastCard({
             borderRadius: 16,
             alignItems: 'center',
             justifyContent: 'center',
-            backgroundColor: `${accent}${theme.isDark ? '2E' : '1A'}`,
+            backgroundColor: 'rgba(255,255,255,0.24)',
           }}
         >
-          <Icon size={17} color={accent} strokeWidth={2.4} />
+          <Icon size={17} color="#FFFFFF" strokeWidth={2.4} />
         </View>
         <Text
           numberOfLines={3}
@@ -149,7 +182,7 @@ function ToastCard({
             fontSize: 12.5,
             lineHeight: 17,
             fontWeight: '800',
-            color: theme.colors.text,
+            color: '#FFFFFF',
             includeFontPadding: false,
           }}
         >
@@ -164,9 +197,16 @@ export function ToastHost() {
   const insets = useSafeAreaInsets();
   const [toasts, setToasts] = useState<ToastData[]>([]);
   const [exitingIds, setExitingIds] = useState<Set<number>>(() => new Set());
+  const isTop = useTopmostHost();
+  const isTopRef = useRef(isTop);
+  isTopRef.current = isTop;
 
   useEffect(() => {
     const listener: ToastListener = (toast) => {
+      // Only the topmost visible host renders — a background modal host or
+      // the root host under an open modal screen must stay silent so the
+      // toast never paints twice.
+      if (!isTopRef.current) return;
       // Cap concurrent toasts so a rapid burst never stacks off-screen.
       setToasts((current) => {
         const next = [...current, toast];
@@ -178,6 +218,13 @@ export function ToastHost() {
       toastListeners.delete(listener);
     };
   }, []);
+
+  // Losing the topmost seat (a modal screen mounted its own host) means any
+  // toast still queued here would double-render with the new host's on iOS —
+  // hand the queue over by clearing it.
+  useEffect(() => {
+    if (!isTop) setToasts([]);
+  }, [isTop]);
 
   const beginExit = useCallback((id: number) => {
     setExitingIds((current) => {
@@ -198,42 +245,53 @@ export function ToastHost() {
     });
   }, []);
 
-  if (toasts.length === 0) return null;
+  if (!isTop || toasts.length === 0) return null;
 
-  return (
-    <Modal
-      transparent
-      visible
-      hardwareAccelerated
-      statusBarTranslucent
+  // The toast stack. On Android it renders directly in the view hierarchy —
+  // a transparent Modal there swallows ALL touches behind it on the New
+  // Architecture (pointerEvents="box-none" is not honored inside Modals),
+  // freezing the screen while a toast is visible. iOS keeps the Modal so
+  // toasts still float above native modals.
+  const toastStack = (
+    <View
       pointerEvents="box-none"
-      onRequestClose={() => toasts.forEach((t) => beginExit(t.id))}
+      style={{
+        position: 'absolute',
+        top: insets.top + 30,
+        left: 24,
+        right: 24,
+        gap: 8,
+        alignItems: 'center',
+      }}
     >
-      <View pointerEvents="box-none" style={{ flex: 1 }}>
-        <View
-          pointerEvents="box-none"
-          style={{
-            position: 'absolute',
-            top: insets.top + 12,
-            right: 14,
-            // Bounded width so long messages wrap to 3 lines instead of
-            // stretching the stack to the screen edge.
-            left: 84,
-            gap: 8,
-            alignItems: 'flex-end',
-          }}
-        >
-          {toasts.map((toast) => (
-            <ToastCard
-              key={toast.id}
-              toast={toast}
-              exiting={exitingIds.has(toast.id)}
-              onRequestDismiss={beginExit}
-              onDismissed={finishExit}
-            />
-          ))}
-        </View>
-      </View>
-    </Modal>
+      {toasts.map((toast) => (
+        <ToastCard
+          key={toast.id}
+          toast={toast}
+          exiting={exitingIds.has(toast.id)}
+          onRequestDismiss={beginExit}
+          onDismissed={finishExit}
+        />
+      ))}
+    </View>
   );
+
+  if (Platform.OS === 'ios') {
+    return (
+      <Modal
+        transparent
+        visible
+        hardwareAccelerated
+        statusBarTranslucent
+        pointerEvents="box-none"
+        onRequestClose={() => toasts.forEach((t) => beginExit(t.id))}
+      >
+        <View pointerEvents="box-none" style={{ flex: 1 }}>
+          {toastStack}
+        </View>
+      </Modal>
+    );
+  }
+
+  return toastStack;
 }

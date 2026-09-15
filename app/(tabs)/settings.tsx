@@ -28,7 +28,6 @@ import {
   KeyRound,
   Landmark,
   LayoutGrid,
-  Lock,
   LogOut,
   Moon,
   Palette,
@@ -45,7 +44,6 @@ import {
   X,
 } from 'lucide-react-native';
 import { Avatar } from '@/components/ui/Avatar';
-import { DeleteAccountModal } from '@/components/account/DeleteAccountModal';
 import { CategoryBudgetFormModal } from '@/components/expense/CategoryBudgetFormModal';
 import { PrivacyEyeButton } from '@/components/ui/PrivacyEyeButton';
 import { Text } from '@/components/ui/Text';
@@ -64,7 +62,7 @@ import { resetBudgetAlertHistory } from '@/services/notifications';
 import { Category, ThemePreference } from '@/types';
 
 export default function SettingsScreen() {
-  const { profile, refreshProfile, patchProfile } = useAuth();
+  const { profile, refreshProfile, patchProfile, lockToLogin } = useAuth();
   const { language, setLanguage, t } = useLanguage();
   const { isPrivacyMode } = usePrivacy();
   const { isBiometricEnabled, isBiometricSupported, biometricTypeName, toggleBiometric } = useSecurity();
@@ -82,7 +80,6 @@ export default function SettingsScreen() {
   const [securityModalOpen, setSecurityModalOpen] = useState(false);
   const [notificationsModalOpen, setNotificationsModalOpen] = useState(false);
   const [showCategoryBudgets, setShowCategoryBudgets] = useState(false);
-  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [signOutModalOpen, setSignOutModalOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
 
@@ -131,6 +128,19 @@ export default function SettingsScreen() {
 
   function handleSignOut() {
     setSignOutModalOpen(true);
+  }
+
+  /** Sign out (soft): drop to the login page but keep the session remembered
+   *  on this device — biometric (if enabled) or credentials restore it. */
+  async function handleSoftSignOut() {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
+    try {
+      await lockToLogin();
+      setSignOutModalOpen(false);
+      router.replace('/(auth)' as any);
+    } catch {
+      Alert.alert('Error', 'Failed to sign out');
+    }
   }
 
   return (
@@ -516,6 +526,46 @@ export default function SettingsScreen() {
           {/* Dotted Divider */}
           <View style={{ height: 1, backgroundColor: theme.colors.border, marginHorizontal: 16, opacity: 0.6 }} />
 
+          {/* Item 3.5: Bin — deleted expenses & recurring plans, 60 days to restore */}
+          <Pressable
+            onPress={() => router.push('/bin' as any)}
+            style={({ pressed }) => ({
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              paddingHorizontal: 16,
+              paddingVertical: 14,
+              backgroundColor: pressed
+                ? (theme.isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)')
+                : 'transparent',
+            })}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+              <View
+                style={{
+                  width: 38,
+                  height: 38,
+                  borderRadius: 10,
+                  backgroundColor: theme.isDark ? 'rgba(148, 163, 184, 0.15)' : '#E2E8F0',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Trash2 size={19} color={theme.isDark ? '#94A3B8' : '#475569'} />
+              </View>
+              <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
+                {t('settings_bin')}
+              </Text>
+            </View>
+
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <ChevronRight size={16} color={theme.colors.textMuted} />
+            </View>
+          </Pressable>
+
+          {/* Dotted Divider */}
+          <View style={{ height: 1, backgroundColor: theme.colors.border, marginHorizontal: 16, opacity: 0.6 }} />
+
           {/* Item 4: App Lock & Security */}
           <Pressable
             onPress={() => setSecurityModalOpen(true)}
@@ -749,7 +799,9 @@ export default function SettingsScreen() {
 
         </View>
 
-        {/* ── 4. SIGN OUT BUTTON (RUST ACCENT) ── */}
+        {/* ── 4. SIGN OUT BUTTON (RUST ACCENT) ──
+            Opens the confirm modal: Sign Out keeps the session remembered on
+            this device (biometric quick return); the secondary link revokes. */}
         <Pressable
           onPress={handleSignOut}
           style={({ pressed }) => ({
@@ -776,19 +828,8 @@ export default function SettingsScreen() {
           </Text>
         </Pressable>
 
-        {/* Delete Account Link */}
-        <Pressable
-          onPress={() => setDeleteModalOpen(true)}
-          style={({ pressed }) => ({
-            alignSelf: 'center',
-            padding: 8,
-            opacity: pressed ? 0.7 : 1,
-          })}
-        >
-          <Text variant="caption" muted style={{ textDecorationLine: 'underline', fontSize: 11 }}>
-            Delete account & data
-          </Text>
-        </Pressable>
+        {/* Delete account lives solely on the Profile screen's Danger Zone —
+            one entry point, no duplicate destructive paths. */}
       </ScrollView>
 
       {/* ══════════════════════════════════════════════
@@ -934,7 +975,14 @@ export default function SettingsScreen() {
                                 backgroundColor: isSelected
                                   ? (theme.isDark ? 'rgba(129, 140, 248, 0.2)' : '#DCE9E3')
                                   : theme.colors.surfaceElevated,
-                                minWidth: 90,
+                                // Even 3-column grid: equal flex basis keeps every chip
+                                // the same width so rows align on both edges; content-
+                                // based minWidth left the wrapped grid ragged. maxWidth
+                                // guards a future odd-count last row from stretching.
+                                flexBasis: '31%',
+                                flexGrow: 1,
+                                flexShrink: 0,
+                                maxWidth: '36%',
                               }}
                             >
                               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
@@ -1453,14 +1501,6 @@ export default function SettingsScreen() {
         }}
       />
 
-      {/* ── 7. PERMANENT DELETE ACCOUNT & DATA (EMAIL OTP) ── */}
-      <DeleteAccountModal
-        visible={deleteModalOpen}
-        onClose={() => setDeleteModalOpen(false)}
-        email={userEmail}
-        onDeleted={() => router.replace('/(auth)' as any)}
-      />
-
       {/* ── 8. SIGN OUT CONFIRMATION MODAL ── */}
       <Modal
         visible={signOutModalOpen}
@@ -1517,7 +1557,7 @@ export default function SettingsScreen() {
                   Sign out of SpendFlow?
                 </Text>
                 <Text muted style={{ fontSize: 13, textAlign: 'center', lineHeight: 18 }}>
-                  You will need to sign back in with your credentials to access your financial records.
+                  Your session stays remembered on this device — unlock instantly with biometrics, or sign back in with Google or your password.
                 </Text>
               </View>
             </View>
@@ -1541,18 +1581,7 @@ export default function SettingsScreen() {
               </Pressable>
 
               <Pressable
-                onPress={async () => {
-                  setSigningOut(true);
-                  try {
-                    await signOut();
-                    setSignOutModalOpen(false);
-                    router.replace('/(auth)' as any);
-                  } catch (err: any) {
-                    Alert.alert('Error', err?.message || 'Failed to sign out');
-                  } finally {
-                    setSigningOut(false);
-                  }
-                }}
+                onPress={() => void handleSoftSignOut()}
                 disabled={signingOut}
                 style={{
                   flex: 1.2,
@@ -1565,10 +1594,37 @@ export default function SettingsScreen() {
                 }}
               >
                 <Text style={{ fontWeight: '800', color: '#FFFFFF' }}>
-                  {signingOut ? 'Signing out...' : 'Sign Out'}
+                  Sign Out
                 </Text>
               </Pressable>
             </View>
+
+            <Pressable
+              onPress={async () => {
+                setSigningOut(true);
+                try {
+                  await signOut();
+                  setSignOutModalOpen(false);
+                  router.replace('/(auth)' as any);
+                } catch (err: any) {
+                  Alert.alert('Error', err?.message || 'Failed to sign out');
+                } finally {
+                  setSigningOut(false);
+                }
+              }}
+              disabled={signingOut}
+              hitSlop={8}
+              style={({ pressed }) => ({
+                alignSelf: 'center',
+                paddingVertical: 6,
+                paddingHorizontal: 12,
+                opacity: signingOut ? 0.5 : pressed ? 0.7 : 1,
+              })}
+            >
+              <Text style={{ fontSize: 12.5, fontWeight: '600', color: theme.colors.textMuted, textDecorationLine: 'underline' }}>
+                {t('settings_sign_out_full')}
+              </Text>
+            </Pressable>
           </Pressable>
         </Pressable>
       </Modal>

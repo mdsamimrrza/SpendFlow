@@ -11,13 +11,17 @@ import {
   View,
 } from 'react-native';
 import {
+  AlertCircle,
   Calendar as CalendarIcon,
   CalendarClock,
+  Check,
+  CheckCircle2,
   Edit2,
   Pause,
   Play,
   Plus,
   Repeat,
+  RotateCcw,
   Sparkles,
   Trash2,
   X,
@@ -27,14 +31,17 @@ import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { CalendarModal } from '@/components/ui/CalendarModal';
 import { Card } from '@/components/ui/Card';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Input } from '@/components/ui/Input';
 import { PressableScale } from '@/components/ui/PressableScale';
 import { Select } from '@/components/ui/Select';
 import { PrivacyEyeButton } from '@/components/ui/PrivacyEyeButton';
+import { showToast } from '@/components/ui/Toast';
 import { Text } from '@/components/ui/Text';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
 import { PAYMENT_METHODS } from '@/constants/app';
 import { useAuth } from '@/hooks/useAuth';
+import { notifyExpensesChanged } from '@/hooks/useExpenses';
 import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
 import { useTheme } from '@/hooks/useTheme';
@@ -43,10 +50,17 @@ import {
   createRecurringRule,
   deleteRecurringRule,
   listRecurringRules,
+  listRuleOccurrences,
+  markOccurrencePaid,
+  nextDueDate as advanceDueDate,
+  RuleOccurrence,
+  skipCurrentOccurrence,
+  subscribeRecurringRulesChanged,
+  undoLatestOccurrencePayment,
   updateRecurringRule,
 } from '@/services/recurring';
 import { notifyRecurringBillDue } from '@/services/notifications';
-import { Category, PaymentMethod, RecurringFrequency, RecurringRule } from '@/types';
+import { Category, PaymentMethod, RecurringFrequency, RecurringMode, RecurringRule } from '@/types';
 import { formatMoney, isoDate } from '@/utils/format';
 
 export default function RecurringScreen() {
@@ -57,28 +71,38 @@ export default function RecurringScreen() {
   const [rules, setRules] = useState<RecurringRule[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  // Booked installments for every rule — powers the paid state, DUE badges,
+  // and the timeline strips (one query, newest slot first).
+  const [occurrences, setOccurrences] = useState<RuleOccurrence[]>([]);
+  const [busyRuleId, setBusyRuleId] = useState<string | null>(null);
 
   const frequencies: { label: string; value: RecurringFrequency }[] = [
     { label: t('recurring_freq_daily') || 'Daily', value: 'daily' },
     { label: t('recurring_freq_weekly') || 'Weekly', value: 'weekly' },
     { label: t('recurring_freq_monthly') || 'Monthly', value: 'monthly' },
+    { label: t('recurring_freq_every_n_days') || 'Every N days', value: 'custom' },
   ];
 
   // Modal Form State
   const [selectedRule, setSelectedRule] = useState<RecurringRule | null>(null);
+  // Designed delete confirmation (the plain system Alert looked foreign here)
+  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
+  const [deletingRule, setDeletingRule] = useState(false);
   const [showFormModal, setShowFormModal] = useState(false);
   const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
   const [amount, setAmount] = useState('');
   const [categoryId, setCategoryId] = useState('');
   const [description, setDescription] = useState('');
   const [frequency, setFrequency] = useState<RecurringFrequency>('monthly');
+  const [intervalDays, setIntervalDays] = useState('28');
+  const [ruleMode, setRuleMode] = useState<RecurringMode>('pay_on_due');
   const [nextDueDate, setNextDueDate] = useState(isoDate());
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('Cash');
   const [saving, setSaving] = useState(false);
   const [calendarOpen, setCalendarOpen] = useState(false);
 
-  async function load() {
-    if (!profile?.id) return;
+  async function load(): Promise<RecurringRule[]> {
+    if (!profile?.id) return [];
     // Cache-paint first (instant), then swap in the authoritative server list.
     const [nextRules, nextCategories] = await Promise.all([
       listRecurringRules(profile.id, (cached) => setRules(cached)),
@@ -87,6 +111,13 @@ export default function RecurringScreen() {
     setRules(nextRules);
     setCategories(nextCategories);
     setCategoryId((current) => current || nextCategories[0]?.id || '');
+    // Booked installments drive paid states / DUE badges / timelines.
+    try {
+      setOccurrences(await listRuleOccurrences(profile.id, nextRules.map((r) => r.id)));
+    } catch {
+      // Paid-state decoration is optional; the rules list above is authoritative.
+    }
+    return nextRules;
   }
 
   const handleRefresh = async () => {
@@ -101,6 +132,16 @@ export default function RecurringScreen() {
   useEffect(() => {
     load().catch((error) => Alert.alert(t('common_error'), error.message));
   }, [profile?.id]);
+
+  // A plan restored from the Bin (or purged there) must repaint this tab even
+  // though it never unmounts — same signal pattern as the expenses listeners.
+  useEffect(
+    () =>
+      subscribeRecurringRulesChanged(() => {
+        load().catch(() => undefined);
+      }),
+    [profile?.id],
+  );
 
   const categoryOptions = useMemo(
     () => categories.map((category) => ({ label: `${category.icon} ${category.name}`, value: category.id })),
@@ -117,6 +158,7 @@ export default function RecurringScreen() {
         const amt = Number(rule.amount) || 0;
         if (rule.frequency === 'daily') return acc + amt * 30;
         if (rule.frequency === 'weekly') return acc + amt * 4.33;
+        if (rule.frequency === 'custom') return acc + (amt * 30) / Math.max(1, rule.interval_days ?? 30);
         return acc + amt;
       }, 0);
   }, [rules]);
@@ -127,6 +169,8 @@ export default function RecurringScreen() {
     setAmount('');
     setDescription('');
     setFrequency('monthly');
+    setIntervalDays('28');
+    setRuleMode('pay_on_due');
     setNextDueDate(isoDate());
     setPaymentMethod('Cash');
     setCategoryId(categories[0]?.id || '');
@@ -140,6 +184,8 @@ export default function RecurringScreen() {
     setDescription(rule.description || '');
     setCategoryId(rule.category_id);
     setFrequency(rule.frequency);
+    setIntervalDays(String(rule.interval_days ?? 28));
+    setRuleMode(rule.mode ?? 'pay_on_due');
     setNextDueDate(rule.next_due_date);
     setPaymentMethod((rule.payment_method as PaymentMethod) || 'Cash');
     setShowFormModal(true);
@@ -152,28 +198,25 @@ export default function RecurringScreen() {
     setDescription('');
   }
 
-  async function handleDeleteRule(ruleId: string) {
-    Alert.alert(
-      t('common_delete') || 'Delete Subscription',
-      'Are you sure you want to delete this recurring subscription? This cannot be undone.',
-      [
-        { text: t('common_cancel') || 'Cancel', style: 'cancel' },
-        {
-          text: t('common_delete') || 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await deleteRecurringRule(ruleId, profile?.id);
-              setSelectedRule(null);
-              closeFormModal();
-              await load();
-            } catch (err: any) {
-              Alert.alert('Error', err?.message || 'Failed to delete subscription');
-            }
-          },
-        },
-      ]
-    );
+  function handleDeleteRule(ruleId: string) {
+    setDeleteTargetId(ruleId);
+  }
+
+  async function confirmDeleteRule() {
+    if (!deleteTargetId) return;
+    setDeletingRule(true);
+    try {
+      await deleteRecurringRule(deleteTargetId, profile?.id);
+      setDeleteTargetId(null);
+      setSelectedRule(null);
+      closeFormModal();
+      await load();
+      showToast({ type: 'success', message: t('bin_moved_toast') });
+    } catch (err: any) {
+      Alert.alert('Error', err?.message || 'Failed to delete subscription');
+    } finally {
+      setDeletingRule(false);
+    }
   }
 
   async function handleSaveRule() {
@@ -181,18 +224,37 @@ export default function RecurringScreen() {
       Alert.alert(t('common_error'), t('expense_amount_placeholder') || 'Please enter a valid amount');
       return;
     }
+    const interval = Number(intervalDays);
+    if (frequency === 'custom' && (!Number.isInteger(interval) || interval < 1 || interval > 365)) {
+      Alert.alert(t('common_error'), t('recurring_interval_invalid') || 'Custom cycle needs a repeat length of 1–365 days.');
+      return;
+    }
 
     setSaving(true);
     try {
       if (editingRuleId) {
         // UPDATE EXISTING RECURRING RULE
+        // If the cycle itself changed, re-derive the schedule from the CURRENT
+        // due slot with the new cadence — the chain stays anchored to the plan,
+        // never to "today".
+        const existing = rules.find((r) => r.id === editingRuleId);
+        const cycleChanged =
+          !!existing &&
+          (existing.frequency !== frequency ||
+            (existing.interval_days ?? null) !== (frequency === 'custom' ? interval : null));
+        const resolvedNextDue =
+          cycleChanged && existing
+            ? advanceDueDate(existing.next_due_date, frequency, frequency === 'custom' ? interval : null)
+            : nextDueDate;
         await updateRecurringRule(editingRuleId, {
           category_id: categoryId,
           amount: Number(amount),
           currency: preferredCurrency,
           description: description.trim() || null,
           frequency,
-          next_due_date: nextDueDate,
+          interval_days: frequency === 'custom' ? interval : null,
+          mode: ruleMode,
+          next_due_date: resolvedNextDue,
           payment_method: paymentMethod,
         }, profile.id);
       } else {
@@ -203,6 +265,8 @@ export default function RecurringScreen() {
           currency: preferredCurrency,
           description: description.trim() || undefined,
           frequency,
+          interval_days: frequency === 'custom' ? interval : null,
+          mode: ruleMode,
           next_due_date: nextDueDate,
           payment_method: paymentMethod,
         });
@@ -210,7 +274,10 @@ export default function RecurringScreen() {
         // Trigger Smart Bill Reminder
         try {
           const catName = categories.find((c) => c.id === categoryId)?.name || 'Recurring Bill';
-          void notifyRecurringBillDue(description || catName, Number(amount), preferredCurrency);
+          // Signature is (description, amount, dueDate, currency) — the slot date
+          // was previously missing and the currency landed in the dueDate argument,
+          // printing "due on INR" and formatting the amount as NPR.
+          void notifyRecurringBillDue(description || catName, Number(amount), nextDueDate, preferredCurrency);
         } catch {
           // Notification check
         }
@@ -223,6 +290,72 @@ export default function RecurringScreen() {
     } finally {
       setSaving(false);
     }
+  }
+
+  // ── Payment actions (Mark Paid / Skip / Undo) ─────────────────────────────
+  // All three go through the shared service writes so phone, web and the
+  // login-time generator can never double-book a slot (unique slot index).
+
+  async function runRuleAction(ruleId: string, action: 'paid' | 'skip' | 'undo') {
+    if (!profile?.id) return;
+    setBusyRuleId(ruleId);
+    try {
+      if (action === 'paid') {
+        const { lateDays } = await markOccurrencePaid(profile.id, ruleId);
+        notifyExpensesChanged();
+        showToast({
+          message:
+            lateDays > 0
+              ? `${t('recurring_marked_paid') || 'Payment recorded'} · ${t('recurring_late_days') || 'late'} ${lateDays}d`
+              : t('recurring_marked_paid') || 'Payment recorded',
+          type: 'success',
+        });
+      } else if (action === 'skip') {
+        await skipCurrentOccurrence(profile.id, ruleId);
+        showToast({ message: t('recurring_cycle_skipped') || 'This cycle was skipped', type: 'info' });
+      } else {
+        const undone = await undoLatestOccurrencePayment(profile.id, ruleId);
+        if (!undone) {
+          showToast({ message: t('recurring_undo_not_recent') || 'Only the most recent payment can be undone', type: 'info' });
+        } else {
+          notifyExpensesChanged();
+          showToast({ message: t('recurring_payment_undone') || 'Payment removed — slot is due again', type: 'success' });
+        }
+      }
+      const nextRules = await load();
+      // Keep the open detail sheet in sync with the freshly loaded rule.
+      setSelectedRule((prev) => (prev ? nextRules.find((r) => r.id === ruleId) ?? null : null));
+    } catch (error) {
+      Alert.alert(t('common_error'), error instanceof Error ? error.message : t('common_error'));
+    } finally {
+      setBusyRuleId(null);
+    }
+  }
+
+  // ── Paid-state derivation ──────────────────────────────────────────────────
+
+  /** Newest booked slot for a rule, if any. */
+  function latestOccurrenceFor(rule: RecurringRule): RuleOccurrence | undefined {
+    return occurrences.find((o) => o.recurring_rule_id === rule.id);
+  }
+
+  /** True when the CURRENT slot is unpaid and already reached/past due. */
+  function ruleIsDue(rule: RecurringRule): boolean {
+    if (!rule.is_active) return false;
+    if (rule.next_due_date > isoDate()) return false;
+    const latest = latestOccurrenceFor(rule);
+    return !latest || latest.recurring_due_date !== rule.next_due_date;
+  }
+
+  function paidLabelFor(rule: RecurringRule): string | null {
+    const latest = latestOccurrenceFor(rule);
+    if (!latest?.recurring_due_date) return null;
+    if (latest.recurring_due_date >= rule.next_due_date) return null; // current slot unpaid
+    const late = differenceInCalendarDays(parseISO(latest.date), parseISO(latest.recurring_due_date));
+    const paid = format(parseISO(latest.date), 'MMM d');
+    return late > 0
+      ? `✓ ${t('recurring_paid_short') || 'Paid'} ${paid} · ${t('recurring_late_days') || 'late'} ${late}d`
+      : `✓ ${t('recurring_paid_short') || 'Paid'} ${paid} · ${t('recurring_on_time') || 'on time'}`;
   }
 
   async function toggleRuleActive(rule: RecurringRule) {
@@ -266,14 +399,21 @@ export default function RecurringScreen() {
   const displayName = profile?.display_name || profile?.email?.split('@')[0] || 'User';
 
   function formatRecurringSubtitle(rule: RecurringRule) {
-    const freqLabel = rule.frequency === 'daily' ? 'Daily' : rule.frequency === 'weekly' ? 'Weekly' : rule.frequency === 'custom' ? 'Custom' : 'Monthly';
+    const freqLabel =
+      rule.frequency === 'daily' ? 'Daily'
+        : rule.frequency === 'weekly' ? 'Weekly'
+          : rule.frequency === 'custom' ? `Every ${rule.interval_days ?? 30}d`
+            : 'Monthly';
     if (!rule.is_active) {
       return `${freqLabel} · paused`;
     }
+    const paid = paidLabelFor(rule);
     try {
       const due = parseISO(rule.next_due_date);
       const dateFormatted = format(due, 'MMM d');
-      return `${freqLabel} · next ${dateFormatted}`;
+      return paid
+        ? `${freqLabel} · ${paid} · next ${dateFormatted}`
+        : `${freqLabel} · next ${dateFormatted}`;
     } catch {
       return `${freqLabel} · next ${rule.next_due_date}`;
     }
@@ -441,6 +581,7 @@ export default function RecurringScreen() {
             {rules.map((rule, idx) => {
               const isLast = idx === rules.length - 1;
               const subtitle = formatRecurringSubtitle(rule);
+              const isDue = ruleIsDue(rule);
 
               return (
                 <React.Fragment key={rule.id}>
@@ -498,9 +639,14 @@ export default function RecurringScreen() {
                       </View>
                     </View>
 
-                    {/* Right: Amount & Dashed Status Pill */}
-                    <View style={{ alignItems: 'flex-end', gap: 4 }}>
+                    {/* Right: Amount & Dashed Status Pill — flexShrink:0 so the
+                        row can never squeeze this column below the badge's
+                        natural width (was truncating "DUE" to "du"). */}
+                    <View style={{ alignItems: 'flex-end', gap: 4, flexShrink: 0 }}>
                       <Text
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.75}
                         style={{
                           fontSize: 15,
                           fontWeight: '800',
@@ -511,29 +657,52 @@ export default function RecurringScreen() {
                         {formatMoney(Number(rule.amount), rule.currency || preferredCurrency)}
                       </Text>
 
-                      {/* Dashed Status Badge */}
-                      <View
-                        style={{
-                          paddingHorizontal: 8,
-                          paddingVertical: 2,
-                          borderRadius: theme.radius.full,
-                          borderWidth: 1.5,
-                          borderColor: rule.is_active ? theme.colors.primary : theme.colors.textMuted,
-                          borderStyle: 'dashed',
-                          backgroundColor: 'transparent',
-                        }}
-                      >
-                        <Text
+                      {/* DUE badge wins over the routine ACTIVE pill */}
+                      {isDue ? (
+                        <View
                           style={{
-                            fontSize: 10,
-                            fontWeight: '800',
-                            color: rule.is_active ? theme.colors.primary : theme.colors.textMuted,
-                            letterSpacing: 0.5,
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            gap: 3,
+                            paddingHorizontal: 8,
+                            paddingVertical: 2,
+                            borderRadius: theme.radius.full,
+                            flexShrink: 0,
+                            backgroundColor: theme.isDark ? 'rgba(239,68,68,0.18)' : 'rgba(239,68,68,0.12)',
+                            borderWidth: 1.5,
+                            borderColor: theme.isDark ? '#EF4444' : '#FCA5A5',
                           }}
                         >
-                          {rule.is_active ? 'ACTIVE' : 'PAUSED'}
-                        </Text>
-                      </View>
+                          <AlertCircle size={9} color={theme.isDark ? '#F87171' : '#DC2626'} style={{ flexShrink: 0 }} />
+                          <Text numberOfLines={1} style={{ fontSize: 10, fontWeight: '900', color: theme.isDark ? '#F87171' : '#DC2626', letterSpacing: 0.5 }}>
+                            {t('recurring_due_badge') || 'DUE'}
+                          </Text>
+                        </View>
+                      ) : (
+                        <View
+                          style={{
+                            paddingHorizontal: 8,
+                            paddingVertical: 2,
+                            borderRadius: theme.radius.full,
+                            borderWidth: 1.5,
+                            borderColor: rule.is_active ? theme.colors.primary : theme.colors.textMuted,
+                            borderStyle: 'dashed',
+                            backgroundColor: 'transparent',
+                          }}
+                        >
+                          <Text
+                            numberOfLines={1}
+                            style={{
+                              fontSize: 10,
+                              fontWeight: '800',
+                              color: rule.is_active ? theme.colors.primary : theme.colors.textMuted,
+                              letterSpacing: 0.5,
+                            }}
+                          >
+                            {rule.is_active ? 'ACTIVE' : 'PAUSED'}
+                          </Text>
+                        </View>
+                      )}
                     </View>
                   </PressableScale>
 
@@ -651,6 +820,226 @@ export default function RecurringScreen() {
               </Text>
             </View>
 
+            {/* ── PAYMENT STATE: due card / paid proof / timeline / actions ── */}
+            {(() => {
+              const rule = selectedRule;
+              if (!rule) return null;
+              const ruleOccurrences = occurrences
+                .filter((o) => o.recurring_rule_id === rule.id)
+                .slice(0, 4);
+              const due = ruleIsDue(rule);
+              const busy = busyRuleId === rule.id;
+              const latest = latestOccurrenceFor(rule);
+              // Undo is offered only while the chain sits exactly one cycle
+              // past the newest booking — older history stays booked.
+              const latestSlot = latest?.recurring_due_date ?? null;
+              const canUndo =
+                !!latestSlot &&
+                advanceDueDate(latestSlot, rule.frequency, rule.interval_days) === rule.next_due_date;
+              const overdueDays = due
+                ? Math.max(0, differenceInCalendarDays(parseISO(isoDate()), parseISO(rule.next_due_date)))
+                : 0;
+              const futureSlots = [0, 1].map((i) => {
+                let d = rule.next_due_date;
+                for (let k = 0; k <= i; k++) d = advanceDueDate(d, rule.frequency, rule.interval_days);
+                return d;
+              });
+
+              return (
+                <View style={{ gap: 10 }}>
+                  {/* Status banner */}
+                  {due ? (
+                    <View
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 10,
+                        padding: 12,
+                        borderRadius: 14,
+                        backgroundColor: theme.isDark ? 'rgba(239,68,68,0.14)' : 'rgba(239,68,68,0.08)',
+                        borderWidth: 1,
+                        borderColor: theme.isDark ? 'rgba(239,68,68,0.35)' : 'rgba(239,68,68,0.3)',
+                      }}
+                    >
+                      <AlertCircle size={20} color={theme.isDark ? '#F87171' : '#DC2626'} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 13, fontWeight: '900', color: theme.isDark ? '#F87171' : '#DC2626' }}>
+                          {overdueDays > 0
+                            ? `${t('recurring_overdue') || 'Overdue'} ${overdueDays}d — ${t('recurring_payment_due') || 'payment due'}`
+                            : t('recurring_payment_due') || 'Payment due'}
+                        </Text>
+                        <Text variant="caption" muted style={{ fontSize: 11.5 }}>
+                          {`${formatMoney(Number(rule.amount), rule.currency || preferredCurrency)} · ${t('recurring_slot_due') || 'slot due'} ${rule.next_due_date}`}
+                        </Text>
+                      </View>
+                    </View>
+                  ) : (
+                    (() => {
+                      const paid = paidLabelFor(rule);
+                      if (!paid) return null;
+                      return (
+                        <View
+                          style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            gap: 8,
+                            padding: 12,
+                            borderRadius: 14,
+                            backgroundColor: theme.isDark ? 'rgba(52,211,153,0.12)' : 'rgba(5,150,105,0.07)',
+                            borderWidth: 1,
+                            borderColor: theme.isDark ? 'rgba(52,211,153,0.3)' : 'rgba(5,150,105,0.25)',
+                          }}
+                        >
+                          <CheckCircle2 size={18} color={theme.colors.income} />
+                          <Text style={{ fontSize: 12.5, fontWeight: '800', color: theme.colors.income }}>{paid}</Text>
+                          {canUndo ? (
+                            <Pressable
+                              onPress={() => void runRuleAction(rule.id, 'undo')}
+                              disabled={busy}
+                              hitSlop={6}
+                              style={{
+                                marginLeft: 'auto',
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                gap: 4,
+                                paddingHorizontal: 8,
+                                paddingVertical: 4,
+                                borderRadius: 8,
+                                backgroundColor: theme.colors.surfaceElevated,
+                                borderWidth: 1,
+                                borderColor: theme.colors.border,
+                                opacity: busy ? 0.5 : 1,
+                              }}
+                            >
+                              <RotateCcw size={11} color={theme.colors.textMuted} />
+                              <Text style={{ fontSize: 11, fontWeight: '700', color: theme.colors.textMuted }}>
+                                {t('recurring_not_paid_undo') || 'Not paid — undo'}
+                              </Text>
+                            </Pressable>
+                          ) : null}
+                        </View>
+                      );
+                    })()
+                  )}
+
+                  {/* Payment timeline strip: booked slots, current slot, 2 upcoming */}
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                    {ruleOccurrences.map((o) => {
+                      const slot = o.recurring_due_date ?? o.date;
+                      const late = differenceInCalendarDays(parseISO(o.date), parseISO(slot));
+                      return (
+                        <View
+                          key={o.id}
+                          style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            gap: 4,
+                            paddingHorizontal: 8,
+                            paddingVertical: 4,
+                            borderRadius: theme.radius.full,
+                            backgroundColor: theme.isDark ? 'rgba(52,211,153,0.12)' : 'rgba(5,150,105,0.08)',
+                            borderWidth: 1,
+                            borderColor: theme.colors.border,
+                          }}
+                        >
+                          <Check size={10} color={theme.colors.income} strokeWidth={3} />
+                          <Text style={{ fontSize: 10.5, fontWeight: '700', color: theme.colors.text }}>
+                            {format(parseISO(o.date), 'MMM d')}
+                            {late > 0 ? ` (+${late})` : ''}
+                          </Text>
+                        </View>
+                      );
+                    })}
+                    <View
+                      style={{
+                        paddingHorizontal: 8,
+                        paddingVertical: 4,
+                        borderRadius: theme.radius.full,
+                        backgroundColor: due
+                          ? (theme.isDark ? 'rgba(239,68,68,0.14)' : 'rgba(239,68,68,0.1)')
+                          : theme.colors.surfaceElevated,
+                        borderWidth: 1,
+                        borderColor: due ? (theme.isDark ? '#EF4444' : '#FCA5A5') : theme.colors.border,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 10.5,
+                          fontWeight: '700',
+                          color: due ? (theme.isDark ? '#F87171' : '#DC2626') : theme.colors.textMuted,
+                        }}
+                      >
+                        ○ {rule.next_due_date} {due ? (t('recurring_pending_badge') || 'PENDING') : (t('recurring_next_badge') || 'NEXT')}
+                      </Text>
+                    </View>
+                    {futureSlots.map((d) => (
+                      <View
+                        key={d}
+                        style={{
+                          paddingHorizontal: 8,
+                          paddingVertical: 4,
+                          borderRadius: theme.radius.full,
+                          backgroundColor: 'transparent',
+                          borderWidth: 1,
+                          borderStyle: 'dashed',
+                          borderColor: theme.colors.border,
+                        }}
+                      >
+                        <Text style={{ fontSize: 10.5, fontWeight: '600', color: theme.colors.textMuted }}>
+                          {d}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+
+                  {/* Payment actions for the open slot */}
+                  {due && rule.is_active ? (
+                    <View style={{ flexDirection: 'row', gap: 10 }}>
+                      <Pressable
+                        onPress={() => void runRuleAction(rule.id, 'paid')}
+                        disabled={busy}
+                        style={{
+                          flex: 1.4,
+                          height: 46,
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: 6,
+                          borderRadius: 14,
+                          backgroundColor: busy ? theme.colors.textMuted : theme.colors.income,
+                          opacity: busy ? 0.7 : 1,
+                        }}
+                      >
+                        <CheckCircle2 size={17} color="#FFFFFF" />
+                        <Text style={{ fontSize: 14, fontWeight: '900', color: '#FFFFFF' }}>
+                          {t('recurring_mark_paid') || 'Mark Paid'}
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={() => void runRuleAction(rule.id, 'skip')}
+                        disabled={busy}
+                        style={{
+                          flex: 1,
+                          height: 46,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          borderRadius: 14,
+                          backgroundColor: theme.colors.surfaceElevated,
+                          borderWidth: 1,
+                          borderColor: theme.colors.border,
+                          opacity: busy ? 0.6 : 1,
+                        }}
+                      >
+                        <Text style={{ fontSize: 13, fontWeight: '800', color: theme.colors.textMuted }}>
+                          {t('recurring_skip_cycle') || 'Skip this cycle'}
+                        </Text>
+                      </Pressable>
+                    </View>
+                  ) : null}
+                </View>
+              );
+            })()}
+
             {/* Details Tiles */}
             <View style={{ gap: 10 }}>
               {/* Status Row */}
@@ -734,6 +1123,20 @@ export default function RecurringScreen() {
                 </Text>
                 <Text style={{ fontSize: 13, fontWeight: '700', color: theme.colors.text }}>
                   {selectedRule?.payment_method || 'Cash'}
+                </Text>
+              </View>
+
+              <View style={{ height: 1, backgroundColor: theme.colors.border, opacity: 0.6 }} />
+
+              {/* Billing Mode */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4 }}>
+                <Text variant="caption" muted style={{ fontSize: 13, fontWeight: '600' }}>
+                  {t('recurring_billing_mode') || 'Billing Mode'}
+                </Text>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: theme.colors.text }}>
+                  {(selectedRule?.mode ?? 'pay_on_due') === 'auto_charge'
+                    ? (t('recurring_mode_auto') || 'Auto-debit (posted on due date)')
+                    : (t('recurring_mode_reminder') || 'Mark paid when due')}
                 </Text>
               </View>
             </View>
@@ -992,6 +1395,107 @@ export default function RecurringScreen() {
                 </View>
               </View>
 
+              {/* Custom cycle length (Every N days) */}
+              {frequency === 'custom' ? (
+                <View style={{ gap: theme.spacing.xs }}>
+                  <Text variant="caption" muted style={{ fontWeight: '700' }}>
+                    {t('recurring_interval_days') || 'Repeat every (days)'}
+                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <View
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        backgroundColor: theme.colors.surfaceElevated,
+                        borderRadius: theme.radius.md,
+                        borderWidth: 1.5,
+                        borderColor: theme.colors.primary,
+                        paddingHorizontal: 14,
+                        height: 48,
+                        width: 110,
+                      }}
+                    >
+                      <TextInput
+                        keyboardType="number-pad"
+                        maxLength={3}
+                        value={intervalDays}
+                        onChangeText={(v) => setIntervalDays(v.replace(/[^0-9]/g, '').slice(0, 3))}
+                        style={{ flex: 1, color: theme.colors.text, fontSize: 17, fontWeight: '800', paddingVertical: 0 }}
+                      />
+                    </View>
+                    {[7, 14, 28, 30].map((preset) => (
+                      <PressableScale
+                        key={preset}
+                        activeScale={0.92}
+                        onPress={() => setIntervalDays(String(preset))}
+                        style={{
+                          paddingHorizontal: 12,
+                          paddingVertical: 8,
+                          borderRadius: theme.radius.full,
+                          backgroundColor: intervalDays === String(preset) ? theme.colors.primary : theme.colors.surfaceElevated,
+                          borderWidth: 1,
+                          borderColor: theme.colors.border,
+                        }}
+                      >
+                        <Text
+                          style={{
+                            fontSize: 12,
+                            fontWeight: '800',
+                            color: intervalDays === String(preset) ? '#FFFFFF' : theme.colors.text,
+                          }}
+                        >
+                          {preset}d
+                        </Text>
+                      </PressableScale>
+                    ))}
+                  </View>
+                  <Text variant="caption" muted style={{ fontSize: 11.5 }}>
+                    {t('recurring_interval_hint') || 'Chain stays locked to the plan start — paying late never shifts the next due date.'}
+                  </Text>
+                </View>
+              ) : null}
+
+              {/* Billing mode: reminder card vs silent auto-post */}
+              <View style={{ gap: theme.spacing.xs }}>
+                <Text variant="caption" muted style={{ fontWeight: '700' }}>
+                  {t('recurring_billing_mode') || 'Billing Mode'}
+                </Text>
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  {([
+                    { key: 'pay_on_due' as RecurringMode, label: t('recurring_mode_reminder') || 'Mark paid when due', sub: t('recurring_mode_reminder_sub') || 'Shows a due card — books money only when you tap' },
+                    { key: 'auto_charge' as RecurringMode, label: t('recurring_mode_auto') || 'Auto-debit', sub: t('recurring_mode_auto_sub') || 'Posted automatically on the due date (Netflix, mandates)' },
+                  ]).map((m) => {
+                    const active = ruleMode === m.key;
+                    return (
+                      <PressableScale
+                        key={m.key}
+                        activeScale={0.96}
+                        onPress={() => setRuleMode(m.key)}
+                        containerStyle={{ flex: 1 }}
+                        style={{
+                          width: '100%',
+                          gap: 3,
+                          padding: 12,
+                          borderRadius: theme.radius.md,
+                          backgroundColor: active
+                            ? (theme.isDark ? 'rgba(99,102,241,0.18)' : 'rgba(79,70,229,0.08)')
+                            : theme.colors.surfaceElevated,
+                          borderWidth: 1.8,
+                          borderColor: active ? theme.colors.primary : theme.colors.border,
+                        }}
+                      >
+                        <Text style={{ fontSize: 13, fontWeight: '800', color: active ? theme.colors.primary : theme.colors.text }}>
+                          {m.key === 'auto_charge' ? '⚡ ' : '🔔 '}{m.label}
+                        </Text>
+                        <Text style={{ fontSize: 10.5, fontWeight: '500', color: theme.colors.textMuted }}>
+                          {m.sub}
+                        </Text>
+                      </PressableScale>
+                    );
+                  })}
+                </View>
+              </View>
+
               {/* Next Due Date Picker & Schedule Presets */}
               <View style={{ gap: 8 }}>
                 <Text variant="caption" muted style={{ fontWeight: '700' }}>
@@ -1202,6 +1706,17 @@ export default function RecurringScreen() {
           }
         }}
         initialRange={{ startDate: nextDueDate, endDate: nextDueDate }}
+      />
+
+      {/* Designed delete-confirmation (replaces the plain system Alert) */}
+      <ConfirmDialog
+        visible={deleteTargetId !== null}
+        title={t('common_delete') || 'Delete Subscription'}
+        message={t('bin_move_plan_message')}
+        confirmLabel={t('common_delete') || 'Delete'}
+        loading={deletingRule}
+        onCancel={() => setDeleteTargetId(null)}
+        onConfirm={() => void confirmDeleteRule()}
       />
 
       {/* ── Floating Action Button (+) ── */}

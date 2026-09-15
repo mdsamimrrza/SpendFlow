@@ -154,14 +154,103 @@ function validate(rates: ParsedRates): { ok: true } | { ok: false; reason: strin
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
+/**
+ * Service-role callers may present either of two credential formats:
+ *  - the runtime's current SUPABASE_SERVICE_ROLE_KEY (exact string match) —
+ *    this is what the pg_cron trigger should use (store the runtime key in
+ *    Vault as spendflow_service_role_key), and
+ *  - a legacy JWT-format service key, which is accepted ONLY after real
+ *    HS256 signature verification against the project JWT secret.
+ *
+ * Audit 2026-09-15 (H2): the previous JWT branch merely DECODED the payload
+ * and checked role/iss/exp — no signature verification. Anyone who knew the
+ * claim shape could forge a base64 'service_role' token and it would pass
+ * here; the only real gate was the gateway's verify_jwt, a deploy-time
+ * toggle outside this file. Now the signature must match a token minted by
+ * this project (HMAC with the JWT secret), so the function authorizes
+ * callers itself regardless of gateway config.
+ *
+ * The secret is read from SUPABASE_JWT_SECRET (with JWT_SECRET as alias).
+ * If neither is configured the JWT branch fails CLOSED — set it once with
+ * `npx supabase secrets set SUPABASE_JWT_SECRET=<project jwt secret>`
+ * (Dashboard → Settings → API). Exact service-key matches still work.
+ */
+const enc = new TextEncoder();
+
+function b64urlEncode(bytes: Uint8Array): string {
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function bytesFromB64url(s: string): Uint8Array {
+  const b64 = s.replace(/-/g, '+').replace(/_/g, '/');
+  const bin = atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4));
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+function parseJwtPart(part: string): Record<string, unknown> | null {
+  try {
+    return JSON.parse(new TextDecoder().decode(bytesFromB64url(part)));
+  } catch {
+    return null;
+  }
+}
+
+async function verifyHs256(jwt: string, secret: string): Promise<boolean> {
+  const parts = jwt.split('.');
+  if (parts.length !== 3) return false;
+  try {
+    const key = await crypto.subtle.importKey(
+      'raw',
+      enc.encode(secret),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign'],
+    );
+    const mac = await crypto.subtle.sign('HMAC', key, enc.encode(`${parts[0]}.${parts[1]}`));
+    const expected = b64urlEncode(new Uint8Array(mac));
+    const sig = parts[2];
+    if (expected.length !== sig.length) return false;
+    let diff = 0;
+    for (let i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ sig.charCodeAt(i);
+    return diff === 0;
+  } catch {
+    return false;
+  }
+}
+
+async function isServiceRoleCaller(presentedKey: string): Promise<boolean> {
+  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+  if (presentedKey && presentedKey === serviceKey) return true;
+
+  const parts = presentedKey.split('.');
+  if (parts.length !== 3) return false;
+  const jwtSecret =
+    Deno.env.get('SUPABASE_JWT_SECRET') || Deno.env.get('JWT_SECRET') || '';
+  if (!jwtSecret) return false; // fail closed without the verification secret
+
+  // Signature first — claims are only trusted after it verifies.
+  if (!(await verifyHs256(presentedKey, jwtSecret))) return false;
+
+  const header = parseJwtPart(parts[0]);
+  if (header?.alg !== 'HS256' || header?.typ !== 'JWT') return false; // reject alg:none & algorithm confusion
+  const payload = parseJwtPart(parts[1]);
+  if (payload?.role !== 'service_role' || payload?.iss !== 'supabase') return false;
+  // Expired service keys must not authorize fetches.
+  if (typeof payload.exp === 'number' && payload.exp * 1000 < Date.now()) return false;
+  return true;
+}
+
 Deno.serve(async (req) => {
   // Only trusted callers may invoke this function: the pg_cron trigger and
-  // manual maintenance, both of which present the service-role key as a
+  // manual maintenance, both of which present a service-role key as a
   // Bearer token. Any anonymous request is rejected before any work runs.
-  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
   const authHeader = req.headers.get('Authorization') ?? '';
   const presentedKey = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
-  if (!presentedKey || presentedKey !== serviceKey) {
+  if (!presentedKey || !(await isServiceRoleCaller(presentedKey))) {
     return new Response(JSON.stringify({ ok: false, error: 'unauthorized' }), {
       status: 401,
       headers: { 'Content-Type': 'application/json' },
@@ -172,6 +261,10 @@ Deno.serve(async (req) => {
   const force = url.searchParams.get('force') === 'true';
   const today = kathmanduToday();
 
+  // REST calls use the caller's own verified service key — it may be the
+  // runtime key or a legacy JWT-format service key, and both are valid for
+  // this project's REST API (signature checked above).
+  const serviceKey = presentedKey;
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
   const restHeaders = {
     apikey: serviceKey,

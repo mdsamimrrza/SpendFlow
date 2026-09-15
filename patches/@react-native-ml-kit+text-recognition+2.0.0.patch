@@ -1,0 +1,115 @@
+diff --git a/node_modules/@react-native-ml-kit/text-recognition/RNMLKitTextRecognition.podspec b/node_modules/@react-native-ml-kit/text-recognition/RNMLKitTextRecognition.podspec
+index 421bcfc..f91cfe0 100644
+--- a/node_modules/@react-native-ml-kit/text-recognition/RNMLKitTextRecognition.podspec
++++ b/node_modules/@react-native-ml-kit/text-recognition/RNMLKitTextRecognition.podspec
+@@ -23,13 +23,5 @@ Pod::Spec.new do |s|
+   s.dependency "React"
+   # To recognize Latin script
+   s.dependency 'GoogleMLKit/TextRecognition', '8.0.0'
+-  # To recognize Chinese script
+-  s.dependency 'GoogleMLKit/TextRecognitionChinese', '8.0.0'
+-  # To recognize Devanagari script
+-  s.dependency 'GoogleMLKit/TextRecognitionDevanagari', '8.0.0'
+-  # To recognize Japanese script
+-  s.dependency 'GoogleMLKit/TextRecognitionJapanese', '8.0.0'
+-  # To recognize Korean script
+-  s.dependency 'GoogleMLKit/TextRecognitionKorean', '8.0.0'
+ end
+ 
+diff --git a/node_modules/@react-native-ml-kit/text-recognition/android/build.gradle b/node_modules/@react-native-ml-kit/text-recognition/android/build.gradle
+index 6a2e36f..6724b43 100644
+--- a/node_modules/@react-native-ml-kit/text-recognition/android/build.gradle
++++ b/node_modules/@react-native-ml-kit/text-recognition/android/build.gradle
+@@ -63,12 +63,4 @@ dependencies {
+     implementation 'com.facebook.react:react-native:+'  // From node_modules
+     // To recognize Latin script
+     implementation 'com.google.mlkit:text-recognition:16.0.1'
+-    // To recognize Chinese script
+-    implementation 'com.google.mlkit:text-recognition-chinese:16.0.1'
+-    // To recognize Devanagari script
+-    implementation 'com.google.mlkit:text-recognition-devanagari:16.0.1'
+-    // To recognize Japanese script
+-    implementation 'com.google.mlkit:text-recognition-japanese:16.0.1'
+-    // To recognize Korean script
+-    implementation 'com.google.mlkit:text-recognition-korean:16.0.1'
+ }
+diff --git a/node_modules/@react-native-ml-kit/text-recognition/android/src/main/java/com/rnmlkit/textrecognition/TextRecognitionModule.java b/node_modules/@react-native-ml-kit/text-recognition/android/src/main/java/com/rnmlkit/textrecognition/TextRecognitionModule.java
+index 004bfb3..28f89d3 100644
+--- a/node_modules/@react-native-ml-kit/text-recognition/android/src/main/java/com/rnmlkit/textrecognition/TextRecognitionModule.java
++++ b/node_modules/@react-native-ml-kit/text-recognition/android/src/main/java/com/rnmlkit/textrecognition/TextRecognitionModule.java
+@@ -25,10 +25,6 @@ import com.google.mlkit.vision.text.Text;
+ import com.google.mlkit.vision.text.TextRecognition;
+ import com.google.mlkit.vision.text.TextRecognizer;
+ import com.google.mlkit.vision.text.TextRecognizerOptionsInterface;
+-import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions;
+-import com.google.mlkit.vision.text.devanagari.DevanagariTextRecognizerOptions;
+-import com.google.mlkit.vision.text.japanese.JapaneseTextRecognizerOptions;
+-import com.google.mlkit.vision.text.korean.KoreanTextRecognizerOptions;
+ import com.google.mlkit.vision.text.latin.TextRecognizerOptions;
+ 
+ import java.io.IOException;
+@@ -140,22 +136,9 @@ public class TextRecognitionModule extends ReactContextBaseJavaModule {
+ 
+     @NonNull
+     TextRecognizerOptionsInterface getScriptTextRecognizerOptions(@Nullable String script) {
+-        if (script == null) {
+-            return TextRecognizerOptions.DEFAULT_OPTIONS;
+-        }
+-
+-        switch (script) {
+-            case "Chinese":
+-                return new ChineseTextRecognizerOptions.Builder().build();
+-            case "Devanagari":
+-                return new DevanagariTextRecognizerOptions.Builder().build();
+-            case "Japanese":
+-                return new JapaneseTextRecognizerOptions.Builder().build();
+-            case "Korean":
+-                return new KoreanTextRecognizerOptions.Builder().build();
+-            default:
+-                return TextRecognizerOptions.DEFAULT_OPTIONS;
+-        }
++        // SpendFlow patch: only the Latin model is bundled (app-size trim), so
++        // every script request resolves to the default (Latin) recognizer.
++        return TextRecognizerOptions.DEFAULT_OPTIONS;
+     }
+ 
+     @ReactMethod
+diff --git a/node_modules/@react-native-ml-kit/text-recognition/ios/TextRecognition.m b/node_modules/@react-native-ml-kit/text-recognition/ios/TextRecognition.m
+index d23fb71..c89774d 100644
+--- a/node_modules/@react-native-ml-kit/text-recognition/ios/TextRecognition.m
++++ b/node_modules/@react-native-ml-kit/text-recognition/ios/TextRecognition.m
+@@ -3,10 +3,6 @@
+ @import MLKitVision.MLKVisionImage;
+ @import MLKitTextRecognition;
+ @import MLKitTextRecognitionCommon;
+-@import MLKitTextRecognitionChinese;
+-@import MLKitTextRecognitionJapanese;
+-@import MLKitTextRecognitionKorean;
+-@import MLKitTextRecognitionDevanagari;
+ 
+ @implementation TextRecognition
+ 
+@@ -92,20 +88,9 @@ RCT_EXPORT_METHOD(recognize: (nonnull NSString*)url
+     // text recognizer options based on the script params
+     MLKCommonTextRecognizerOptions *options = nil;
+ 
+-    // if the language param isn't specified, we can assume the user requirement is Latin text recognition
+-    if (script == nil || [script isEqualToString:@"Latin"]) {
+-        options = [[MLKTextRecognizerOptions alloc] init];
+-    } else if ([script isEqualToString:@"Chinese"]) {
+-        options = [[MLKChineseTextRecognizerOptions alloc] init];
+-    } else if ([script isEqualToString:@"Devanagari"]) {
+-        options = [[MLKDevanagariTextRecognizerOptions alloc] init];
+-    } else if ([script isEqualToString:@"Japanese"]) {
+-        options = [[MLKJapaneseTextRecognizerOptions alloc] init];
+-    } else if ([script isEqualToString:@"Korean"]) {
+-        options = [[MLKKoreanTextRecognizerOptions alloc] init];
+-    } else {
+-        return reject(@"Text Recognition", @"Unsupported script", nil);
+-    }
++    // SpendFlow patch: only the Latin model is bundled (app-size trim), so
++    // every script request resolves to the default (Latin) recognizer.
++    options = [[MLKTextRecognizerOptions alloc] init];
+     
+     MLKTextRecognizer *textRecognizer = [MLKTextRecognizer textRecognizerWithOptions:options];
+ 

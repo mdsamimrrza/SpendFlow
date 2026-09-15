@@ -43,9 +43,10 @@ import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { useExpenses } from '@/hooks/useExpenses';
 import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
+import { usePrivacyScreen } from '@/hooks/usePrivacyScreen';
 import { useTheme } from '@/hooks/useTheme';
 import { listCategories } from '@/services/categories';
-import { buildRateResolver, RateResolver } from '@/services/exchange';
+import { useRateResolver } from '@/hooks/useRateResolver';
 import { Category, Expense, PeriodKey } from '@/types';
 import { filterExpensesByPeriod, formatMoney, getMonthlyBudget, sumExpenses, sumIncome } from '@/utils/format';
 
@@ -60,6 +61,8 @@ export default function AnalyticsScreen() {
   const theme = useTheme();
   const { rates } = useExchangeRates();
   const { width } = useWindowDimensions();
+  // Financial data screen: block screenshots / screen recording while mounted.
+  usePrivacyScreen();
   const isCompact = width < 390;
   const [period, setPeriod] = useState<PeriodKey>('month');
   const [customRange, setCustomRange] = useState<DateRange>({ startDate: null, endDate: null });
@@ -122,29 +125,11 @@ export default function AnalyticsScreen() {
     [filteredItems],
   );
 
-  const [rateResolver, setRateResolver] = useState<RateResolver | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    buildRateResolver(filteredItems, preferredCurrency)
-      .then((resolver) => {
-        if (!cancelled) setRateResolver(resolver);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [filteredItems, preferredCurrency]);
-
-  // Every expense converts at its own transaction date, never today's rate
-  const convertAtDate = useCallback(
-    (expense: Expense) => {
-      if (rateResolver) {
-        return rateResolver.convert(Number(expense.amount), expense.currency || 'NPR', preferredCurrency, expense.date);
-      }
-      return 0;
-    },
-    [rateResolver, preferredCurrency],
+  // Every expense converts at its own transaction date, never today's rate —
+  // shared snapshot-resolver hook (same source as History/Export/P&L).
+  const { resolver: rateResolver, convertAtDate } = useRateResolver(
+    filteredItems,
+    preferredCurrency,
   );
 
   const totalSpend = useMemo(
@@ -510,7 +495,7 @@ export default function AnalyticsScreen() {
           {/* 1. Income, Expense & Budget Analysis Card */}
           <IncomeExpenseBudgetCard
             expenses={filteredItems}
-            monthlyBudget={getMonthlyBudget(profile, rates, preferredCurrency)}
+            monthlyBudget={getMonthlyBudget(profile, rateResolver, preferredCurrency)}
             targetCurrency={preferredCurrency}
           />
 

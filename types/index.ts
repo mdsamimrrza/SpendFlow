@@ -69,6 +69,12 @@ export interface Expense {
   receipt_image_url: string | null;
   is_recurring: boolean;
   recurring_rule_id: string | null;
+  /**
+   * Chain slot this row satisfies — the rule's schedule position, never the
+   * payment date. Dedup key is (recurring_rule_id, recurring_due_date), so a
+   * late payment still books exactly one installment.
+   */
+  recurring_due_date?: string | null;
   bank_account_id?: string | null;
   /** USD per 1 unit of `currency`, snapshotted at the transaction date. Never recomputed. */
   exchange_rate_to_usd?: number | null;
@@ -93,9 +99,16 @@ export interface ExpenseInput {
   notes?: string | null;
   receipt_image_url?: string | null;
   type?: TransactionType;
+  /** Set when the row was produced by / linked to a recurring rule. */
+  is_recurring?: boolean;
+  recurring_rule_id?: string | null;
+  recurring_due_date?: string | null;
 }
 
 export type RecurringFrequency = 'daily' | 'weekly' | 'monthly' | 'custom';
+
+/** auto_charge = posted silently on the due date; pay_on_due = a due card waits for Mark Paid. */
+export type RecurringMode = 'auto_charge' | 'pay_on_due';
 
 export interface RecurringRule {
   id: string;
@@ -107,6 +120,11 @@ export interface RecurringRule {
   description: string | null;
   payment_method: PaymentMethod;
   frequency: RecurringFrequency;
+  /** Cycle length in days; used only when frequency === 'custom'. */
+  interval_days?: number | null;
+  mode?: RecurringMode;
+  /** Chain anchor: due dates are plan_start_date + N × cycle, never re-anchored on late payment. */
+  plan_start_date?: string | null;
   next_due_date: string;
   is_active: boolean;
   /** USD per 1 unit of `currency`, snapshotted at rule creation. Never recomputed. */
@@ -114,8 +132,18 @@ export interface RecurringRule {
   base_currency?: string | null;
   created_at: string;
   updated_at: string;
+  /** Set when the rule sits in the Bin; purged permanently after BIN_RETENTION_DAYS. */
+  deleted_at?: string | null;
   categories?: Pick<Category, 'name' | 'icon' | 'color'> | null;
 }
+
+/** Days a deleted expense / recurring plan stays restorable in the Bin. */
+export const BIN_RETENTION_DAYS = 60;
+
+/** One restorable row inside the Bin (services/bin.ts). */
+export type BinItem =
+  | { kind: 'expense'; id: string; deleted_at: string; expense: Expense }
+  | { kind: 'recurring'; id: string; deleted_at: string; rule: RecurringRule };
 
 export type AccountType = 'bank' | 'wallet' | 'cash' | 'credit_card' | 'savings' | 'investment' | 'other';
 

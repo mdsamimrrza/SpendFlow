@@ -3,9 +3,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getCategoryById } from '@/services/categories';
 import { createExpense, filterAndSortCachedExpenses, getCachedExpenses, listExpenses, softDeleteExpense, updateExpense } from '@/services/expenses';
 import { checkAndNotifyBudgetThreshold, checkAndNotifyCategoryBudgetThreshold, notifyExpenseAdded, notifyLargeExpense } from '@/services/notifications';
-import { buildRateResolver } from '@/services/exchange';
+import { buildRateResolver, type RateResolver } from '@/services/exchange';
 import { Expense, ExpenseFilters, ExpenseInput, SortKey } from '@/types';
-import { convertCurrency, currentMonthRange, getCategoryBudget, getMonthlyBudget, sumExpenses } from '@/utils/format';
+import { convertCurrency, currentMonthRange, formatCurrency, getCategoryBudget, getMonthlyBudget, sumExpenses } from '@/utils/format';
 import { notifyOtherDevices } from '@/services/pushNotifications';
 
 type ExpenseChangeListener = () => void;
@@ -15,7 +15,7 @@ export function notifyExpensesChanged() {
   listeners.forEach((listener) => listener());
 }
 
-async function getEffectiveMonthlyBudget(userId?: string, targetCurrency = 'NPR', resolver?: any): Promise<number> {
+async function getEffectiveMonthlyBudget(userId?: string, targetCurrency = 'NPR', resolver?: RateResolver | null): Promise<number> {
   try {
     const profileJson = userId
       ? await AsyncStorage.getItem(`@spendflow_cached_profile_${userId}`).catch(() => null)
@@ -23,12 +23,25 @@ async function getEffectiveMonthlyBudget(userId?: string, targetCurrency = 'NPR'
     if (profileJson) {
       const parsed = JSON.parse(profileJson);
       if (parsed?.id === userId && parsed?.monthly_budget && Number(parsed.monthly_budget) > 0) {
-        return getMonthlyBudget(parsed, undefined, targetCurrency);
+        // Convert via the same snapshot-aware resolver the month total uses, so
+        // the threshold notification compares like-for-like historical rates.
+        return getMonthlyBudget(parsed, resolver ?? null, targetCurrency);
       }
     }
     if (userId) {
+      // auth.ts mirrors the raw DB figure (already in budget_currency) here.
+      // The key predates budget_currency tracking, so only trust it when the
+      // cached profile confirms the budget's currency — otherwise a raw number
+      // in an unknown unit would be compared against a converted total.
       const directBudget = await AsyncStorage.getItem(`@spendflow_monthly_budget_${userId}`);
-      if (directBudget && Number(directBudget) > 0) {
+      const cachedProfileBudgetCcy = profileJson
+        ? String(JSON.parse(profileJson)?.budget_currency ?? '').toUpperCase()
+        : '';
+      const cachedProfilePreferred = profileJson
+        ? String(JSON.parse(profileJson)?.preferred_currency ?? '').toUpperCase()
+        : '';
+      const target = (targetCurrency || 'NPR').toUpperCase();
+      if (directBudget && Number(directBudget) > 0 && (cachedProfileBudgetCcy === target || cachedProfilePreferred === target)) {
         return Number(directBudget);
       }
     }
@@ -117,9 +130,8 @@ async function triggerExpenseNotifications(
         const catMonthTotal = sumExpenses(catMonthItems, currency, rateResolver);
         const profileJson = await AsyncStorage.getItem(`@spendflow_cached_profile_${userId}`).catch(() => null);
         const parsedProfile = profileJson ? JSON.parse(profileJson) : null;
-        // Pass undefined for rates to fall back to DEFAULT_RATES; rateResolver is
-        // a RateResolver, not a Record<string, number>, so it must not be passed here.
-        const catBudget = getCategoryBudget(targetCat.budget_monthly, parsedProfile, currency, undefined);
+        // Use RateResolver for consistent historical rate conversion
+        const catBudget = getCategoryBudget(targetCat.budget_monthly, parsedProfile, currency, rateResolver);
         void checkAndNotifyCategoryBudgetThreshold(
           targetCat.id,
           targetCat.name,
@@ -239,7 +251,7 @@ export function useExpenses(userId?: string, filters?: ExpenseFilters, sort: Sor
       void notifyOtherDevices({
         userId,
         title: isIncomeEntry ? '💰 New Income Added' : '💸 New Expense Added',
-        body: `${input.currency} ${Number(input.amount).toLocaleString()}${input.description ? ` · ${input.description}` : ''}`,
+        body: `${formatCurrency(Number(input.amount), input.currency)}${input.description ? ` · ${input.description}` : ''}`,
         data: { kind: 'transaction', type: input.type ?? 'expense', amount: Number(input.amount) },
       });
     }

@@ -9,12 +9,14 @@ import {
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
-import { Edit3, Trash2 } from 'lucide-react-native';
+import { format, parseISO } from 'date-fns';
+import { Edit3, ReceiptText, StickyNote, Trash2 } from 'lucide-react-native';
 import { ExpenseDetailModal } from '@/components/expense/ExpenseDetailModal';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { CategoryIcon } from '@/components/ui/CategoryIcon';
 import { Text } from '@/components/ui/Text';
 import { useAuth } from '@/hooks/useAuth';
+import { useLanguage } from '@/hooks/useLanguage';
 import { convertExpense } from '@/services/exchange';
 import { usePrivacy } from '@/hooks/usePrivacy';
 import { useTheme } from '@/hooks/useTheme';
@@ -29,12 +31,22 @@ interface ExpenseItemProps {
   displayAmount?: number;
 }
 
+/** "2026-09-14" → "Sep 14" (raw ISO in a row reads like a database dump). */
+function shortDate(iso: string): string {
+  try {
+    return format(parseISO(iso), 'MMM d');
+  } catch {
+    return iso;
+  }
+}
+
 // React.memo: list rows are the hottest render path (History + Dashboard).
 // With stable props (stable expense object identities, memoized displayAmount
 // values, stable callbacks) a parent re-render no longer re-renders every row,
 // including their embedded modal trees.
 export const ExpenseItem = React.memo(function ExpenseItem({ expense, onDelete, onPress, displayAmount }: ExpenseItemProps) {
   const theme = useTheme();
+  const { t } = useLanguage();
   const { profile } = useAuth();
   const { isPrivacyMode } = usePrivacy();
   const router = useRouter();
@@ -46,6 +58,11 @@ export const ExpenseItem = React.memo(function ExpenseItem({ expense, onDelete, 
 
   const preferredCurrency = profile?.preferred_currency ?? 'NPR';
   const isDifferentCurrency = expense.currency && expense.currency !== preferredCurrency;
+  // Category brand color drives the icon tile (data-driven like account
+  // colors); income rows fall back to the income accent.
+  const catColor =
+    expense.categories?.color ||
+    (expense.type === 'income' ? theme.colors.income : theme.colors.primary);
   // Snapshot-aware display amount: the parent may pass a pre-converted value
   // (history does); otherwise this row converts at its OWN date via its
   // exchange_rate_to_usd snapshot — never today's market rate.
@@ -157,7 +174,19 @@ export const ExpenseItem = React.memo(function ExpenseItem({ expense, onDelete, 
 
   return (
     <>
-      <View style={{ position: 'relative', overflow: 'hidden', borderBottomWidth: 1, borderBottomColor: theme.colors.border }}>
+      {/* ── ENTRY CARD (rounded, self-contained — the swipe tray clips to
+          the card's corners via overflow:hidden) ── */}
+      <View
+        style={{
+          position: 'relative',
+          overflow: 'hidden',
+          borderRadius: 14,
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+          backgroundColor: theme.colors.surface,
+          marginBottom: 8,
+        }}
+      >
         {/* ── BACKGROUND ACTION TRAY (Revealed on Swipe) ── */}
         <View
           style={{
@@ -209,7 +238,7 @@ export const ExpenseItem = React.memo(function ExpenseItem({ expense, onDelete, 
           {...panResponder.panHandlers}
           style={{
             transform: [{ translateX }],
-            backgroundColor: theme.colors.background,
+            backgroundColor: theme.colors.surface,
             width: '100%',
             zIndex: 1,
           }}
@@ -217,43 +246,66 @@ export const ExpenseItem = React.memo(function ExpenseItem({ expense, onDelete, 
           <Pressable
             onPress={handleCardPress}
             style={({ pressed }) => ({
-              minHeight: 74,
+              minHeight: 72,
               flexDirection: 'row',
               alignItems: 'center',
-              gap: theme.spacing.md,
-              paddingVertical: theme.spacing.md,
-              paddingHorizontal: 4,
+              gap: 12,
+              paddingVertical: 10,
+              paddingHorizontal: 12,
               opacity: pressed ? 0.75 : 1,
             })}
           >
-            {/* Category Icon Badge */}
+            {/* Category Icon Tile — tinted with the category's own brand color */}
             <View
               style={{
                 width: 44,
                 height: 44,
-                borderRadius: theme.radius.full,
-                backgroundColor: theme.colors.surfaceElevated,
+                borderRadius: 13,
+                backgroundColor: `${catColor}18`,
                 alignItems: 'center',
                 justifyContent: 'center',
                 borderWidth: 1,
-                borderColor: theme.colors.border,
+                borderColor: `${catColor}30`,
               }}
             >
-              <CategoryIcon
-                name={expense.categories?.icon}
-                size={20}
-                color={expense.type === 'income' ? theme.colors.income : theme.colors.primary}
-              />
+              <CategoryIcon name={expense.categories?.icon} size={20} color={catColor} />
             </View>
 
-            {/* Description & Metadata */}
-            <View style={{ flex: 1, gap: 2 }}>
+            {/* Description & Metadata Chips */}
+            <View style={{ flex: 1, gap: 4, minWidth: 0 }}>
               <Text variant="label" numberOfLines={1} style={{ fontWeight: '700', fontSize: 14 }}>
                 {expense.description || expense.categories?.name || (expense.type === 'income' ? 'Income' : 'Expense')}
               </Text>
-              <Text variant="caption" muted style={{ fontSize: 11 }}>
-                {expense.date} {expense.time ? `· ${formatTime12(expense.time)}` : ''} · {expense.payment_method}
-              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                <Text variant="caption" muted style={{ fontSize: 11 }}>
+                  {`${shortDate(expense.date)}${expense.time ? ` · ${formatTime12(expense.time)}` : ''}`}
+                </Text>
+                <View
+                  style={{
+                    paddingHorizontal: 7,
+                    paddingVertical: 2,
+                    borderRadius: theme.radius.full,
+                    backgroundColor: theme.colors.surfaceElevated,
+                    borderWidth: 1,
+                    borderColor: theme.colors.border,
+                  }}
+                >
+                  <Text
+                    numberOfLines={1}
+                    style={{
+                      fontSize: 9.5,
+                      fontWeight: '800',
+                      letterSpacing: 0.4,
+                      textTransform: 'uppercase',
+                      color: theme.colors.textMuted,
+                    }}
+                  >
+                    {expense.payment_method}
+                  </Text>
+                </View>
+                {expense.notes ? <StickyNote size={12} color={theme.colors.textMuted} /> : null}
+                {expense.receipt_image_url ? <ReceiptText size={12} color={theme.colors.textMuted} /> : null}
+              </View>
             </View>
 
             {/* Amount Display — NBSP keeps the sign glued to the amount so
@@ -302,8 +354,8 @@ export const ExpenseItem = React.memo(function ExpenseItem({ expense, onDelete, 
       />
       <ConfirmDialog
         visible={deleteConfirmOpen}
-        title="Delete Expense?"
-        message="This transaction will be permanently removed from your history."
+        title={t('expense_delete')}
+        message={t('bin_move_expense_message')}
         onCancel={() => setDeleteConfirmOpen(false)}
         onConfirm={() => {
           setDeleteConfirmOpen(false);

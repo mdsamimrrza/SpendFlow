@@ -288,16 +288,16 @@ function ExpenseDetailModal({
                   </>
                 ) : null}
 
-                {/* Notes (if provided) */}
+                {/* Notes (if provided) — label and content on one flowing line */}
                 {expense.notes ? (
                   <>
                     <View style={{ height: 1, backgroundColor: theme.colors.border }} />
-                    <View style={{ gap: 4, paddingVertical: 4 }}>
-                      <Text variant="caption" muted>{t('expense_notes')}</Text>
-                      <Text variant="body" muted style={{ fontStyle: 'italic' }}>
-                        "{expense.notes}"
+                    <Text variant="body" muted style={{ fontStyle: 'italic', paddingVertical: 4 }}>
+                      <Text variant="caption" style={{ fontWeight: '800', fontStyle: 'normal', color: theme.colors.text }}>
+                        {`${t('expense_notes')}:\u00A0\u00A0`}
                       </Text>
-                    </View>
+                      "{expense.notes}"
+                    </Text>
                   </>
                 ) : null}
 
@@ -421,7 +421,7 @@ export function CategoryBreakdown({
   const { t } = useLanguage();
   const { isPrivacyMode } = usePrivacy();
   const currency = targetCurrency ?? profile?.preferred_currency ?? 'NPR';
-  const rateResolver = useRateResolver(expenses, currency);
+  const { resolver: rateResolver } = useRateResolver(expenses, currency);
   const activeResolver = resolver ?? rateResolver;
 
   const [isFlipped, setIsFlipped] = useState(false);

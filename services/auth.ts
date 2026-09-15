@@ -3,6 +3,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
+import * as AppleAuthentication from 'expo-apple-authentication';
+import * as Crypto from 'expo-crypto';
 import { UserProfile } from '@/types';
 import { ONBOARDING_CURRENCY_KEY } from '@/constants/app';
 import { supabase } from '@/utils/supabase';
@@ -83,9 +85,37 @@ export async function signUpWithEmail(email: string, password: string, displayNa
   return data;
 }
 
-export async function resetPassword(email: string) {
-  const { error } = await supabase.auth.resetPasswordForEmail(email);
-  if (error) throw error;
+export type ResetOutcome = 'sent' | 'no_account' | 'cooldown' | 'invalid' | 'failed';
+
+/**
+ * Forgot-password request via the send-password-reset Edge Function
+ * (2026-09-15). The broker answers whether the account exists (owner-requested
+ * UX), enforces a DB-backed 60s cooldown per email for found AND not-found
+ * attempts alike, and only then sends the recovery mail. Redirect targets:
+ * spendflow://callback on native (AuthContext's deep-link listener consumes
+ * the recovery session and raises the set-new-password prompt) or the caller's
+ * own origin + /auth/callback on the web export — GoTrue's URL allowlist stays
+ * the second gate, so a spoofed origin can never capture a link.
+ */
+export async function resetPassword(email: string): Promise<ResetOutcome> {
+  const isWeb = Platform.OS === 'web' && typeof window !== 'undefined';
+  const body = isWeb
+    ? { email, channel: 'web', origin: window.location.origin }
+    : { email, channel: 'native' };
+  const { data, error } = await supabase.functions.invoke('send-password-reset', { body });
+  if (error) return 'failed';
+  const res = data as { success?: boolean; code?: string } | null;
+  if (res?.success) return 'sent';
+  switch (res?.code) {
+    case 'no_account':
+      return 'no_account';
+    case 'cooldown_active':
+      return 'cooldown';
+    case 'invalid_email':
+      return 'invalid';
+    default:
+      return 'failed';
+  }
 }
 
 export async function signInWithGoogle() {
@@ -161,6 +191,72 @@ export async function signInWithGoogle() {
     : new Error('Google sign-in did not return authentication tokens.');
 }
 
+/**
+ * Native Sign in with Apple (iOS 13+, required alongside Google sign-in by
+ * App Store Guideline 4.8). Apple's ASAuthorization issues an identity JWT
+ * that Supabase verifies via signInWithIdToken — no browser redirect
+ * round-trip like Google. A random nonce is hashed with SHA-256 and handed
+ * to Apple; the RAW nonce goes to Supabase, which re-hashes and compares it
+ * against the nonce embedded in the JWT (replay protection).
+ */
+export async function signInWithApple() {
+  if (Platform.OS !== 'ios') {
+    throw new Error('Sign in with Apple is only available on iOS.');
+  }
+
+  const rawNonce = Array.from(Crypto.getRandomBytes(32))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+  const hashedNonce = await Crypto.digestStringAsync(
+    Crypto.CryptoDigestAlgorithm.SHA256,
+    rawNonce,
+  );
+
+  let credential: AppleAuthentication.AppleAuthenticationCredential;
+  try {
+    credential = await AppleAuthentication.signInAsync({
+      requestedScopes: [
+        AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+        AppleAuthentication.AppleAuthenticationScope.EMAIL,
+      ],
+      nonce: hashedNonce,
+    });
+  } catch (err) {
+    if ((err as { code?: string })?.code === 'ERR_REQUEST_CANCELED') {
+      throw new Error('Apple sign-in was cancelled.');
+    }
+    throw err;
+  }
+
+  if (!credential.identityToken) {
+    throw new Error('Apple sign-in did not return an identity token.');
+  }
+
+  const { data, error } = await supabase.auth.signInWithIdToken({
+    provider: 'apple',
+    token: credential.identityToken,
+    nonce: rawNonce,
+  });
+  if (error) throw error;
+
+  // Apple only ever reveals the real name on the FIRST authorization —
+  // persist it immediately or it is lost forever.
+  const fullName = [
+    credential.fullName?.givenName,
+    credential.fullName?.familyName,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .trim();
+  if (fullName) {
+    await supabase.auth
+      .updateUser({ data: { display_name: fullName } })
+      .catch(() => undefined);
+  }
+
+  return data;
+}
+
 export async function signOut() {
   const {
     data: { user },
@@ -234,7 +330,26 @@ export async function uploadAvatar(asset: {
   } = await supabase.auth.getUser();
   if (!user) throw new Error('No authenticated user found.');
 
-  const extension = asset.fileName?.split('.').pop()?.toLowerCase() || 'jpg';
+  // Match the avatars bucket's server-side limits (2 MiB, image MIME only —
+  // see 20260908000000_security_hardening.sql) so oversized/invalid files
+  // fail fast client-side with a clear message instead of a bucket error.
+  const normalizedMime = asset.mimeType?.toLowerCase().split(';')[0] ?? null;
+  const avatarMimes = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/heic', 'image/heif']);
+  if (normalizedMime && !avatarMimes.has(normalizedMime)) {
+    throw new Error('Profile photo must be an image (JPEG, PNG, WebP or HEIC).');
+  }
+  if (asset.base64) {
+    const encoded = asset.base64.includes(',') ? asset.base64.split(',')[1] : asset.base64;
+    if (Math.floor(encoded.length * 0.75) > 2 * 1024 * 1024) {
+      throw new Error('Profile photo is too large (max 2 MB).');
+    }
+  }
+
+  // Strict extension allowlist (mirrors sanitizeExtension in receipts.ts):
+  // the extension becomes part of the storage path, so a crafted filename
+  // like "avatar.php" must never reach it.
+  const rawExt = asset.fileName?.split('.').pop()?.toLowerCase() ?? '';
+  const extension = ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif'].includes(rawExt) ? rawExt : 'jpg';
   const path = `${user.id}/avatar-${Date.now()}.${extension}`;
   const contentType = asset.mimeType || (extension === 'png' ? 'image/png' : 'image/jpeg');
 
@@ -324,7 +439,7 @@ export async function changePassword(currentPassword: string, newPassword: strin
 }
 
 export async function sendEmailChangeOtp(currentEmail: string): Promise<{ rateLimited?: boolean }> {
-  return sendDeleteAccountOtp(currentEmail);
+  return sendDeleteAccountOtp(currentEmail, 'email_change');
 }
 
 async function applyEmailChange(newEmail: string): Promise<{ confirmationPending: boolean }> {
@@ -697,26 +812,35 @@ export async function updateProfile(input: Partial<Pick<UserProfile, 'display_na
  * Deterministic account deletion.
  *
  * The trusted `delete-account` Edge Function is the SOLE deletion orchestrator:
- * it verifies the caller's JWT, removes every user-owned row in one
- * transactional RPC, purges receipts/{uid}/** and avatars/{uid}/** from
- * storage (paginated, fail-closed), and deletes the Auth identity LAST.
+ * it verifies the caller's JWT, requires that JWT to be FRESH (minted by the
+ * OTP verification within its short window — a long-lived session cannot
+ * delete the account), removes every user-owned row in one transactional RPC,
+ * purges receipts/{uid}/** and avatars/{uid}/** from storage (paginated,
+ * fail-closed), and deletes the Auth identity LAST.
  *
  * The client only requests deletion and reacts to the verified result:
  *   - success  → clear local caches, sign out (the UI then shows success)
  *   - anything else → throw with a clear message. NOTHING is deleted locally
  *     on failure — no row deletes, no storage deletes, no sign-out, no success
  *     UI. The account stays fully intact and the flow is retryable.
+ *
+ * @param otpFreshToken Access token minted by the just-completed OTP verify.
+ *   Falls back to the current session ONLY when the caller is the OTP flow's
+ *   legacy path; the Edge Function still rejects stale tokens regardless.
  */
-export async function deleteAccount(): Promise<void> {
+export async function deleteAccount(otpFreshToken?: string): Promise<void> {
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) throw new Error('No authenticated user found.');
 
-  const { data: sessionData } = await supabase.auth.getSession().catch(() => ({
-    data: { session: null as null },
-  }));
-  const accessToken = sessionData.session?.access_token;
+  let accessToken = otpFreshToken;
+  if (!accessToken) {
+    const { data: sessionData } = await supabase.auth.getSession().catch(() => ({
+      data: { session: null as null },
+    }));
+    accessToken = sessionData.session?.access_token;
+  }
   if (!accessToken) {
     throw new Error('Your session has expired. Please sign in again and retry the deletion.');
   }
@@ -762,40 +886,58 @@ export async function deleteAccount(): Promise<void> {
   }
 }
 
-export async function sendDeleteAccountOtp(email: string): Promise<{ rateLimited?: boolean }> {
-  const cleanEmail = email.trim();
-  try {
-    const { error } = await supabase.auth.signInWithOtp({
-      email: cleanEmail,
-      options: {
-        shouldCreateUser: false,
-      },
-    });
-    if (error) {
-      const isRateLimit = error.message?.toLowerCase().includes('rate limit') || (error as any).status === 429;
-      if (isRateLimit) {
-        return { rateLimited: true };
-      }
+/**
+ * Sends the security-OTP email (account deletion / email change) through the
+ * send-security-otp Edge Function instead of calling signInWithOtp directly.
+ *
+ * Server-side guarantees the direct call lacked:
+ *   - per-user, per-purpose 60s cooldown in the database (send-spam/cost
+ *     protection — verify-attempt limits only protect the code, not the send)
+ *   - recipient resolved from the caller's JWT, so a client can never make
+ *     the server email arbitrary addresses
+ *
+ * Still surfaces Supabase's own hosted rate limit (429 → rateLimited) when
+ * the project-wide OTP budget is exhausted.
+ */
+export async function sendDeleteAccountOtp(
+  email: string,
+  purpose: 'account_deletion' | 'email_change' = 'account_deletion',
+): Promise<{ rateLimited?: boolean }> {
+  void email; // recipient is resolved server-side from the session; kept for API compat
 
-      // Fallback: retry standard OTP send without shouldCreateUser constraint
-      const { error: retryError } = await supabase.auth.signInWithOtp({
-        email: cleanEmail,
-      });
-      if (retryError) {
-        const isRetryRateLimit = retryError.message?.toLowerCase().includes('rate limit') || (retryError as any).status === 429;
-        if (isRetryRateLimit) {
-          return { rateLimited: true };
-        }
-        throw retryError;
-      }
-    }
-    return { rateLimited: false };
-  } catch (err: any) {
-    const isRateLimit = err?.message?.toLowerCase().includes('rate limit') || err?.status === 429;
-    if (isRateLimit) {
+  const { data: sessionData } = await supabase.auth.getSession().catch(() => ({
+    data: { session: null as null },
+  }));
+  const accessToken = sessionData.session?.access_token;
+  if (!accessToken) {
+    throw new Error('Your session has expired. Please sign in again.');
+  }
+
+  const functionUrl = `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/send-security-otp`;
+  try {
+    const res = await fetch(functionUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ purpose }),
+    });
+
+    if (res.status === 429) {
       return { rateLimited: true };
     }
-    throw err;
+    if (!res.ok) {
+      const result = (await res.json().catch(() => null)) as { error?: string } | null;
+      if (result?.error === 'cooldown_active') {
+        return { rateLimited: true };
+      }
+      throw new Error('Failed to send the security code. Please try again.');
+    }
+    return { rateLimited: false };
+  } catch (err) {
+    if (err instanceof Error && /session has expired/i.test(err.message)) throw err;
+    throw new Error('Failed to send the security code. Please try again.');
   }
 }
 
@@ -803,34 +945,61 @@ export async function verifyDeleteAccountOtpAndWipe(email: string, token: string
   const cleanEmail = email.trim();
   const cleanToken = token.trim();
 
+  // Once an OTP verify SUCCEEDS, any later failure is a deletion failure and
+  // must propagate as-is — falling through to the second verify attempt would
+  // burn the already-consumed code and surface a misleading "invalid OTP".
+  // The flag distinguishes verify-level failures (fall through, second method
+  // is legitimately retryable with the same code) from post-verify failures
+  // (throw, no retry loop). Network/auth errors inside deleteAccount therefore
+  // surface honestly instead of being masked as bad codes.
+  let otpVerified = false;
+
   // 1. Try standard email OTP verification
   try {
-    const { error } = await supabase.auth.verifyOtp({
+    const { data, error } = await supabase.auth.verifyOtp({
       email: cleanEmail,
       token: cleanToken,
       type: 'email',
     });
     if (!error) {
-      await deleteAccount();
+      otpVerified = true;
+      // The OTP verification mints a FRESH session — its access token is the
+      // proof-of-OTP the Edge Function requires (it rejects tokens whose amr
+      // shows no recent OTP verification). A pre-existing stolen session
+      // cannot pass that check, so the deletion gate is enforced server-side.
+      const freshToken = data.session?.access_token;
+      if (!freshToken) {
+        // No session minted (e.g. verifyOtp config returns sessionless) —
+        // refuse to proceed: the server would reject the stale token anyway.
+        throw new Error('Verification did not produce a session. Please try again.');
+      }
+      await deleteAccount(freshToken);
       return;
     }
-  } catch {
-    // Continue fallback
+  } catch (err) {
+    if (otpVerified) throw err; // post-verify failure — propagate honestly
   }
 
-  // 2. Try magiclink verification
+  // 2. Try magiclink verification (only reached when the email verify itself
+  // failed — a genuine wrong/expired code).
+  otpVerified = false;
   try {
-    const { error: recoveryError } = await supabase.auth.verifyOtp({
+    const { data, error: recoveryError } = await supabase.auth.verifyOtp({
       email: cleanEmail,
       token: cleanToken,
       type: 'magiclink',
     });
     if (!recoveryError) {
-      await deleteAccount();
+      otpVerified = true;
+      const freshToken = data.session?.access_token;
+      if (!freshToken) {
+        throw new Error('Verification did not produce a session. Please try again.');
+      }
+      await deleteAccount(freshToken);
       return;
     }
-  } catch {
-    // Continue fallback
+  } catch (err) {
+    if (otpVerified) throw err; // post-verify failure — propagate honestly
   }
 
   throw new Error('Invalid or expired OTP code. Please try again.');

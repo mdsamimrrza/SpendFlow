@@ -171,8 +171,8 @@ export function AccountManageModal({
   };
 
   const countryOptions = [
-    ...WIZARD_COUNTRIES.map((c) => ({ label: `${c.flag} ${c.name}`, value: c.code })),
-    { label: `🌐 ${t('account_other_country')}`, value: OTHER_COUNTRY_CODE },
+    ...WIZARD_COUNTRIES.map((c) => ({ label: c.name, value: c.code, flag: c.flag })),
+    { label: t('account_other_country'), value: OTHER_COUNTRY_CODE, flag: '🌐' },
   ];
 
   const handleCountryChange = (code: string) => {

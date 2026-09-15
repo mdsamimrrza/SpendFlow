@@ -2,7 +2,9 @@
 // Edge Function: delete-account
 //
 // Deterministic, fail-closed, retry-safe account deletion STATE MACHINE.
-// Called by the authenticated client AFTER an email OTP has been verified.
+// Called by the authenticated client with the session minted by the email-OTP
+// verification (proven via the token's amr claim — see isOtpFreshSession);
+// a password session or a stolen refresh token can NEVER trigger deletion.
 //
 // Cross-system reality, stated honestly: PostgreSQL, Storage, and Auth are
 // separate services — no cross-system transaction exists. The design below is
@@ -12,7 +14,10 @@
 // therefore never strand a half-deleted account with its login removed.
 //
 // Order (STRICT — storage BEFORE relational, auth LAST):
-//   0. Verify JWT → target uid (client-supplied IDs are IGNORED entirely)
+//   0. Verify OTP-minted session (amr otp/magiclink within the freshness
+//      window) + resolve target uid (client-supplied IDs are IGNORED
+//      entirely); on ANY failure after the lock, release deletion_pending
+//      so the account is never stranded write-locked
 //   1. Set users.deletion_pending = true   → database-level write lock:
 //      concurrent devices' INSERT/UPDATE on every user-owned table are
 //      rejected by triggers while deletion runs (Test G)
@@ -37,6 +42,79 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const USER_BUCKETS = ['receipts', 'avatars'] as const;
 
+// A caller's JWT must prove it was minted by a RECENT email-OTP verification.
+//
+// Claims used, with the refresh-attack model stated up front: a stolen refresh
+// token lets an attacker mint new access tokens at will — and each refresh
+// produces a NEW iat. So iat alone can never prove freshness. The amr
+// (authentication-methods-reference) claim is the anchor: it records HOW the
+// session was established with the timestamp of that event, and refreshes
+// preserve the original entries unchanged. Requiring an otp/magiclink entry
+// with a recent timestamp therefore proves the OTP verification itself
+// happened within the window — refreshing cannot launder an old one.
+const OTP_FRESHNESS_SECONDS = 10 * 60;
+
+interface AmrEntry {
+  method?: string;
+  timestamp?: number;
+}
+
+interface JwtPayload {
+  iat?: unknown;
+  amr?: unknown;
+}
+
+function decodeJwtPayload(token: string): JwtPayload | null {
+  const parts = token.split('.');
+  if (parts.length !== 3) return null;
+  try {
+    const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    return JSON.parse(atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4))) as JwtPayload;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * OTP proof-of-possession on the caller's token.
+ *
+ * Primary check (amr): the token's authentication-methods reference must
+ * contain an 'otp' or 'magiclink' entry — the methods the client's
+ * verifyOtp calls produce — with its event timestamp inside the window.
+ * Password sessions carry 'password'; refreshes keep the original amr
+ * entry and its original timestamp, so neither a long-lived password
+ * session nor a stolen refresh token can open the deletion gate.
+ *
+ * A token with NO amr claim at all is rejected outright (audit 2026-09-15:
+ * the old iat-only fallback for pre-amr GoTrue builds was refresh-bypassable
+ * in theory). Every hosted GoTrue — the only deployment this project uses —
+ * emits amr since 2022; there is no supported caller without it, so failing
+ * closed costs nothing and removes the bypass entirely.
+ */
+function isOtpFreshSession(token: string): boolean {
+  const payload = decodeJwtPayload(token);
+  if (!payload) return false;
+
+  const now = Math.floor(Date.now() / 1000);
+  const withinWindow = (t: number) => t <= now && now - t <= OTP_FRESHNESS_SECONDS;
+
+  // Supabase amr shape: an array of { method, timestamp } entries (some
+  // builds also embed a single object). Accept both forms.
+  const amr = payload.amr;
+  const entries: AmrEntry[] = Array.isArray(amr)
+    ? (amr as AmrEntry[])
+    : amr && typeof amr === 'object'
+      ? [amr as AmrEntry]
+      : [];
+
+  if (entries.length === 0) return false; // amr missing/unusable → fail closed
+  const otpEntry = entries.find((e) => e?.method === 'otp' || e?.method === 'magiclink');
+  if (!otpEntry) return false; // amr present but no OTP method → password/other session
+  // No timestamp on the entry → cannot prove recency; fail closed.
+  if (typeof otpEntry.timestamp !== 'number') return false;
+  return withinWindow(otpEntry.timestamp);
+}
+
 Deno.serve(async (req: Request) => {
   const fail = (status: number, error: string) =>
     new Response(JSON.stringify({ success: false, error }), {
@@ -56,6 +134,16 @@ Deno.serve(async (req: Request) => {
   const callerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
   if (!callerToken) {
     return fail(401, 'unauthorized');
+  }
+
+  // OTP proof-of-possession: the caller must present the session minted by
+  // the email-OTP verification (client sends verifyOtp's session token).
+  // The token's amr must show an otp/magiclink method with a recent event
+  // timestamp — refreshes mint new iat values but preserve the original amr,
+  // so neither a long-lived password session nor a stolen refresh token can
+  // open the deletion gate. Enforced here, not just in app UX.
+  if (!isOtpFreshSession(callerToken)) {
+    return fail(401, 'otp_verification_required');
   }
 
   let userId: string;
@@ -90,6 +178,21 @@ Deno.serve(async (req: Request) => {
   if (lockError) {
     return fail(500, 'deletion_lock_failed');
   }
+
+  // Every failure AFTER the lock must release it, or the account is
+  // permanently write-locked with no recovery path. `failLocked` wraps the
+  // plain fail(): best-effort rollback first, then the error response. The
+  // rollback itself failing is logged via the error code but never masks
+  // the original failure — the user sees "retry" either way, and a retry
+  // re-attempts the lock from scratch.
+  const failLocked = async (status: number, error: string) => {
+    try {
+      await admin.from('users').update({ deletion_pending: false }).eq('id', userId);
+    } catch {
+      // Best-effort rollback — must never mask the original failure below.
+    }
+    return fail(status, error);
+  };
 
   // ── 2. Storage purge FIRST — failure here must leave DB and Auth intact. ─
   // Purge via the official Storage SDK with converging pagination (objects are
@@ -152,11 +255,11 @@ Deno.serve(async (req: Request) => {
     for (const bucket of USER_BUCKETS) {
       await purgeBucket(bucket);
       if (!(await verifyBucketEmpty(bucket))) {
-        return fail(500, 'storage_cleanup_incomplete');
+        return await failLocked(500, 'storage_cleanup_incomplete');
       }
     }
   } catch (e) {
-    return fail(500, (e as Error).message || 'storage_cleanup_failed');
+    return await failLocked(500, (e as Error).message || 'storage_cleanup_failed');
   }
 
   // ── 3. Transactional relational delete — AFTER storage is verifiably clean. ─
@@ -164,7 +267,7 @@ Deno.serve(async (req: Request) => {
     p_user_id: userId,
   });
   if (rpcError) {
-    return fail(500, 'data_cleanup_failed');
+    return await failLocked(500, 'data_cleanup_failed');
   }
 
   // ── 4. Verify DB cleanup. ──────────────────────────────────────────────────
@@ -174,7 +277,7 @@ Deno.serve(async (req: Request) => {
     .eq('id', userId)
     .maybeSingle();
   if (profileCheck) {
-    return fail(500, 'data_cleanup_incomplete');
+    return await failLocked(500, 'data_cleanup_incomplete');
   }
 
   // ── 4b. Final storage sweep. ───────────────────────────────────────────────
@@ -190,20 +293,22 @@ Deno.serve(async (req: Request) => {
     for (const bucket of USER_BUCKETS) {
       await purgeBucket(bucket);
       if (!(await verifyBucketEmpty(bucket))) {
-        return fail(500, 'storage_cleanup_incomplete');
+        return await failLocked(500, 'storage_cleanup_incomplete');
       }
     }
   } catch (e) {
-    return fail(500, (e as Error).message || 'storage_cleanup_failed');
+    return await failLocked(500, (e as Error).message || 'storage_cleanup_failed');
   }
 
   // ── 5. Auth identity LAST. ────────────────────────────────────────────────
   // If this fails, DB+storage are already clean and a retry re-verifies them
   // (both converge to "already clean") and retries only the auth deletion.
   // The function must NOT report success until it actually succeeded.
+  // failLocked here is a harmless no-op safety net: the users row (and with
+  // it the deletion_pending flag) was already deleted in step 3.
   const { error: authDeleteError } = await admin.auth.admin.deleteUser(userId);
   if (authDeleteError) {
-    return fail(500, 'auth_deletion_failed');
+    return await failLocked(500, 'auth_deletion_failed');
   }
 
   // ── 6. Success. ────────────────────────────────────────────────────────────

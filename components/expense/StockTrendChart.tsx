@@ -12,7 +12,7 @@ import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
 import { useTheme } from '@/hooks/useTheme';
 import { Expense } from '@/types';
-import { currentMonthRange, formatMoney, getCycleLabel } from '@/utils/format';
+import { currentMonthRange, formatCurrency, formatMoney, getCycleLabel } from '@/utils/format';
 
 export type TimeFilter = 'today' | 'daily' | 'weekly' | 'monthly' | 'yearly';
 export type FlowViewMode = 'both' | 'expense' | 'income';
@@ -34,9 +34,10 @@ interface FlowDataPoint {
   dayBreakdown?: DayBreakdown[];  // populated for weekly filter only
 }
 
-// Formatter for on-graph tooltip values (shows full amount e.g. ₹ 2,742)
+// Formatter for on-graph tooltip values — centralized whole-number display
+// (data stays precise; only the label rounds).
 function shortMoney(val: number, currency: string): string {
-  return `${currency} ${Math.round(val).toLocaleString()}`;
+  return formatCurrency(val, currency);
 }
 
 function buildBezierPath(
@@ -87,7 +88,7 @@ export function StockTrendChart({
 }) {
   const theme = useTheme();
   const { t, language } = useLanguage();
-  const builtResolver = useRateResolver(expenses, targetCurrency);
+  const { resolver: builtResolver } = useRateResolver(expenses, targetCurrency);
   const activeResolver = resolver ?? builtResolver;
   usePrivacy();
   const { width } = useWindowDimensions();
@@ -448,8 +449,8 @@ export function StockTrendChart({
       const val = minAmount + (range * i) / steps;
       const normalizedY = (val - minAmount) / range;
       const y = chartHeight - paddingBottom - normalizedY * usableHeight;
-      // Use formatMoney to show proper currency formatting on y-axis
-      const label = formatMoney(Math.round(val), targetCurrency);
+      // Use formatMoney for proper currency formatting on the y-axis label
+      const label = formatMoney(val, targetCurrency);
       lines.push({ y, label });
     }
     return lines;

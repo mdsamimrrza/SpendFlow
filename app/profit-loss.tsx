@@ -6,13 +6,14 @@ import * as Haptics from 'expo-haptics';
 import Svg, { Path, Circle, Line, Defs, LinearGradient, Stop, Text as SvgText } from 'react-native-svg';
 import { Calendar, CalendarDays, ChevronLeft, ChevronRight, Scale, Sliders, TrendingDown, TrendingUp, Wallet, X } from 'lucide-react-native';
 import { Card } from '@/components/ui/Card';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Text } from '@/components/ui/Text';
-import { showToast } from '@/components/ui/Toast';
+import { showToast, ToastHost } from '@/components/ui/Toast';
 import { CalendarModal, DateRange } from '@/components/ui/CalendarModal';
 import { useAuth } from '@/hooks/useAuth';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
-import { buildRateResolver, type RateResolver } from '@/services/exchange';
+import { useRateResolver } from '@/hooks/useRateResolver';
 import { useExpenses } from '@/hooks/useExpenses';
 import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
@@ -20,7 +21,7 @@ import { useTheme } from '@/hooks/useTheme';
 import { updateProfile } from '@/services/auth';
 import { resetBudgetAlertHistory } from '@/services/notifications';
 import { fetchUserSettingsHistory } from '@/services/settingsHistory';
-import { currentMonthRange, formatMoney, getMonthlyBudget, getSafeMonthDate, sumExpenses, sumIncome } from '@/utils/format';
+import { currentMonthRange, formatMoney, getMonthlyBudget, getNormalizedCycle, getSafeMonthDate, isoDate, sumExpenses, sumIncome } from '@/utils/format';
 import { UserSettingsPeriod } from '@/types';
 
 interface MonthRow {
@@ -41,9 +42,8 @@ interface MonthRow {
   customCycleKey?: string;
 }
 
-function toISO(date: Date) {
-  return format(date, 'yyyy-MM-dd');
-}
+/** Local alias — the shared isoDate() util is THE implementation. */
+const toISO = isoDate;
 
 export default function ProfitLossScreen() {
   const router = useRouter();
@@ -78,13 +78,14 @@ export default function ProfitLossScreen() {
 
   // Cycle window state & editor
   const [updatingCycle, setUpdatingCycle] = useState(false);
+  // Pending paycheck-cycle change awaiting the user's explicit confirmation
+  // (warning dialog states exactly what changes and what never will).
+  const [pendingCycle, setPendingCycle] = useState<{ start: number; end: number | null } | null>(null);
   const [cycleCalendarOpen, setCycleCalendarOpen] = useState(false);
   const [cycleCalendarMode, setCycleCalendarMode] = useState<'range' | 'single-start' | 'single-end'>('range');
   const [cycleSettingsOpen, setCycleSettingsOpen] = useState(false);
 
-  const cycleStartDay = profile?.cycle_start_day ?? 1;
-  const cycleEndDayRaw = Number(profile?.cycle_end_day);
-  const cycleEndDay = cycleEndDayRaw >= 1 && cycleEndDayRaw <= 31 ? cycleEndDayRaw : null;
+  const { startDay: cycleStartDay, endDay: cycleEndDay } = getNormalizedCycle(profile);
   /** True when the user hasn't customised the cycle (starts on the 1st, no explicit end day).
    *  In that case calendar months are the natural grouping; otherwise the paycheck-cycle
    *  builder is used so the graph matches the user's salary cadence exactly. */
@@ -110,13 +111,42 @@ export default function ProfitLossScreen() {
     setModalEndDay(cycleEndDay !== null ? String(cycleEndDay) : '');
   }, [cycleStartDay, cycleEndDay]);
 
-  useEffect(() => {
-    // Prefill with the budget converted into the display currency — editing and
-    // re-saving re-bases the stored figure (with budget_currency) to this currency.
-    const displayBudget = getMonthlyBudget(profile, rates);
-    setBudgetInput(displayBudget > 0 ? String(displayBudget) : '');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile?.monthly_budget, profile?.budget_currency]);
+  // ── Live cycle window preview ──
+  // Mirrors exactly what Save will produce: the same currentMonthRange()
+  // call the save handler resolves to, fed with the modal's in-progress
+  // values. Shows the resulting window BEFORE the user commits, so
+  // misconfigurations (e.g. end 29 < start 20 collapsing the window to 10
+  // days inside one month) are visible as they type.
+  const modalCyclePreview = useMemo(() => {
+    const startNum = Number(modalStartDay.trim());
+    if (!modalStartDay.trim() || !startNum || startNum < 1 || startNum > 31) {
+      return { isValid: false, rangeText: '', days: 0, isShort: false };
+    }
+    const endTrim = modalEndDay.trim();
+    const endNum = endTrim ? Number(endTrim) : null;
+    if (endNum !== null && (!endNum || endNum < 1 || endNum > 31)) {
+      return { isValid: false, rangeText: '', days: 0, isShort: false };
+    }
+    try {
+      const win = currentMonthRange(startNum, endNum);
+      const f = new Date(win.from);
+      const tDate = new Date(win.to);
+      const days = Math.round((tDate.getTime() - f.getTime()) / 86_400_000) + 1;
+      // Universal short-cycle detector: any fixed-end window under 4 weeks
+      // is usually unintentional (e.g. start 20 + end 29 collapsing to
+      // Aug 20–29). Covers both directions — end ≥ start (same-month
+      // collapse) and tiny spill windows like start 29 + end 1.
+      const isShort = endNum !== null && days < 28;
+      return {
+        isValid: true,
+        rangeText: `${format(f, 'd MMM')} – ${format(tDate, 'd MMM yyyy')}`,
+        days,
+        isShort,
+      };
+    } catch {
+      return { isValid: false, rangeText: '', days: 0, isShort: false };
+    }
+  }, [modalStartDay, modalEndDay]);
 
   const from = range.startDate ?? toISO(new Date(now.getFullYear(), 0, 1));
   const to = range.endDate ?? toISO(now);
@@ -128,18 +158,16 @@ export default function ProfitLossScreen() {
 
   // Snapshot-aware conversion: every P&L figure resolves each row at its own
   // date (row snapshot first), matching History/Dashboard exactly.
-  const [rateResolver, setRateResolver] = useState<RateResolver | null>(null);
+  // Shared snapshot-resolver hook (same source as the other money screens).
+  const { resolver: rateResolver } = useRateResolver(expenses.items, currency);
+
   useEffect(() => {
-    let cancelled = false;
-    buildRateResolver(expenses.items, currency)
-      .then((r) => {
-        if (!cancelled) setRateResolver(r);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [expenses.items, currency]);
+    // Prefill with the budget converted into the display currency — editing and
+    // re-saving re-bases the stored figure (with budget_currency) to this currency.
+    const displayBudget = getMonthlyBudget(profile, rateResolver);
+    setBudgetInput(displayBudget > 0 ? String(displayBudget) : '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile?.monthly_budget, profile?.budget_currency, rateResolver]);
 
   const totalIncome = useMemo(
     () => sumIncome(itemsInRange, currency, rateResolver),
@@ -230,14 +258,12 @@ export default function ProfitLossScreen() {
           const income = sumIncome(items, currency, rateResolver);
           const expense = sumExpenses(items, currency, rateResolver);
 
-          const convertedPeriodBudget = getMonthlyBudget(
-            {
-              monthly_budget: profile?.monthly_budget ?? null,
-              budget_currency: profile?.budget_currency,
-              preferred_currency: currency,
-            },
-            rates,
-          );
+          // Convert budget using the same rate source as expenses for consistency
+          const rawBudget = profile?.monthly_budget ?? 0;
+          const budgetCurrency = (profile?.budget_currency || profile?.preferred_currency || 'NPR').toUpperCase();
+          const convertedPeriodBudget = (rawBudget > 0 && rateResolver && budgetCurrency !== currency)
+            ? rateResolver.convert(rawBudget, budgetCurrency, currency, bucketToISO)
+            : rawBudget;
 
           rows.push({
             key: bucketToISO,
@@ -305,14 +331,13 @@ export default function ProfitLossScreen() {
           );
           const income = sumIncome(items, currency, rateResolver);
           const expense = sumExpenses(items, currency, rateResolver);
-          const convertedPeriodBudget = getMonthlyBudget(
-            {
-              monthly_budget: profile?.monthly_budget ?? null,
-              budget_currency: profile?.budget_currency,
-              preferred_currency: currency,
-            },
-            rates,
-          );
+          
+          // Convert budget using the same rate source as expenses for consistency
+          const rawBudget = profile?.monthly_budget ?? 0;
+          const budgetCurrency = (profile?.budget_currency || profile?.preferred_currency || 'NPR').toUpperCase();
+          const convertedPeriodBudget = (rawBudget > 0 && rateResolver && budgetCurrency !== currency)
+            ? rateResolver.convert(rawBudget, budgetCurrency, currency, bucketToISO)
+            : rawBudget;
 
           normalMonths.push({
             key: bucketToISO,
@@ -433,14 +458,13 @@ export default function ProfitLossScreen() {
         );
         const income = sumIncome(items, currency, rateResolver);
         const expense = sumExpenses(items, currency, rateResolver);
-        const convertedPeriodBudget = getMonthlyBudget(
-          {
-            monthly_budget: custom.period.monthly_budget ?? profile?.monthly_budget ?? null,
-            budget_currency: custom.period.budget_currency ?? profile?.budget_currency,
-            preferred_currency: currency,
-          },
-          rates,
-        );
+        
+        // Convert budget using the same rate source as expenses for consistency
+        const rawBudget = custom.period.monthly_budget ?? profile?.monthly_budget ?? 0;
+        const budgetCurrency = (custom.period.budget_currency ?? profile?.budget_currency ?? 'NPR').toUpperCase();
+        const convertedPeriodBudget = (rawBudget > 0 && rateResolver && budgetCurrency !== currency)
+          ? rateResolver.convert(rawBudget, budgetCurrency, currency, toISODate)
+          : rawBudget;
 
         finalRows.push({
           key: `${toISO(custom.cycleStart)}__${toISO(custom.cycleEnd)}`,
@@ -510,15 +534,13 @@ export default function ProfitLossScreen() {
       }
 
       function getNextCycleStart(cycleStart: Date, period: UserSettingsPeriod): Date {
-        const { cycle_start_day, cycle_end_day } = period;
-        if (cycle_end_day !== null && cycle_end_day >= 1 && cycle_end_day <= 31) {
-          const endDay = cycle_end_day;
-          const nextMonth = endDay < cycle_start_day;
-          const year = nextMonth ? (cycleStart.getMonth() + 1 === 12 ? cycleStart.getFullYear() + 1 : cycleStart.getFullYear()) : cycleStart.getFullYear();
-          const month = nextMonth ? (cycleStart.getMonth() + 1) % 12 : cycleStart.getMonth();
-          return getSafeMonthDate(year, month, cycle_start_day);
-        }
-        return new Date(cycleStart.getFullYear(), cycleStart.getMonth() + 1, cycle_start_day);
+        // Cycles are MONTHLY: the next one always starts on the same
+        // day-of-month of the FOLLOWING month. The old fixed-end branch
+        // advanced only when endDay < startDay, so any end day >= start day
+        // (e.g. 1st→25th saved from "Pick on Calendar") returned the SAME
+        // date and the buildPaycheckCycleRows while-loop spun forever —
+        // freezing this screen. Same bug fixed in the web client 2026-09-15.
+        return getSafeMonthDate(cycleStart.getFullYear(), cycleStart.getMonth() + 1, period.cycle_start_day);
       }
 
       function addRow(bucketFrom: Date, bucketTo: Date, period: UserSettingsPeriod, cycleStart: Date, cycleEnd: Date) {
@@ -528,14 +550,12 @@ export default function ProfitLossScreen() {
         const income = sumIncome(items, currency, rateResolver);
         const expense = sumExpenses(items, currency, rateResolver);
 
-        const convertedPeriodBudget = getMonthlyBudget(
-          {
-            monthly_budget: period.monthly_budget,
-            budget_currency: period.budget_currency || profile?.budget_currency || currency,
-            preferred_currency: currency,
-          },
-          rates,
-        );
+        // Convert budget using the same rate source as expenses for consistency
+        const rawBudget = period.monthly_budget ?? 0;
+        const budgetCurrency = (period.budget_currency || profile?.budget_currency || currency).toUpperCase();
+        const convertedPeriodBudget = (rawBudget > 0 && rateResolver && budgetCurrency !== currency)
+          ? rateResolver.convert(rawBudget, budgetCurrency, currency, bucketToISO)
+          : rawBudget;
 
         // Label: for custom cycles show full unclipped cycle name; for calendar months use MMM yyyy
         const label = `${format(cycleStart, 'd MMM')} – ${format(cycleEnd, 'd MMM')}`;
@@ -585,7 +605,11 @@ export default function ProfitLossScreen() {
           if (bucketFrom <= bucketTo) {
             addRow(bucketFrom, bucketTo, period, cycleStart, cycleEnd);
           }
+          const prevStart = new Date(cycleStart);
           cycleStart = getNextCycleStart(cycleStart, period);
+          // Non-advancing guard: a cycle must always move forward, whatever
+          // the stored days say — without this a corrupt config could spin.
+          if (cycleStart <= prevStart) break;
         }
       });
 
@@ -649,9 +673,15 @@ export default function ProfitLossScreen() {
   }, [monthRows, currentPage]);
 
   const hasData = itemsInRange.length > 0;
-  const monthlyBudget = getMonthlyBudget(profile, rates);
+  const monthlyBudget = getMonthlyBudget(profile, rateResolver);
 
-  async function handleSetCycleWindow(startDay: number, endDay: number | null) {
+  // ── Cycle window change — always confirmed first (web parity 2026-09-15) ──
+  function handleSetCycleWindow(startDay: number, endDay: number | null) {
+    if (startDay === cycleStartDay && endDay === cycleEndDay) return; // no change
+    setPendingCycle({ start: startDay, end: endDay });
+  }
+
+  async function commitCycleWindow(startDay: number, endDay: number | null) {
     setUpdatingCycle(true);
     try {
       await updateProfile({ cycle_start_day: startDay, cycle_end_day: endDay });
@@ -660,9 +690,9 @@ export default function ProfitLossScreen() {
       // Tactile Haptic Confirmation
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
 
-      const endLabel = endDay !== null ? `Day ${endDay}` : 'Auto (Day - 1)';
+      const endLabel = endDay !== null ? `Day ${endDay}` : (t('pl_cycle_confirm_end_last') || 'last day');
       showToast({
-        message: `Paycheck Cycle updated! Active range: Day ${startDay} → ${endLabel}.`,
+        message: `Paycheck Cycle updated! Your month now runs Day ${startDay} to ${endLabel}.`,
         duration: 4500,
       });
     } catch (err) {
@@ -858,8 +888,9 @@ export default function ProfitLossScreen() {
   }
 
   return (
+    <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
     <ScrollView
-      style={{ flex: 1, backgroundColor: theme.colors.background }}
+      style={{ flex: 1 }}
       contentContainerStyle={{ padding: theme.spacing.lg, gap: theme.spacing.lg, paddingBottom: 60 }}
       refreshControl={
         <RefreshControl
@@ -1598,6 +1629,34 @@ export default function ProfitLossScreen() {
         onApply={handleCalendarApply}
       />
 
+      {/* ── CYCLE-CHANGE WARNING — states exactly what changes (future
+          grouping only) and what can never change (recorded transactions,
+          dates, amounts, past months — the settings trail keeps old cycles
+          as they were). ── */}
+      <ConfirmDialog
+        visible={pendingCycle !== null}
+        title={t('pl_cycle_confirm_title') || 'Change paycheck cycle?'}
+        message={
+          pendingCycle
+            ? [
+                (t('pl_cycle_confirm_new') || 'From today, your month runs Day {start} to {end}.')
+                  .replace('{start}', String(pendingCycle.start))
+                  .replace('{end}', pendingCycle.end === null ? (t('pl_cycle_confirm_end_last') || 'last day') : `Day ${pendingCycle.end}`),
+                t('pl_cycle_confirm_past') || 'Past months stay exactly as they are.',
+                t('pl_cycle_confirm_safe') || 'No transactions will be edited or moved.',
+              ].join('\n\n')
+            : ''
+        }
+        confirmLabel={t('pl_cycle_confirm_yes') || 'Yes, change cycle'}
+        loading={updatingCycle}
+        onCancel={() => setPendingCycle(null)}
+        onConfirm={() => {
+          const p = pendingCycle;
+          setPendingCycle(null);
+          if (p) void commitCycleWindow(p.start, p.end);
+        }}
+      />
+
       {/* ── CYCLE SETTINGS MODAL DIALOG ── */}
       <Modal
         visible={cycleSettingsOpen}
@@ -1782,6 +1841,53 @@ export default function ProfitLossScreen() {
               Leave End Day blank for automatic calculation (day before next start date).
             </Text>
 
+            {/* ── LIVE WINDOW PREVIEW ──
+                Shows the cycle the current inputs produce BEFORE saving. A
+                warning tint appears when a fixed End Day collapses the window
+                under 4 weeks (usually unintentional). */}
+            {modalCyclePreview.isValid ? (
+              <View
+                style={{
+                  borderRadius: theme.radius.md,
+                  borderWidth: 1,
+                  borderColor: modalCyclePreview.isShort ? theme.colors.danger : theme.colors.primary,
+                  backgroundColor: modalCyclePreview.isShort
+                    ? (theme.isDark ? 'rgba(239, 68, 68, 0.12)' : '#FEF2F2')
+                    : (theme.isDark ? 'rgba(16, 185, 129, 0.10)' : '#ECFDF5'),
+                  paddingHorizontal: 14,
+                  paddingVertical: 10,
+                  gap: 3,
+                }}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <Text style={{ fontSize: 11, fontWeight: '800', letterSpacing: 0.5, color: theme.colors.textMuted, textTransform: 'uppercase' }}>
+                    {t('pl_cycle_preview')}
+                  </Text>
+                  <Text style={{ fontSize: 11.5, fontWeight: '700', color: theme.colors.textMuted }}>
+                    {modalCyclePreview.days}d
+                  </Text>
+                </View>
+                <Text
+                  style={{
+                    fontSize: 15.5,
+                    fontWeight: '800',
+                    color: modalCyclePreview.isShort ? theme.colors.danger : theme.colors.text,
+                  }}
+                >
+                  {modalCyclePreview.rangeText}
+                </Text>
+                {modalCyclePreview.isShort ? (
+                  <Text style={{ fontSize: 10.5, lineHeight: 14, color: theme.colors.danger, fontWeight: '600' }}>
+                    {t('pl_cycle_short_warning')}
+                  </Text>
+                ) : null}
+              </View>
+            ) : (
+              <Text variant="caption" muted style={{ fontSize: 11, fontStyle: 'italic' }}>
+                {t('pl_cycle_preview_hint')}
+              </Text>
+            )}
+
             {/* Modal Actions */}
             <View style={{ flexDirection: 'row', gap: 10, paddingTop: 4 }}>
               <Pressable
@@ -1845,5 +1951,9 @@ export default function ProfitLossScreen() {
         </Pressable>
       </Modal>
     </ScrollView>
+    {/* Local host: profit-loss is modal-presented, so the root ToastHost sits
+        in a lower Android window. Topmost-host arbitration is the dedupe. */}
+    <ToastHost />
+    </View>
   );
 }

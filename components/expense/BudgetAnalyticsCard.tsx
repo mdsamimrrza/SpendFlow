@@ -5,13 +5,12 @@ import { AlertTriangle, CheckCircle2, PieChart, TrendingDown, TrendingUp } from 
 import { Card } from '@/components/ui/Card';
 import { Text } from '@/components/ui/Text';
 import { useAuth } from '@/hooks/useAuth';
-import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { useRateResolver } from '@/hooks/useRateResolver';
 import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
 import { useTheme } from '@/hooks/useTheme';
 import { Expense } from '@/types';
-import { convertCurrency, formatMoney, getCycleMeta, getMonthlyBudget } from '@/utils/format';
+import { formatMoney, getCycleMeta, getMonthlyBudget, getNormalizedCycle, isoDate } from '@/utils/format';
 
 interface BudgetAnalyticsCardProps {
   expenses: Expense[];
@@ -23,7 +22,6 @@ export function BudgetAnalyticsCard({ expenses, targetCurrency, flowType }: Budg
   const theme = useTheme();
   const router = useRouter();
   const { profile } = useAuth();
-  const { rates } = useExchangeRates();
   const { t } = useLanguage();
   const { isPrivacyMode } = usePrivacy();
   const { width } = useWindowDimensions();
@@ -32,12 +30,11 @@ export function BudgetAnalyticsCard({ expenses, targetCurrency, flowType }: Budg
 
   const currency = targetCurrency ?? profile?.preferred_currency ?? 'NPR';
   const now = new Date();
-  // Cycle-aware month window (default: 1st → last day of month): the pacing
-  // window and the month slice follow the user's budget cycle so month-end
-  // salaries stay in the new cycle instead of vanishing when the month rolls.
-  const cycleStartDay = Math.min(Math.max(Number(profile?.cycle_start_day) || 1, 1), 31);
-  const cycleEndDayRaw = Number(profile?.cycle_end_day);
-  const cycleEndDay = cycleEndDayRaw >= 1 && cycleEndDayRaw <= 31 ? cycleEndDayRaw : null;
+  // Cycle-aware month window (default: 1st → last day of month) via the shared
+  // normalizer — the pacing window and the month slice follow the user's budget
+  // cycle so month-end salaries stay in the new cycle instead of vanishing when
+  // the month rolls.
+  const { startDay: cycleStartDay, endDay: cycleEndDay } = getNormalizedCycle(profile);
   const cycleMeta = useMemo(
     () => getCycleMeta(cycleStartDay, cycleEndDay),
     [cycleStartDay, cycleEndDay],
@@ -51,9 +48,9 @@ export function BudgetAnalyticsCard({ expenses, targetCurrency, flowType }: Budg
     () => expenses.filter((expense) => expense.date >= cycleFromStr && expense.date <= cycleToStr),
     [expenses, cycleFromStr, cycleToStr],
   );
-  const rateResolver = useRateResolver(currentMonthItems, currency);
+  const { resolver: rateResolver } = useRateResolver(currentMonthItems, currency);
   // USD resolver for canonical ratio calculations (projection % must be currency-invariant)
-  const usdResolver = useRateResolver(currentMonthItems, 'USD');
+  const { resolver: usdResolver } = useRateResolver(currentMonthItems, 'USD');
   const totalMonthlySpend = useMemo(
     () => currentMonthItems
       .filter((expense) => expense.type !== 'income')
@@ -67,13 +64,18 @@ export function BudgetAnalyticsCard({ expenses, targetCurrency, flowType }: Budg
     [currentMonthItems, rateResolver, currency],
   );
 
-  const monthlyBudget = getMonthlyBudget(profile, rates, currency);
+  const monthlyBudget = getMonthlyBudget(profile, rateResolver, currency);
   const isBudgetSet = monthlyBudget > 0;
 
   // Canonical USD-base totals for currency-invariant projection percentage
   const rawBudget = profile?.monthly_budget ? Number(profile.monthly_budget) : 0;
   const budgetCcy = (profile?.budget_currency || profile?.preferred_currency || 'NPR').toUpperCase();
-  const monthlyBudgetUsd = rawBudget > 0 ? convertCurrency(rawBudget, budgetCcy, 'USD', rates) : 0;
+  // Same resolver as the spend numerator — the projection % must not mix a
+  // live-rate budget with historically-converted spending (rates move, the
+  // ratio would drift even though nothing about the user's history changed).
+  const monthlyBudgetUsd = rawBudget > 0 && usdResolver
+    ? usdResolver.convert(rawBudget, budgetCcy, 'USD', isoDate())
+    : 0;
   const totalMonthlySpendUsd = useMemo(
     () => currentMonthItems
       .filter((e) => e.type !== 'income')
