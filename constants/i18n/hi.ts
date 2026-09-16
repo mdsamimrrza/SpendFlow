@@ -400,6 +400,9 @@ onboarding_country_title: 'आपका देश',
   bullion_calc_title: 'तत्काल धातु मूल्य कैलकुलेटर',
   bullion_guide_title: 'बुलियन मानक और खरीद गाइड',
 
+  // ── FX / "आज की दर पर" ──
+  curAtTodayRate: 'आज की दर पर',
+
   // ── ट्रांसफर ──
   transfer_title: 'पैसे ट्रांसफर करें',
   transfer_from: 'किस खाते से',

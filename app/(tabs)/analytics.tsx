@@ -38,6 +38,7 @@ import { PrivacyEyeButton } from '@/components/ui/PrivacyEyeButton';
 import { Text } from '@/components/ui/Text';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
 import { CalendarModal, DateRange } from '@/components/ui/CalendarModal';
+import { TodayRateLine } from '@/components/ui/TodayRateLine';
 import { useAuth } from '@/hooks/useAuth';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { useExpenses } from '@/hooks/useExpenses';
@@ -127,7 +128,7 @@ export default function AnalyticsScreen() {
 
   // Every expense converts at its own transaction date, never today's rate —
   // shared snapshot-resolver hook (same source as History/Export/P&L).
-  const { resolver: rateResolver, convertAtDate } = useRateResolver(
+  const { resolver: rateResolver, convertAtDate, convertToday } = useRateResolver(
     filteredItems,
     preferredCurrency,
   );
@@ -141,6 +142,25 @@ export default function AnalyticsScreen() {
     [incomeItems, convertAtDate],
   );
   const netSavings = totalIncome - totalSpend;
+
+  // "At today's rate" counterpart of the period totals (self-hiding line).
+  const anTodayTotals = useMemo(() => {
+    if (!convertToday || !rateResolver) return null;
+    let inc = 0;
+    let exp = 0;
+    for (const r of filteredItems) {
+      const v = convertToday(r);
+      if (v == null) return null;
+      if (r.type === 'income') inc += v;
+      else exp += v;
+    }
+    return { income: inc, expense: exp };
+  }, [filteredItems, convertToday, rateResolver]);
+
+  const fmt = useMemo(
+    () => (n: number) => formatMoney(n, preferredCurrency, isPrivacyMode),
+    [preferredCurrency, isPrivacyMode],
+  );
 
   // Largest single expense item
   const peakItem = useMemo(() => {
@@ -643,6 +663,13 @@ export default function AnalyticsScreen() {
               </Pressable>
             </View>
           </View>
+
+          {/* "At today's rate" collapsible line — mirrors Overview/History/P&L */}
+          <TodayRateLine
+            frozen={{ income: totalIncome, expense: totalSpend }}
+            today={anTodayTotals}
+            fmt={fmt}
+          />
 
           {/* 0–100 Financial Health Score Card */}
           <FinancialHealthScoreCard

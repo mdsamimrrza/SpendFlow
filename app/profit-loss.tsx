@@ -11,6 +11,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Text } from '@/components/ui/Text';
 import { showToast, ToastHost } from '@/components/ui/Toast';
 import { CalendarModal, DateRange } from '@/components/ui/CalendarModal';
+import { TodayRateLine } from '@/components/ui/TodayRateLine';
 import { useAuth } from '@/hooks/useAuth';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { useRateResolver } from '@/hooks/useRateResolver';
@@ -159,7 +160,7 @@ export default function ProfitLossScreen() {
   // Snapshot-aware conversion: every P&L figure resolves each row at its own
   // date (row snapshot first), matching History/Dashboard exactly.
   // Shared snapshot-resolver hook (same source as the other money screens).
-  const { resolver: rateResolver } = useRateResolver(expenses.items, currency);
+  const { resolver: rateResolver, convertToday } = useRateResolver(expenses.items, currency);
 
   useEffect(() => {
     // Prefill with the budget converted into the display currency — editing and
@@ -179,6 +180,25 @@ export default function ProfitLossScreen() {
   );
   const netResult = totalIncome - totalExpense;
   const isProfit = netResult >= 0;
+
+  // "At today's rate" counterpart of the period totals (self-hiding line).
+  const plTodayTotals = useMemo(() => {
+    if (!convertToday || !rateResolver) return null;
+    let inc = 0;
+    let exp = 0;
+    for (const r of itemsInRange) {
+      const v = convertToday(r);
+      if (v == null) return null;
+      if (r.type === 'income') inc += v;
+      else exp += v;
+    }
+    return { income: inc, expense: exp };
+  }, [itemsInRange, convertToday, rateResolver]);
+
+  const fmt = useMemo(
+    () => (n: number) => formatMoney(n, currency, isPrivacyMode),
+    [currency, isPrivacyMode],
+  );
 
   // ── Settings history: what the budget & cycle days were at any past date ──
   const [settingsHistory, setSettingsHistory] = useState<UserSettingsPeriod[]>([]);
@@ -1298,6 +1318,13 @@ export default function ProfitLossScreen() {
                 {isProfit ? '+' : '−'}{formatMoney(Math.abs(netResult), currency, isPrivacyMode)}
               </Text>
             </View>
+
+            {/* "At today's rate" collapsible line — mirrors Overview/History */}
+            <TodayRateLine
+              frozen={{ income: totalIncome, expense: totalExpense }}
+              today={plTodayTotals}
+              fmt={fmt}
+            />
           </Card>
         );
       })()}
