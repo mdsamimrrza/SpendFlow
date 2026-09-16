@@ -15,6 +15,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { StockTrendChart } from '@/components/expense/StockTrendChart';
 import { Text } from '@/components/ui/Text';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
+import { TodayRateLine } from '@/components/ui/TodayRateLine';
 import { useAuth } from '@/hooks/useAuth';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { useRateResolver } from '@/hooks/useRateResolver';
@@ -23,7 +24,7 @@ import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
 import { usePrivacyScreen } from '@/hooks/usePrivacyScreen';
 import { useTheme } from '@/hooks/useTheme';
-import { currentMonthRange, getCycleMeta, getCycleLabel, getMonthlyBudget, isoDate, sumExpenses } from '@/utils/format';
+import { currentMonthRange, getCycleMeta, getCycleLabel, getMonthlyBudget, isoDate, sumExpenses, formatMoney } from '@/utils/format';
 import { CURRENCY_DETAILS } from '@/constants/app';
 
 export default function HomeScreen() {
@@ -53,7 +54,7 @@ export default function HomeScreen() {
   // Snapshot-aware conversion: every dashboard total resolves each row at its
   // OWN date (using the row's exchange_rate_to_usd snapshot where present) —
   // identical to History, so the two screens can never diverge.
-  const { resolver: rateResolver, ready: resolverReady } = useRateResolver(expenses.items, preferredCurrency);
+  const { resolver: rateResolver, ready: resolverReady, convertToday } = useRateResolver(expenses.items, preferredCurrency);
 
   const refreshProfileRef = useRef(refreshProfile);
   refreshProfileRef.current = refreshProfile;
@@ -112,7 +113,25 @@ export default function HomeScreen() {
     return rawBudget > 0 ? spentInBudgetCcy / rawBudget : 0;
   }, [profile, rateResolver, currentMonthItems]);
 
-  // Time-aware greeting
+  // "At today's rate" counterpart of the hero totals (hidden when identical
+  // or while today's cross is unresolved — see TodayRateLine).
+  const todayTotals = useMemo(() => {
+    if (!convertToday || !rateResolver) return null;
+    let inc = 0;
+    let exp = 0;
+    for (const r of currentMonthItems) {
+      const v = convertToday(r);
+      if (v == null) return null;
+      if (r.type === 'income') inc += v;
+      else exp += v;
+    }
+    return { income: inc, expense: exp };
+  }, [currentMonthItems, convertToday, rateResolver]);
+
+  const fmt = useMemo(
+    () => (n: number) => formatMoney(n, preferredCurrency, isPrivacyMode),
+    [preferredCurrency, isPrivacyMode],
+  );
   const currentHour = new Date().getHours();
   const greeting = currentHour < 12 ? t('home_greeting_morning') : currentHour < 17 ? t('home_greeting_afternoon') : t('home_greeting_evening');
 
@@ -283,6 +302,13 @@ export default function HomeScreen() {
               monthIncome={monthIncome}
               prevMonthIncome={prevMonthIncome}
               budgetRatioBase={budgetRatioBase}
+              footer={
+                <TodayRateLine
+                  frozen={{ income: monthIncome, expense: monthTotal }}
+                  today={todayTotals}
+                  fmt={fmt}
+                />
+              }
             />
 
             {/* 2.5 BILLS DUE — open recurring slots with one-tap Mark Paid */}

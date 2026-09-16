@@ -398,6 +398,9 @@ onboarding_country_title: 'Your Country',
   bullion_calc_title: 'Instant Metal Valuation Calculator',
   bullion_guide_title: 'Bullion Standards & Buyer Guide',
 
+  // ── FX / "At today's rate" ──
+  curAtTodayRate: 'At today\'s rate',
+
   // ── Transfers ──
   transfer_title: 'Transfer Money',
   transfer_from: 'From Account',

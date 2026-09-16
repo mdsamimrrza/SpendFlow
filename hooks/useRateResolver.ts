@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { buildRateResolver, type RateResolver } from '@/services/exchange';
+import { buildRateResolver, type RateResolver, getRate } from '@/services/exchange';
 import type { SnapshotRow } from '@/services/exchange';
+import { isoDate } from '@/utils/format';
 
 export interface RateResolverState {
   resolver: RateResolver | null;
@@ -13,6 +14,12 @@ export interface RateResolverState {
    *  has not settled. History & Analytics hand-rolled byte-identical copies of
    *  this — this is now THE implementation. */
   convertAtDate: (row: { amount: number | string; currency?: string | null; date: string }) => number;
+  /** "At today's rate" counterpart: same amount priced through TODAY's live cross
+   *  on BOTH sides (brokerage market-value pattern). Returns null while rates
+   *  are unresolved so callers can hide the line entirely instead of showing a
+   *  wrong "today" figure. Mirrors web's useRowConverter.convertToday —
+   *  SYNCHRONOUS because today's rates are pre-fetched into the resolver's cache. */
+  convertToday: (row: { amount: number | string; currency?: string | null; date: string }) => number | null;
 }
 
 /**
@@ -58,5 +65,28 @@ export function useRateResolver(rows: SnapshotRow[], targetCurrency: string): Ra
     [resolver, targetCurrency],
   );
 
-  return { resolver, ready, convertAtDate };
+  // "At today's rate" conversion: both sides of the cross resolve at TODAY's live
+  // rate (never the stored snapshot). Returns null while rates are unresolved so
+  // callers can hide the line entirely instead of showing a wrong "today" figure.
+  // Mirrors web's useRowConverter.convertToday — SYNCHRONOUS because today's rates
+  // are pre-fetched and cached inside the RateResolver via buildRateResolver.
+  const convertToday = useCallback(
+    (row: { amount: number | string; currency?: string | null; date: string }) => {
+      if (!resolver) return null;
+      const amount = Number(row.amount);
+      const from = (row.currency || 'NPR').toUpperCase();
+      const to = (targetCurrency || 'NPR').toUpperCase();
+      if (!amount || from === to) return amount;
+      try {
+        // RateResolver.convert uses its internal cache (which includes today's rates
+        // pre-fetched by buildRateResolver for every currency pair in the dataset)
+        return Math.round(resolver.convert(amount, from, to, isoDate()) * 100) / 100;
+      } catch {
+        return null;
+      }
+    },
+    [resolver, targetCurrency],
+  );
+
+  return { resolver, ready, convertAtDate, convertToday };
 }

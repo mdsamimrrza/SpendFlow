@@ -59,6 +59,7 @@ import { PrivacyEyeButton } from '@/components/ui/PrivacyEyeButton';
 import { Text } from '@/components/ui/Text';
 import { showToast } from '@/components/ui/Toast';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
+import { TodayRateLine } from '@/components/ui/TodayRateLine';
 import { SORT_OPTIONS } from '@/constants/app';
 import { useAuth } from '@/hooks/useAuth';
 import { useExpenses } from '@/hooks/useExpenses';
@@ -260,7 +261,7 @@ export default function HistoryScreen() {
   // Every expense converts at its own transaction date, never today's rate —
   // shared snapshot-resolver hook (identical source used by Analytics, Export,
   // P&L and the net-worth rollup, so totals can never disagree between screens).
-  const { resolver: rateResolver, convertAtDate } = useRateResolver(
+  const { resolver: rateResolver, convertAtDate, convertToday } = useRateResolver(
     filteredExpenses,
     preferredCurrency,
   );
@@ -315,6 +316,26 @@ export default function HistoryScreen() {
     if (filteredExpenses.length === 0) return 0;
     return filteredExpenses.reduce((max, expense) => Math.max(max, convertAtDate(expense)), 0);
   }, [filteredExpenses, convertAtDate]);
+
+  // "At today's rate" counterpart of the filtered totals (hidden when identical
+  // or while today's cross is unresolved — see TodayRateLine).
+  const todayTotals = useMemo(() => {
+    if (!convertToday || !rateResolver) return null;
+    let inc = 0;
+    let exp = 0;
+    for (const r of filteredExpenses) {
+      const v = convertToday(r);
+      if (v == null) return null;
+      if (r.type === 'income') inc += v;
+      else exp += v;
+    }
+    return { income: inc, expense: exp };
+  }, [filteredExpenses, convertToday, rateResolver]);
+
+  const fmt = useMemo(
+    () => (n: number) => formatMoney(n, preferredCurrency, isPrivacyMode),
+    [preferredCurrency, isPrivacyMode],
+  );
 
   // Reset to page 1 whenever filters, search, or category changes
   const handleSearchChange = (text: string) => {
@@ -740,6 +761,13 @@ export default function HistoryScreen() {
             </Pressable>
           </View>
         </Card>
+
+        {/* "At today's rate" collapsible line — mirrors Overview hero */}
+        <TodayRateLine
+          frozen={{ income: flowTotals.totalIncome, expense: flowTotals.totalExpense }}
+          today={todayTotals}
+          fmt={fmt}
+        />
 
         {/* ── 3. SEARCH & FILTERS TOOLBAR (WITH IN-PLACE FLOATING DROPDOWNS) ── */}
         <View style={{ zIndex: 6000, position: 'relative' }}>

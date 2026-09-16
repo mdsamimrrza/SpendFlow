@@ -35,6 +35,8 @@ interface BudgetLimitHeroCardProps {
    * the display-currency ratio to guarantee the same % regardless of which
    * currency the user views the app in. */
   budgetRatioBase?: number;
+  /** Optional footer content (e.g., "At today's rate" collapsible card) */
+  footer?: React.ReactNode;
 }
 
 export function BudgetLimitHeroCard({
@@ -50,6 +52,7 @@ export function BudgetLimitHeroCard({
   monthIncome = 0,
   prevMonthIncome = 0,
   budgetRatioBase,
+  footer,
 }: BudgetLimitHeroCardProps) {
   const theme = useTheme();
   const currencyDetails = CURRENCY_DETAILS[preferredCurrency as keyof typeof CURRENCY_DETAILS] ?? { flag: '💱', label: preferredCurrency };
@@ -488,6 +491,9 @@ export function BudgetLimitHeroCard({
                 </Text>
               </View>
             </View>
+
+            {/* Optional footer (e.g., "At today's rate" collapsible card) */}
+            {footer && <View style={{ marginTop: 8 }}>{footer}</View>}
           </Card>
         </Animated.View>
 
