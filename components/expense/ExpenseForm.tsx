@@ -366,7 +366,10 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
   }, [expenseId, userId]);
 
   useEffect(() => {
-    if (!expenseId) return;
+    // audit run-1: require a confirmed userId before the record read — without
+    // it the query dropped the client-side user_id filter and leaned on RLS
+    // alone, and an unhydrated mount should not issue authenticated reads.
+    if (!expenseId || !userId) return;
     getExpense(expenseId, userId)
       .then((expense) => {
         const savedTime = formatTimeForInput(expense.time);
@@ -396,7 +399,8 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
         setNotesOpen(Boolean(expense.notes));
       })
       .catch((err) => setError(err instanceof Error ? err.message : 'Could not load this expense.'));
-  }, [expenseId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expenseId, userId]);
 
   function handleBack() {
     if (router.canGoBack()) {

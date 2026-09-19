@@ -6,8 +6,9 @@ import * as WebBrowser from 'expo-web-browser';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import * as Crypto from 'expo-crypto';
 import { UserProfile } from '@/types';
-import { ONBOARDING_CURRENCY_KEY } from '@/constants/app';
+import { CURRENCIES, ONBOARDING_CURRENCY_KEY } from '@/constants/app';
 import { supabase } from '@/utils/supabase';
+import { beginPendingAuthFlow, endPendingAuthFlow, isTrustedAuthUrl } from '@/utils/authFlow';
 import { seedDefaultCategories } from './categories';
 import { ensureUserSettingsBaseline, recordUserSettingsChange } from './settingsHistory';
 
@@ -127,6 +128,10 @@ export async function signInWithGoogle() {
       },
     });
     if (error) throw error;
+    // The page is about to leave for the IdP and come back on OUR origin with
+    // a code/hash; the returning callback (AuthContext listener) must be able
+    // to prove this client started the flow even across the page reload.
+    await beginPendingAuthFlow();
     return data;
   }
 
@@ -145,50 +150,62 @@ export async function signInWithGoogle() {
   if (error) throw error;
   if (!data.url) throw new Error('Google sign-in could not start.');
 
-  const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
-  if (result.type !== 'success') {
-    throw new Error('Google sign-in was cancelled.');
-  }
-
-  const returnedUrl = result.url;
-
-  // 1. Check hash fragment (Implicit token flow)
-  const hashMatch = returnedUrl.match(/#(.+)/);
-  if (hashMatch) {
-    const hashParams = new URLSearchParams(hashMatch[1]);
-    const access_token = hashParams.get('access_token');
-    const refresh_token = hashParams.get('refresh_token');
-    if (access_token && refresh_token) {
-      const sessionResult = await supabase.auth.setSession({
-        access_token,
-        refresh_token,
-      });
-      if (sessionResult.error) throw sessionResult.error;
-      return sessionResult.data;
+  await beginPendingAuthFlow();
+  try {
+    const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+    if (result.type !== 'success') {
+      throw new Error('Google sign-in was cancelled.');
     }
-  }
 
-  // 2. Check query params (Authorization code flow)
-  const queryMatch = returnedUrl.match(/\?([^#]+)/);
-  if (queryMatch) {
-    const queryParams = new URLSearchParams(queryMatch[1]);
-    const code = queryParams.get('code');
-    if (code) {
-      const exchanged = await supabase.auth.exchangeCodeForSession(code);
-      if (exchanged.error) throw exchanged.error;
-      return exchanged.data;
+    const returnedUrl = result.url;
+    // On Android the pinned expo-web-browser polyfill resolves on a bare
+    // 'spendflow://' prefix match against ANY Linking url event — another app
+    // can deliver 'spendflow://probe#...' mid-flow. Apply the same trust gate
+    // the deep-link door uses before reading tokens out of the result URL.
+    if (!isTrustedAuthUrl(returnedUrl)) {
+      throw new Error('Google sign-in returned an untrusted redirect.');
     }
-  }
 
-  // 3. Check if session was already set
-  const { data: currentSession } = await supabase.auth.getSession();
-  if (currentSession?.session) {
-    return currentSession;
-  }
+    // 1. Check hash fragment (Implicit token flow)
+    const hashMatch = returnedUrl.match(/#(.+)/);
+    if (hashMatch) {
+      const hashParams = new URLSearchParams(hashMatch[1]);
+      const access_token = hashParams.get('access_token');
+      const refresh_token = hashParams.get('refresh_token');
+      if (access_token && refresh_token) {
+        const sessionResult = await supabase.auth.setSession({
+          access_token,
+          refresh_token,
+        });
+        if (sessionResult.error) throw sessionResult.error;
+        return sessionResult.data;
+      }
+    }
 
-  throw new URLSearchParams(returnedUrl).get('error_description')
-    ? new Error(new URLSearchParams(returnedUrl).get('error_description')!)
-    : new Error('Google sign-in did not return authentication tokens.');
+    // 2. Check query params (Authorization code flow)
+    const queryMatch = returnedUrl.match(/\?([^#]+)/);
+    if (queryMatch) {
+      const queryParams = new URLSearchParams(queryMatch[1]);
+      const code = queryParams.get('code');
+      if (code) {
+        const exchanged = await supabase.auth.exchangeCodeForSession(code);
+        if (exchanged.error) throw exchanged.error;
+        return exchanged.data;
+      }
+    }
+
+    // 3. Check if session was already set
+    const { data: currentSession } = await supabase.auth.getSession();
+    if (currentSession?.session) {
+      return currentSession;
+    }
+
+    throw new URLSearchParams(returnedUrl).get('error_description')
+      ? new Error(new URLSearchParams(returnedUrl).get('error_description')!)
+      : new Error('Google sign-in did not return authentication tokens.');
+  } finally {
+    endPendingAuthFlow();
+  }
 }
 
 /**
@@ -649,7 +666,11 @@ export async function ensureProfile(): Promise<UserProfile> {
     budget_currency: result.budget_currency,
     cycle_start_day: cycleStartDay,
     cycle_end_day: cycleEndDay,
-  }).catch(() => undefined);
+  // audit run-1: best-effort (never blocks profile load) but a swallowed
+  // failure silently degrades the append-only audit trail — log it.
+  }).catch((error: unknown) => {
+    console.warn('[settings-history] baseline seed failed:', error instanceof Error ? error.message : error);
+  });
 
   return result;
 }
@@ -703,24 +724,57 @@ export async function updateProfile(input: Partial<Pick<UserProfile, 'display_na
     ?? 'NPR';
 
   // ── Budget currency travels with the budget figure (device-local mirror) ──
+  // audit run-1: user_metadata is freeform JSON that escapes every DB CHECK —
+  // and user_settings_history.budget_currency's ^[A-Z]{3}$ rule rejects
+  // divergent codes, silently stalling the append-only audit. Normalize to a
+  // supported CURRENCIES code (upper-case) before ANY of the three stores
+  // (mirror, metadata, history) sees it; clear the mirror on the null path so
+  // a removed budget cannot resurrect a stale currency.
   const localBudgetCurrencyKey = `@spendflow_budget_currency_${user.id}`;
-  if (input.budget_currency !== undefined && input.budget_currency) {
-    await AsyncStorage.setItem(localBudgetCurrencyKey, input.budget_currency).catch(() => {});
+  const budgetCurrencyNormalized =
+    input.budget_currency === undefined
+      ? undefined
+      : (CURRENCIES as readonly string[]).includes(String(input.budget_currency).trim().toUpperCase())
+        ? String(input.budget_currency).trim().toUpperCase()
+        : null;
+  if (budgetCurrencyNormalized !== undefined) {
+    if (budgetCurrencyNormalized === null) {
+      await AsyncStorage.removeItem(localBudgetCurrencyKey).catch(() => {});
+    } else {
+      await AsyncStorage.setItem(localBudgetCurrencyKey, budgetCurrencyNormalized).catch(() => {});
+    }
   }
 
   // ── Sync cycle window and currency to Supabase Cloud Auth Metadata ──
-  // budget_currency goes to metadata (freeform JSON — always accepted), NEVER
-  // to the users table: sending a column the remote DB doesn't have makes
-  // PostgREST reject the entire row update, which silently rolled back budget
-  // saves. The DB column from the migration stays optional.
+  // metadata stays a durable cross-device mirror (freeform JSON — always
+  // accepted); the users-table column (migration 20260916180000) is the
+  // queryable source of truth. DB reads it first, metadata second.
   await supabase.auth.updateUser({
     data: {
       cycle_start_day: resolvedCycle,
       cycle_end_day: resolvedCycleEnd,
       preferred_currency: resolvedCurrency,
-      ...(input.budget_currency !== undefined ? { budget_currency: input.budget_currency } : {}),
+      ...(budgetCurrencyNormalized !== undefined ? { budget_currency: budgetCurrencyNormalized } : {}),
     },
   }).catch(() => undefined);
+
+  // Effective budget currency for THIS save, in priority order: caller's
+  // change → device mirror → last-known profile cache → display currency
+  // (only when no budget has ever carried its own currency). The same value
+  // is written to the users table AND the settings-history append so the
+  // stores can never disagree — a plain display-currency change must NOT
+  // rewrite the budget's own currency (getMonthlyBudget converts from it).
+  let cachedBudgetCurrency: string | null | undefined;
+  try {
+    const cachedRaw = await AsyncStorage.getItem(profileCacheKey(user.id));
+    const cached = cachedRaw ? (JSON.parse(cachedRaw) as UserProfile) : null;
+    if (cached?.id === user.id) cachedBudgetCurrency = cached.budget_currency ?? undefined;
+  } catch {
+    // Ignore invalid cached profile data
+  }
+  const localBudgetCurrency = await AsyncStorage.getItem(localBudgetCurrencyKey).catch(() => null);
+  const effectiveBudgetCurrency =
+    budgetCurrencyNormalized ?? localBudgetCurrency ?? cachedBudgetCurrency ?? resolvedCurrency;
 
   // cycle_start_day and cycle_end_day now also go to the DB (not stripped)
   let dbProfile: UserProfile | null = null;
@@ -734,13 +788,28 @@ export async function updateProfile(input: Partial<Pick<UserProfile, 'display_na
     if (input.preferred_currency !== undefined) updatePayload.preferred_currency = input.preferred_currency;
     if (input.cycle_start_day !== undefined) updatePayload.cycle_start_day = resolvedCycle;
     if (input.cycle_end_day !== undefined) updatePayload.cycle_end_day = resolvedCycleEnd;
+    if (input.monthly_budget !== undefined || input.budget_currency !== undefined) {
+      updatePayload.budget_currency = effectiveBudgetCurrency;
+    }
 
-    const { data: updated } = await supabase
+    let { data: updated, error: updateError } = await supabase
       .from('users')
       .update(updatePayload)
       .eq('id', user.id)
       .select('*')
       .single();
+
+    if (updateError && /budget_currency/i.test(updateError.message)) {
+      // Migration not applied on this remote yet — an unknown column rejects
+      // the ENTIRE row. Retry without it so budget saves never roll back.
+      delete updatePayload.budget_currency;
+      ({ data: updated } = await supabase
+        .from('users')
+        .update(updatePayload)
+        .eq('id', user.id)
+        .select('*')
+        .single());
+    }
 
     if (updated) {
       dbProfile = updated as UserProfile;
@@ -751,16 +820,16 @@ export async function updateProfile(input: Partial<Pick<UserProfile, 'display_na
         input.cycle_start_day !== undefined ||
         input.cycle_end_day !== undefined
       ) {
-        // budget_currency lives in AsyncStorage + auth metadata, not users table
-        const effectiveBudgetCurrency = input.budget_currency ?? 
-          (await AsyncStorage.getItem(`@spendflow_budget_currency_${user.id}`).catch(() => null)) ??
-          resolvedCurrency;
         void recordUserSettingsChange(user.id, {
           monthly_budget: dbProfile.monthly_budget ?? null,
           budget_currency: effectiveBudgetCurrency,
           cycle_start_day: resolvedCycle,
           cycle_end_day: resolvedCycleEnd,
-        }).catch(() => undefined);
+        // audit run-1: still non-blocking, but a rejected append silently kills
+        // the "one row per real change" P&L guarantee — surface it to logs.
+        }).catch((error: unknown) => {
+          console.warn('[settings-history] change append failed:', error instanceof Error ? error.message : error);
+        });
       }
     }
   } catch {
@@ -770,21 +839,6 @@ export async function updateProfile(input: Partial<Pick<UserProfile, 'display_na
   const localBudgetRaw = await AsyncStorage.getItem(`@spendflow_monthly_budget_${user.id}`).catch(() => null);
   const localBudget = localBudgetRaw ? Number(localBudgetRaw) : null;
 
-  const localBudgetCurrency = await AsyncStorage.getItem(localBudgetCurrencyKey).catch(() => null);
-
-  // Preserve the budget's own currency when this save didn't touch it —
-  // falling back to the display currency here used to silently rewrite
-  // budget_currency on every plain currency change, which killed the
-  // budget_currency → preferred_currency conversion in getMonthlyBudget.
-  let cachedBudgetCurrency: string | null | undefined;
-  try {
-    const cachedRaw = await AsyncStorage.getItem(profileCacheKey(user.id));
-    const cached = cachedRaw ? (JSON.parse(cachedRaw) as UserProfile) : null;
-    if (cached?.id === user.id) cachedBudgetCurrency = cached.budget_currency ?? undefined;
-  } catch {
-    // Ignore invalid cached profile data
-  }
-
   const result: UserProfile = {
     id: user.id,
     email: user.email ?? '',
@@ -793,7 +847,7 @@ export async function updateProfile(input: Partial<Pick<UserProfile, 'display_na
     preferred_currency: resolvedCurrency,
     theme_preference: dbProfile?.theme_preference ?? input.theme_preference ?? 'system',
     monthly_budget: dbProfile?.monthly_budget ?? input.monthly_budget ?? localBudget,
-    budget_currency: input.budget_currency ?? localBudgetCurrency ?? cachedBudgetCurrency ?? resolvedCurrency,
+    budget_currency: effectiveBudgetCurrency,
     cycle_start_day: resolvedCycle,
     cycle_end_day: resolvedCycleEnd,
     created_at: dbProfile?.created_at ?? new Date().toISOString(),

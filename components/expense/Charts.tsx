@@ -8,6 +8,7 @@ import { Card } from '@/components/ui/Card';
 import { ImageViewerModal } from '@/components/ui/ImageViewerModal';
 import { Text } from '@/components/ui/Text';
 import { useAuth } from '@/hooks/useAuth';
+import { useActiveCycleWindow } from '@/hooks/useActiveCycleWindow';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { useRateResolver } from '@/hooks/useRateResolver';
 import { convertExpense, type RateResolver } from '@/services/exchange';
@@ -32,13 +33,14 @@ function ExpenseDetailModal({
   const theme = useTheme();
   const router = useRouter();
   const { t } = useLanguage();
+  const activeWindow = useActiveCycleWindow();
   const [fullImageModalUrl, setFullImageModalUrl] = useState<string | null>(null);
 
   // Receipts live in a private bucket — resolve stored path/URL to a signed URL.
   const receiptUrl = useReceiptUrl(expense?.receipt_image_url);
 
-  // Snapshot-aware: the row's own exchange_rate_to_usd (frozen at creation)
-  // and its transaction-date rate — never today's market rate.
+  // Display conversion with the active-window rule: live rate for the active
+  // financial month, frozen transaction-date rate before it.
   const [convertedAmount, setConvertedAmount] = useState<number | null>(
     expense && expense.currency && expense.currency !== currency
       ? null
@@ -60,6 +62,7 @@ function ExpenseDetailModal({
         exchange_rate_to_usd: expense.exchange_rate_to_usd,
       },
       currency,
+      activeWindow,
     )
       .then((v) => {
         if (!cancelled) setConvertedAmount(v);
@@ -70,7 +73,7 @@ function ExpenseDetailModal({
     return () => {
       cancelled = true;
     };
-  }, [expense?.id, expense?.amount, expense?.currency, expense?.date, expense?.exchange_rate_to_usd, currency]);
+  }, [expense?.id, expense?.amount, expense?.currency, expense?.date, expense?.exchange_rate_to_usd, currency, activeWindow]);
 
   if (!expense) return null;
 

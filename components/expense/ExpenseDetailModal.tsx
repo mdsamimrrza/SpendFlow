@@ -26,6 +26,7 @@ import { CategoryIcon } from '@/components/ui/CategoryIcon';
 import { ImageViewerModal } from '@/components/ui/ImageViewerModal';
 import { Text } from '@/components/ui/Text';
 import { useAuth } from '@/hooks/useAuth';
+import { useActiveCycleWindow } from '@/hooks/useActiveCycleWindow';
 import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
 import { useReceiptUrl } from '@/hooks/useReceiptUrl';
@@ -52,14 +53,15 @@ export function ExpenseDetailModal({
   const { isPrivacyMode } = usePrivacy();
   const { t } = useLanguage();
   const router = useRouter();
+  const activeWindow = useActiveCycleWindow();
 
   const [fullImageModalUrl, setFullImageModalUrl] = useState<string | null>(null);
 
   // Receipts live in a private bucket — resolve stored path/URL to a signed URL.
   const receiptUrl = useReceiptUrl(expense?.receipt_image_url);
 
-  // Snapshot-aware conversion: the row's own exchange_rate_to_usd (frozen at
-  // creation) and its transaction-date rate — never today's market rate.
+  // Display conversion with the active-window rule: live rate for the active
+  // financial month, frozen transaction-date rate before it.
   const preferredCurrency = profile?.preferred_currency ?? 'NPR';
   const [convertedAmount, setConvertedAmount] = useState<number | null>(
     expense && expense.currency && expense.currency !== preferredCurrency
@@ -86,6 +88,7 @@ export function ExpenseDetailModal({
         exchange_rate_to_usd: expense.exchange_rate_to_usd,
       },
       preferredCurrency,
+      activeWindow,
     )
       .then((v) => {
         if (!cancelled) setConvertedAmount(v);
@@ -96,7 +99,7 @@ export function ExpenseDetailModal({
     return () => {
       cancelled = true;
     };
-  }, [expense, preferredCurrency]);
+  }, [expense, preferredCurrency, activeWindow]);
 
   if (!expense) return null;
 

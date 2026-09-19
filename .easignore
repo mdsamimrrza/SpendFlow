@@ -2,9 +2,17 @@
 node_modules/
 
 # Environment and credentials
+# NOTE (audit run-1): when .easignore exists, EAS uses it INSTEAD of .gitignore
+# for the uploaded build archive — this list must mirror .gitignore's secret
+# block exactly. .env.maintenance (service-role key + SMTP creds) was missing.
 .env
+.env.maintenance
 .env.local
 .env*.local
+firebase-service-account.json
+service-account.json
+service-account-*.json
+serviceAccountKey.json
 *.pem
 *.key
 *.p8

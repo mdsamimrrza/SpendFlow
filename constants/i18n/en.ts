@@ -400,6 +400,7 @@ onboarding_country_title: 'Your Country',
 
   // ── FX / "At today's rate" ──
   curAtTodayRate: 'At today\'s rate',
+  curAtTxnRate: 'At transaction-date rates',
 
   // ── Transfers ──
   transfer_title: 'Transfer Money',

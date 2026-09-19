@@ -10,6 +10,7 @@ import { notifyExpensesChanged } from '@/hooks/useExpenses';
 import { prefetchAfterLogin } from '@/services/prefetch';
 import { UserProfile } from '@/types';
 import { supabase } from '@/utils/supabase';
+import { consumePendingAuthFlow, decodeJwtSub, isPendingAuthFlow, isTrustedAuthUrl } from '@/utils/authFlow';
 
 interface AuthContextValue {
   session: Session | null;
@@ -57,40 +58,16 @@ const SOFT_LOCK_KEY = '@spendflow_soft_locked';
 const PASSWORD_RECOVERY_KEY = '@spendflow_password_recovery';
 
 /**
- * Only URLs that genuinely originate from the app's own auth redirect may be
- * processed. The app registers the `spendflow://` scheme, so ANY app on the
- * device (or a tapped link) can deliver a crafted URL — without this gate an
- * attacker could hand the app tokens to THEIR account (login-CSRF / session
- * fixation), silently logging the victim into the attacker's account so
- * entered financial data flows to the attacker.
- *
- * Trusted shapes (matching AuthSession.makeRedirectUri({scheme:'spendflow'})
- * and the Supabase project's redirect target):
- *   - https://<project>.supabase.co/... — the project's own hosted origin
- *   - spendflow:// (host-less) / spendflow://callback — the app's own scheme
- * Anything else — spendflow://evil.com, other https hosts — is dropped.
+ * isTrustedAuthUrl (imported from utils/authFlow) pins the URL's scheme/origin,
+ * but a registered custom scheme identifies the RECEIVER, never the sender —
+ * ANY app on the device (or a tapped link) can deliver a callback URL carrying
+ * its own valid tokens (login-CSRF / session fixation). handleOAuthUrl below
+ * therefore adds the missing binding: intake of a session that belongs to a
+ * DIFFERENT user than the one already on this device is accepted only while
+ * this client actually started an auth flow (utils/authFlow begin/consume/
+ * isPendingAuthFlow) or while no session is live at all (a genuine sign-in /
+ * recovery from the login screen).
  */
-function isTrustedAuthUrl(url: string): boolean {
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol === 'https:') {
-      const projectUrl = process.env.EXPO_PUBLIC_SUPABASE_URL ?? '';
-      if (!projectUrl) return false;
-      if (parsed.host === new URL(projectUrl).host) return true;
-      // Web builds: the recovery/reset redirect lands on our own origin.
-      // Same-origin only — any other https host is still dropped.
-      if (typeof window !== 'undefined' && parsed.origin === window.location.origin) return true;
-      return false;
-    }
-    if (parsed.protocol === 'spendflow:') {
-      return parsed.host === '' || parsed.host === 'callback';
-    }
-    return false;
-  } catch {
-    return false;
-  }
-}
-
 async function handleOAuthUrl(url: string, onRecovery?: () => void) {
   if (!url) return;
   if (!isTrustedAuthUrl(url)) return;
@@ -101,6 +78,16 @@ async function handleOAuthUrl(url: string, onRecovery?: () => void) {
       const access_token = params.get('access_token');
       const refresh_token = params.get('refresh_token');
       if (access_token && refresh_token) {
+        // Ownership binding: with a live session, a candidate token for a
+        // different user needs a pending app-initiated flow — otherwise drop
+        // the link (silently; a hostile sender must learn nothing).
+        const { data: existing } = await supabase.auth.getSession();
+        if (existing.session) {
+          const candidateSub = decodeJwtSub(access_token);
+          const pending = await isPendingAuthFlow();
+          if (!pending && candidateSub !== existing.session.user.id) return;
+        }
+        consumePendingAuthFlow();
         await supabase.auth.setSession({ access_token, refresh_token });
         // GoTrue marks the recovery redirect with type=recovery — the session
         // is live but still protected by the OLD password. Prompt for a new one.
@@ -116,6 +103,12 @@ async function handleOAuthUrl(url: string, onRecovery?: () => void) {
       const params = new URLSearchParams(queryMatch[1]);
       const code = params.get('code');
       if (code) {
+        // Codes only exchange where the PKCE verifier is local, but an
+        // already-signed-in device must not trade its session for an
+        // unrelated flow's code unless this client started that flow.
+        const { data: existing } = await supabase.auth.getSession();
+        if (existing.session && !(await isPendingAuthFlow())) return;
+        consumePendingAuthFlow();
         await supabase.auth.exchangeCodeForSession(code);
       }
     }
@@ -251,6 +244,15 @@ export function AuthProvider({ children }: PropsWithChildren) {
    *  the login page. Tokens are NOT revoked — the login page offers biometric
    *  quick unlock, with Google/password as the fallback. */
   const lockToLogin = useCallback(async () => {
+    const uid = session?.user?.id;
+    if (uid) {
+      // Audit run-1 fix: the login page may complete a DIFFERENT account's
+      // sign-in without this one ever signing out; without unregistering here,
+      // the previous owner's device_tokens row survives the hand-off and their
+      // financial pushes keep arriving on this install. If the same user
+      // biometric-unlocks, the session-restore effect re-registers the token.
+      await unregisterPushToken(uid).catch(() => undefined);
+    }
     rememberedSessionRef.current = session;
     softLockedRef.current = true;
     setSoftLocked(true);

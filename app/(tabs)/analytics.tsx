@@ -126,9 +126,11 @@ export default function AnalyticsScreen() {
     [filteredItems],
   );
 
-  // Every expense converts at its own transaction date, never today's rate —
-  // shared snapshot-resolver hook (same source as History/Export/P&L).
-  const { resolver: rateResolver, convertAtDate, convertToday } = useRateResolver(
+  // Display conversion: rows inside the ACTIVE cycle price at TODAY's live
+  // rate (active month = live everywhere); rows before it stay frozen at
+  // their transaction-date rate — shared resolver hook (same source as
+  // History/Export/P&L).
+  const { resolver: rateResolver, convertAtDate, convertFrozen } = useRateResolver(
     filteredItems,
     preferredCurrency,
   );
@@ -143,19 +145,18 @@ export default function AnalyticsScreen() {
   );
   const netSavings = totalIncome - totalSpend;
 
-  // "At today's rate" counterpart of the period totals (self-hiding line).
-  const anTodayTotals = useMemo(() => {
-    if (!convertToday || !rateResolver) return null;
+  // "At transaction-date rates" debugger counterpart of the period totals
+  // (self-hiding line; headline is LIVE for the active month).
+  const anFrozenTotals = useMemo(() => {
+    if (!convertFrozen || !rateResolver) return null;
     let inc = 0;
     let exp = 0;
     for (const r of filteredItems) {
-      const v = convertToday(r);
-      if (v == null) return null;
-      if (r.type === 'income') inc += v;
-      else exp += v;
+      if (r.type === 'income') inc += convertFrozen(r);
+      else exp += convertFrozen(r);
     }
     return { income: inc, expense: exp };
-  }, [filteredItems, convertToday, rateResolver]);
+  }, [filteredItems, convertFrozen, rateResolver]);
 
   const fmt = useMemo(
     () => (n: number) => formatMoney(n, preferredCurrency, isPrivacyMode),
@@ -664,10 +665,10 @@ export default function AnalyticsScreen() {
             </View>
           </View>
 
-          {/* "At today's rate" collapsible line — mirrors Overview/History/P&L */}
+          {/* "At transaction-date rates" debugger line — mirrors Overview/History/P&L */}
           <TodayRateLine
-            frozen={{ income: totalIncome, expense: totalSpend }}
-            today={anTodayTotals}
+            live={{ income: totalIncome, expense: totalSpend }}
+            frozen={anFrozenTotals}
             fmt={fmt}
           />
 

@@ -49,9 +49,12 @@ export function AnimatedSplashScreen({ visible, onFinish }: AnimatedSplashScreen
   const fadeAnim = useRef(new Animated.Value(1)).current;
 
   // Gold Seal Ring & Orbit Animations
-  // The seal is statically fully visible: the native system splash shows the
-  // exact same emblem, so keeping it opaque at handoff makes the transition a
-  // seamless cut (the halo/orbit/title/punchline animate around it).
+  // The native system splash is a plain background color (transparent splash
+  // image in app.json), so the emblem itself animates in from the blank canvas
+  // — no static emblem is baked into the APK anymore. The halo/orbit/title/
+  // punchline choreography plays around it as before.
+  const stageOpacity = useRef(new Animated.Value(0)).current;
+  const stageScale = useRef(new Animated.Value(0.72)).current;
   const outerRingRotate = useRef(new Animated.Value(0)).current;
   const haloGlow = useRef(new Animated.Value(0.2)).current;
   const flareTranslateX = useRef(new Animated.Value(-160)).current;
@@ -75,7 +78,13 @@ export function AnimatedSplashScreen({ visible, onFinish }: AnimatedSplashScreen
   ).current;
 
   useEffect(() => {
-    // 1. Halo Radiance behind the already-visible seal
+    // 0. Emblem entrance: seal + orbit + dots rise in from the blank splash
+    Animated.parallel([
+      Animated.timing(stageOpacity, { toValue: 1, duration: 500, useNativeDriver: true }),
+      Animated.spring(stageScale, { toValue: 1, friction: 7.5, tension: 55, useNativeDriver: true }),
+    ]).start();
+
+    // 1. Halo Radiance behind the seal
     Animated.timing(haloGlow, { toValue: 0.9, duration: 1100, useNativeDriver: true }).start();
     // 2. Continuous rotating celestial orbit ring
     Animated.loop(
@@ -151,6 +160,8 @@ export function AnimatedSplashScreen({ visible, onFinish }: AnimatedSplashScreen
     haloGlow,
     outerRingRotate,
     sparklePulse,
+    stageOpacity,
+    stageScale,
     titleLetterSpacing,
     titleOpacity,
     titleTranslateY,
@@ -212,7 +223,15 @@ export function AnimatedSplashScreen({ visible, onFinish }: AnimatedSplashScreen
     >
       <View style={styles.centerContent}>
         {/* ── STAGE: GOLD SEAL EMBLEM + ORBIT + SHIMMER ── */}
-        <View style={styles.stage}>
+        <Animated.View
+          style={[
+            styles.stage,
+            {
+              opacity: stageOpacity,
+              transform: [{ scale: stageScale }],
+            },
+          ]}
+        >
           {/* Radiant Ambient Glow Halo */}
           <Animated.View
             style={[
@@ -319,7 +338,7 @@ export function AnimatedSplashScreen({ visible, onFinish }: AnimatedSplashScreen
               />
             </Svg>
           </View>
-        </View>
+        </Animated.View>
 
         {/* ── BRAND TITLE & PUNCHLINE STACK ── */}
         <View style={styles.textStack}>

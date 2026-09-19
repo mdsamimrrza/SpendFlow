@@ -400,9 +400,13 @@ export function currentMonthRange(startDay = 1, endDay: number | null = null, of
       to = getSafeMonthDate(anchor.getFullYear(), anchor.getMonth() + 1, endDay);
     }
     previousFrom = getSafeMonthDate(anchor.getFullYear(), anchor.getMonth() - 1, day);
-    previousTo = getSafeMonthDate(anchor.getFullYear(), anchor.getMonth(), endDay);
+    // Previous window = current window shifted back exactly one month, so it
+    // can never overlap the active one. When the end day crosses into the
+    // next month (endDay < day) the previous end crosses too — one month
+    // after ITS anchor, not after the current one.
+    previousTo = getSafeMonthDate(anchor.getFullYear(), anchor.getMonth() - 1, endDay);
     if (endDay < day) {
-      previousTo = getSafeMonthDate(anchor.getFullYear(), anchor.getMonth() + 1, endDay);
+      previousTo = getSafeMonthDate(anchor.getFullYear(), anchor.getMonth(), endDay);
     }
   } else {
     // Dynamic end: day before the next cycle starts

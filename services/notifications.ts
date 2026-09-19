@@ -149,7 +149,11 @@ async function fireThresholdAlert<T extends ThresholdBracket>(config: {
   const { spend, budget, table, keyFor, currency = 'NPR' } = config;
   if (Platform.OS === 'web' || config.enabled === false || !budget || budget <= 0) return;
 
-  const monthKey = new Date().toISOString().slice(0, 7); // e.g. "2026-08"
+  // Local calendar month, matching the budget window (currentMonthRange) that
+  // spend is measured against. toISOString() is UTC and diverges for UTC+5:45
+  // ..+9 users around midnight, double- or mis-firing the bracket alert.
+  const _now = new Date();
+  const monthKey = `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, '0')}`; // e.g. "2026-08"
   const pct = Math.floor((spend / budget) * 100);
 
   // The SINGLE HIGHEST bracket matching the current percentage: 51% → 50,

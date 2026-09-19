@@ -62,17 +62,25 @@ Deno.serve(async (req: Request) => {
   const channel = parsed.channel === 'native' ? 'native' : 'web';
 
   // Web recovery links must bounce back to the web app's own callback. The
-  // client sends its origin, but only an absolute http(s) origin is accepted;
-  // GoTrue's own allowlist is the second gate (unlisted targets are rewritten
-  // to the project site URL), so a spoofed origin can never capture a link.
+  // client sends its origin. audit run-1: relying only on the scheme check +
+  // the deployed GoTrue allowlist left the binding unverifiable in-repo, so
+  // when PASSWORD_RESET_ALLOWED_ORIGINS is set (comma-separated exact
+  // origins) it becomes a hard in-function gate; the GoTrue allowlist stays
+  // as the second layer.
   let redirectTo = MOBILE_REDIRECT;
   if (channel === 'web') {
     try {
       const u = new URL(String(parsed.origin ?? ''));
-      redirectTo = `${u.protocol}//${u.host}/auth/callback`;
-      if (u.protocol !== 'https:' && u.hostname !== 'localhost' && u.hostname !== '127.0.0.1') {
+      const origin = `${u.protocol}//${u.host}`;
+      const allowlist = (Deno.env.get('PASSWORD_RESET_ALLOWED_ORIGINS') ?? '')
+        .split(',')
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean);
+      const isLocalDev = u.hostname === 'localhost' || u.hostname === '127.0.0.1';
+      if (allowlist.length > 0 ? !allowlist.includes(origin.toLowerCase()) && !isLocalDev : u.protocol !== 'https:' && !isLocalDev) {
         return json({ success: false, code: 'bad_request' });
       }
+      redirectTo = `${origin}/auth/callback`;
     } catch {
       return json({ success: false, code: 'bad_request' });
     }
@@ -124,10 +132,17 @@ Deno.serve(async (req: Request) => {
         apikey: serviceKey,
         Authorization: `Bearer ${serviceKey}`,
         'Content-Type': 'application/json',
-        Prefer: 'resolution=merge-duplicates',
+        // PLAIN insert (audit run-1): merge-duplicates turned a duplicate
+        // primary key into a silent overwrite, so every concurrent first-time
+        // request slipped through the check-then-act window. A 409 here now
+        // means another request won the slot inside the same 60s window.
+        Prefer: 'return=minimal',
       },
       body: JSON.stringify({ email_hash: emailHash, last_sent_at: new Date().toISOString() }),
     });
+    if (insert.status === 409) {
+      return json({ success: false, code: 'cooldown_active' });
+    }
     if (!insert.ok) {
       return json({ success: false, code: 'send_failed' });
     }

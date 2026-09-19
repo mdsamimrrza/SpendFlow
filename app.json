@@ -47,12 +47,12 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/splash-icon.png",
+          "image": "./assets/splash-icon-blank.png",
           "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#F2EFE9",
           "dark": {
-            "image": "./assets/splash-icon-dark.png",
+            "image": "./assets/splash-icon-blank.png",
             "backgroundColor": "#0B0F19"
           }
         }
@@ -74,7 +74,8 @@
       "expo-sharing",
       "expo-status-bar",
       "expo-web-browser",
-      "./plugins/with-android-build-config"
+      "./plugins/with-android-build-config",
+      "./plugins/with-android-backup-rules"
     ],
 
     "experiments": {

@@ -30,7 +30,7 @@ import { useLanguage } from '@/hooks/useLanguage';
 import { useSecurity } from '@/hooks/useSecurity';
 import { useTheme } from '@/hooks/useTheme';
 import { PeriodKey } from '@/types';
-import { filterExpensesByPeriod, formatMoney, sumExpenses } from '@/utils/format';
+import { currentMonthRange, filterExpensesByPeriod, formatMoney, sumExpenses } from '@/utils/format';
 
 export default function ExportScreen() {
   const router = useRouter();
@@ -104,14 +104,21 @@ export default function ExportScreen() {
   // Filter items by chosen period (month follows the user's salary cycle)
   const cycleStartDay = profile?.cycle_start_day ?? 1;
   const cycleEndDay = profile?.cycle_end_day ?? null;
+  // Active cycle window — exported statements follow the same live-rate rule
+  // as the screens: in-window rows price at today's rate, older rows frozen.
+  const activeWindow = useMemo(
+    () => currentMonthRange(cycleStartDay, cycleEndDay),
+    [cycleStartDay, cycleEndDay],
+  );
   const filteredItems = useMemo(
     () => filterExpensesByPeriod(expenses.items, period, cycleStartDay, cycleEndDay),
     [expenses.items, period, cycleStartDay, cycleEndDay],
   );
 
-  // Snapshot-aware total: each row converts at its own date — statements
-  // match History/Dashboard exactly instead of re-valuing at today's rate.
-  // Shared snapshot-resolver hook (same source as the other money screens).
+  // Display conversion: rows inside the active cycle price at TODAY's live
+  // rate; rows before it stay frozen at their transaction-date rate —
+  // statements match History/Dashboard exactly.
+  // Shared resolver hook (same source as the other money screens).
   const { resolver: rateResolver } = useRateResolver(filteredItems, preferredCurrency);
 
   const totalAmount = useMemo(
@@ -136,7 +143,7 @@ export default function ExportScreen() {
     beginSystemCapture();
     let result: 'saved' | 'shared' | null = null;
     try {
-      result = await withWatchdog(exportPdf(filteredItems, profile, preferredCurrency), 'PDF export');
+      result = await withWatchdog(exportPdf(filteredItems, profile, preferredCurrency, activeWindow), 'PDF export');
     } catch (err) {
       notify('error', err instanceof Error ? err.message : 'Could not generate PDF statement.');
     } finally {
@@ -161,7 +168,7 @@ export default function ExportScreen() {
     beginSystemCapture();
     let result: 'saved' | 'shared' | null = null;
     try {
-      result = await withWatchdog(exportExcel(filteredItems, preferredCurrency), 'Excel export');
+      result = await withWatchdog(exportExcel(filteredItems, preferredCurrency, activeWindow), 'Excel export');
     } catch (err) {
       notify('error', err instanceof Error ? err.message : 'Could not generate Excel spreadsheet.');
     } finally {

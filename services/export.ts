@@ -4,7 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system/legacy';
-import { buildRateResolver } from '@/services/exchange';
+import { buildRateResolver, type ActiveRateWindow } from '@/services/exchange';
 import { Expense, UserProfile } from '@/types';
 import { formatMoney, groupByCategory } from '@/utils/format';
 
@@ -70,8 +70,10 @@ const ICON_EMOJI: Record<string, string> = {
 };
 function categoryIcon(raw: string): string {
   if (!raw) return '💳';
-  // Emoji / pictograph already? Pass through untouched.
-  if (/\p{Extended_Pictographic}/u.test(raw)) return raw;
+  // Emoji / pictograph already? Pass through ONLY when the whole string is
+  // pictographic (plus joiners/variation selectors) — an unanchored test let
+  // arbitrary text like '=cmd😀' ride through to export cells.
+  if (/^(?:[\u200D\uFE0F]|\p{Extended_Pictographic})+$/u.test(raw)) return raw;
   return ICON_EMOJI[raw.trim().toLowerCase()] ?? '💳';
 }
 
@@ -307,8 +309,8 @@ export async function exportCsv(expenses: Expense[]) {
       expense.time || '',
       String(expense.amount),
       sanitizeSpreadsheetCell(expense.currency),
-      expense.categories?.name ?? 'Other',
-      expense.payment_method,
+      sanitizeSpreadsheetCell(expense.categories?.name ?? 'Other'),
+      sanitizeSpreadsheetCell(expense.payment_method),
       sanitizeSpreadsheetCell(expense.description ?? ''),
       sanitizeSpreadsheetCell(expense.notes ?? ''),
     ]),
@@ -335,9 +337,13 @@ export async function exportCsv(expenses: Expense[]) {
 }
 
 // ── 2. EXCEL (XLSX) EXPORT ──
-export async function exportExcel(expenses: Expense[], currency = 'NPR') {
+export async function exportExcel(
+  expenses: Expense[],
+  currency = 'NPR',
+  activeWindow?: ActiveRateWindow | null,
+) {
   const fileName = generateExportFileName(expenses, 'xlsx');
-  const resolver = await buildRateResolver(expenses, currency);
+  const resolver = await buildRateResolver(expenses, currency, { activeWindow });
   const summary = groupByCategory(expenses, currency, resolver);
   // Share base = the same converted expense-only totals the summary is built
   // from — never the raw sum of all records (income / mixed currencies would
@@ -362,8 +368,8 @@ export async function exportExcel(expenses: Expense[], currency = 'NPR') {
       { value: expense.time || '' },
       { value: Number(expense.amount) },
       { value: sanitizeSpreadsheetCell(expense.currency) },
-      { value: expense.categories?.name ?? 'Other' },
-      { value: expense.payment_method },
+      { value: sanitizeSpreadsheetCell(expense.categories?.name ?? 'Other') },
+      { value: sanitizeSpreadsheetCell(expense.payment_method) },
       { value: sanitizeSpreadsheetCell(expense.description ?? '') },
       { value: sanitizeSpreadsheetCell(expense.notes ?? '') },
     ]),
@@ -372,7 +378,7 @@ export async function exportExcel(expenses: Expense[], currency = 'NPR') {
   const summaryRows = [
     [{ value: 'Category' }, { value: 'Total' }, { value: 'Share %' }],
     ...summary.map((item) => [
-      { value: `${categoryIcon(item.icon)} ${item.label}` },
+      { value: sanitizeSpreadsheetCell(`${categoryIcon(item.icon)} ${item.label}`) },
       { value: formatMoney(item.total, currency) },
       { value: `${totalAmount > 0 ? Math.round((item.total / totalAmount) * 100) : 0}%` },
     ]),
@@ -410,7 +416,12 @@ export async function exportExcel(expenses: Expense[], currency = 'NPR') {
 }
 
 // ── 3. PDF EXPORT (COMPREHENSIVE PROFESSIONAL FINANCIAL STATEMENT) ──
-export async function exportPdf(expenses: Expense[], profile?: UserProfile | null, currency = 'NPR') {
+export async function exportPdf(
+  expenses: Expense[],
+  profile?: UserProfile | null,
+  currency = 'NPR',
+  activeWindow?: ActiveRateWindow | null,
+) {
   const fileName = generateExportFileName(expenses, 'pdf');
   const now = new Date();
   // expenses.currency has no DB CHECK constraint — a crafted value must never
@@ -432,8 +443,9 @@ export async function exportPdf(expenses: Expense[], profile?: UserProfile | nul
   // income records must not inflate the totals, and every section (outflow,
   // average, payment methods, category shares, budget comparison) must share
   // ONE converted base — mixing raw and converted amounts produced shares
-  // like 126% and category sums that didn't add up.
-  const resolver = await buildRateResolver(expenses, currency);
+  // like 126% and category sums that didn't add up. The active-window rule
+  // matches the screens: in-window rows price live, older rows frozen.
+  const resolver = await buildRateResolver(expenses, currency, { activeWindow });
   const toExportCurrency = (e: Expense): number => {
     const curr = /^[A-Za-z]{3}$/.test(e.currency ?? '') ? (e.currency as string) : 'NPR';
     return resolver.convert(Number(e.amount) || 0, curr, currency, e.date);
@@ -720,7 +732,7 @@ export async function exportPdf(expenses: Expense[], profile?: UserProfile | nul
         </div>
         <div class="card">
           <div class="card-label">Top Category</div>
-          <div class="card-value" style="font-size: 15px; color: #1E293B; margin-top: 6px;">${topCategory}</div>
+          <div class="card-value" style="font-size: 15px; color: #1E293B; margin-top: 6px;">${escapeHtml(topCategory)}</div>
           <div class="card-subtext">Highest expenditure sector</div>
         </div>
         <div class="card">

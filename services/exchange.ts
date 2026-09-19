@@ -20,18 +20,18 @@ export const NPR_PER_INR = 1.6;
 // Last-resort approximation when neither DB cache nor the API can answer.
 // Pegged currencies (QAR/AED/SAR) are resolved by PEGGED_USD_PER_UNIT instead,
 // and NPR is derived from INR (see fallbackUsdPerUnit) — so NPR has no entry
-// here by design. Values refreshed 2026-09-09; keep roughly current-era so the
+// here by design. Values refreshed 2026-09-16; keep roughly current-era so the
 // worst case is a small drift, never the old ~12% INR gap.
 const FALLBACK_UNITS_PER_USD: Record<string, number> = {
   USD: 1,
-  INR: 94.84,
+  INR: 95.99,
   QAR: 3.64,
-  GBP: 0.738,
-  MYR: 4.06,
-  KRW: 1341.0,
-  JPY: 153.8,
-  AUD: 1.386,
-  CAD: 1.378,
+  GBP: 0.742,
+  MYR: 4.0844,
+  KRW: 1360.36,
+  JPY: 155.08,
+  AUD: 1.4031,
+  CAD: 1.3913,
 };
 
 // ── Session rate memory ─────────────────────────────────────────────────────
@@ -186,9 +186,20 @@ export interface SnapshotRow {
   exchange_rate_to_usd?: number | null;
 }
 
+export type RateBasis = 'auto' | 'frozen';
+
+/** Local YYYY-MM-DD window of the user's ACTIVE financial cycle. Rows inside
+ *  it are priced at today's live rate (active month = live everywhere); rows
+ *  before it — even one day before the cycle start — stay frozen at their
+ *  transaction-date rate (closed periods = history). */
+export interface ActiveRateWindow {
+  from: string;
+  to: string;
+}
+
 export interface RateResolver {
-  usdPerUnit(currency: string, date: string): number;
-  convert(amount: number, from: string, to: string, date: string): number;
+  usdPerUnit(currency: string, date: string, basis?: RateBasis): number;
+  convert(amount: number, from: string, to: string, date: string, basis?: RateBasis): number;
 }
 
 function round8(n: number): number {
@@ -225,8 +236,10 @@ export function createExchangeService(client: SupabaseClient) {
     // exchangerate.host with the server-side access key when one is present.
     const symbols = encodeURIComponent(currency);
     const candidates: string[] = [
-      `https://api.frankfurter.app/${date}?from=USD&to=${symbols}`,
+      // api.frankfurter.app is retired (301s to .dev) — call the live host
+      // directly, web parity (services/exchange.ts web repo).
       `https://api.frankfurter.dev/v1/${date}?base=USD&symbols=${symbols}`,
+      `https://api.frankfurter.app/${date}?from=USD&to=${symbols}`,
     ];
     const accessKey = process.env.EXCHANGE_RATE_HOST_ACCESS_KEY;
     if (accessKey) {
@@ -344,6 +357,30 @@ export function createExchangeService(client: SupabaseClient) {
     if (remembered !== null) return remembered;
     if (!isIsoDate(date)) return fallbackUsdPerUnit(ccy);
 
+    // CURRENT-rate requests (date >= today) go API-FIRST — web parity
+    // (docs/SYNC-STRATEGY §6.1, web fix 2026-09-15): no job refreshes
+    // `exchange_rates`, so any row — however recent — can be months old and
+    // silently price today's figures with a stale rate (web measured a frozen
+    // INR ≈ 95.2 row vs 95.96 live, ~0.7% off every current-value display).
+    // Tier order mirrors web exactly: frankfurter (ECB reference) → er-api
+    // live → table (offline fallback, any age) → static fallback. DATED
+    // requests keep the table-first byte-compat order below, unchanged.
+    if (date >= todayIso()) {
+      const liveDated = await fetchHistoricalUnitsPerUsd(date, ccy);
+      if (liveDated) {
+        const rate = round8(1 / liveDated);
+        rememberRate(ccy, date, rate);
+        return rate;
+      }
+      const latestUnits = await loadLatestUnitsPerUsd();
+      const units = Number(latestUnits?.[ccy]);
+      if (units > 0) {
+        const rate = round8(1 / units);
+        rememberRate(ccy, date, rate);
+        return rate;
+      }
+    }
+
     const { data: cached } = await client
       .from('exchange_rates')
       .select('rate_to_usd')
@@ -359,17 +396,14 @@ export function createExchangeService(client: SupabaseClient) {
     const units = await fetchHistoricalUnitsPerUsd(date, ccy);
     if (units) {
       const rate = round8(1 / units);
-      // Writing the fetched rate to the shared table is best-effort — normal
-      // users no longer have INSERT permission on exchange_rates (trusted
-      // server-side processes own that data). A denied write resolves as an
-      // error result, never a throw, and must not stop the client from using
-      // the rate it already resolved.
-      await client
-        .from('exchange_rates')
-        .upsert(
-          { currency: ccy, date, rate_to_usd: rate },
-          { onConflict: 'currency,date', ignoreDuplicates: true },
-        );
+      // Audit run-1: the client is now READ-ONLY on the shared exchange_rates
+      // table. It used to best-effort upsert the provider-fetched rate here so
+      // the next user got a DB cache hit — but that left a write call to
+      // cross-tenant reference data in the shipped bundle, whose only control
+      // was a server-side GRANT the repo had twice caught drifting from
+      // production. The provider fetch above is the same source either way, and
+      // the service-owned backfill (scripts/ + pg_cron) keeps the table warm, so
+      // dropping the client write costs a cache hit and removes the surface.
       rememberRate(ccy, date, rate);
       return rate;
     }
@@ -401,11 +435,21 @@ export function createExchangeService(client: SupabaseClient) {
   async function convertExpense(
     expense: SnapshotRow & { amount: number | string },
     toCurrency: string,
+    activeWindow?: ActiveRateWindow | null,
   ): Promise<number> {
     const amount = Number(expense.amount);
     const from = (expense.currency || 'USD').toUpperCase();
     const to = (toCurrency || 'USD').toUpperCase();
     if (from === to || !amount) return amount;
+    // Active financial month = live everywhere: rows inside the active cycle
+    // window re-price at TODAY's rate on both sides (the frozen snapshot is a
+    // transaction-date rate and must not be used for the live basis).
+    if (activeWindow && expense.date >= activeWindow.from && expense.date <= activeWindow.to) {
+      const t = todayIso();
+      const fromRate = await getRate(from, t);
+      const toRate = await getRate(to, t);
+      return round2((amount * fromRate) / toRate);
+    }
     const toRate = await getRate(to, expense.date);
     // NPR rows may carry pre-peg floating snapshots — those are wrong under
     // the fixed 1 INR = 1.60 NPR rule, so NPR never uses a stored snapshot.
@@ -415,8 +459,13 @@ export function createExchangeService(client: SupabaseClient) {
     return round2((amount * fromRate) / toRate);
   }
 
-  async function buildRateResolver(rows: SnapshotRow[], targetCurrency: string): Promise<RateResolver> {
+  async function buildRateResolver(
+    rows: SnapshotRow[],
+    targetCurrency: string,
+    options?: { activeWindow?: ActiveRateWindow | null },
+  ): Promise<RateResolver> {
     const target = (targetCurrency || 'USD').toUpperCase();
+    const activeWindow = options?.activeWindow ?? null;
     const cache = new Map<string, number>();
     const key = (c: string, d: string) => `${c}|${d}`;
     const missing = new Map<string, { c: string; d: string }>();
@@ -433,18 +482,36 @@ export function createExchangeService(client: SupabaseClient) {
         missing.set(key(ccy, row.date), { c: ccy, d: row.date });
       }
       // NPR is derived from INR, so preload INR for every NPR transaction
-      // date rather than falling back to a present-day/static INR rate.
-      if (ccy === 'NPR') {
+      // date rather than falling back to a present-day/static INR rate —
+      // but NEVER when an INR snapshot for that date is already seeded above
+      // (the memory/DB passes below overwrite, so a stale remembered rate
+      // must not clobber the row's own frozen snapshot).
+      if (ccy === 'NPR' && !cache.has(key('INR', row.date))) {
         missing.set(key('INR', row.date), { c: 'INR', d: row.date });
       }
       if (ccy !== target) rowsByTargetDate.add(row.date);
     }
     for (const d of rowsByTargetDate) {
-      if (PEGGED_USD_PER_UNIT[target] === undefined && target !== 'NPR') {
+      if (PEGGED_USD_PER_UNIT[target] === undefined && target !== 'NPR' && !cache.has(key(target, d))) {
         missing.set(key(target, d), { c: target, d });
       }
-      if (target === 'NPR') {
+      if (target === 'NPR' && !cache.has(key('INR', d))) {
         missing.set(key('INR', d), { c: 'INR', d });
+      }
+    }
+
+    // Active-window live pricing: rows inside the active cycle resolve at
+    // TODAY's rate, so pre-fetch every involved currency at today's date
+    // (these d >= today entries are filled by the live-quote pass below and
+    // make the in-window conversion fully synchronous afterwards).
+    if (activeWindow) {
+      const t = todayIso();
+      const windowCurrencies = new Set<string>([target]);
+      for (const row of rows) windowCurrencies.add((row.currency || 'USD').toUpperCase());
+      for (const ccy of windowCurrencies) {
+        if (ccy === 'USD' || PEGGED_USD_PER_UNIT[ccy] !== undefined) continue;
+        missing.set(key(ccy, t), { c: ccy, d: t });
+        if (ccy === 'NPR') missing.set(key('INR', t), { c: 'INR', d: t });
       }
     }
 
@@ -453,6 +520,12 @@ export function createExchangeService(client: SupabaseClient) {
     // the resolver locally with no DB round trip at all.
     await ensureRateMemoryLoaded();
     for (const [k, pair] of [...missing]) {
+      // A snapshot seeded above always wins — never let the device's
+      // remembered rate overwrite the row's own frozen snapshot.
+      if (cache.has(k)) {
+        missing.delete(k);
+        continue;
+      }
       const remembered = recallRate(pair.c, pair.d);
       if (remembered !== null) {
         cache.set(k, remembered);
@@ -464,6 +537,10 @@ export function createExchangeService(client: SupabaseClient) {
     if (missing.size) {
       const dbRates = await loadDbRates();
       for (const [k, pair] of [...missing]) {
+        if (cache.has(k)) {
+          missing.delete(k);
+          continue;
+        }
         const nearest = nearestDbRate(dbRates.get(pair.c), pair.d);
         if (nearest !== null) {
           cache.set(k, nearest);
@@ -509,21 +586,28 @@ export function createExchangeService(client: SupabaseClient) {
       cache.set(k, fallbackUsdPerUnit(pair.c));
     }
 
-    const usdPerUnit = (currency: string, date: string): number => {
+    const usdPerUnit = (currency: string, date: string, basis: RateBasis = 'auto'): number => {
       const ccy = (currency || 'USD').toUpperCase();
+      // 'auto' basis applies the active-month rule: a row inside the active
+      // cycle window prices at TODAY's live rate; 'frozen' always resolves at
+      // the row's own date (transaction-date debugger / closed periods).
+      const effectiveDate =
+        basis === 'auto' && activeWindow && date >= activeWindow.from && date <= activeWindow.to
+          ? todayIso()
+          : date;
       if (ccy === 'NPR') {
-        const inr = cache.get(key('INR', date));
+        const inr = cache.get(key('INR', effectiveDate));
         const inrRate = inr && inr > 0 ? inr : fallbackUsdPerUnit('INR');
         return round8(inrRate / NPR_PER_INR);
       }
       if (PEGGED_USD_PER_UNIT[ccy] !== undefined) return PEGGED_USD_PER_UNIT[ccy];
-      return cache.get(key(ccy, date)) ?? fallbackUsdPerUnit(ccy);
+      return cache.get(key(ccy, effectiveDate)) ?? fallbackUsdPerUnit(ccy);
     };
 
     return {
       usdPerUnit,
-      convert(amount, from, to, date) {
-        return round2(amount * (usdPerUnit(from, date) / usdPerUnit(to, date)));
+      convert(amount, from, to, date, basis = 'auto') {
+        return round2(amount * (usdPerUnit(from, date, basis) / usdPerUnit(to, date, basis)));
       },
     };
   }
@@ -556,10 +640,15 @@ export function convert(amount: number, fromCurrency: string, toCurrency: string
 export function convertExpense(
   expense: SnapshotRow & { amount: number | string },
   toCurrency: string,
+  activeWindow?: ActiveRateWindow | null,
 ): Promise<number> {
-  return service().convertExpense(expense, toCurrency);
+  return service().convertExpense(expense, toCurrency, activeWindow);
 }
 
-export function buildRateResolver(rows: SnapshotRow[], targetCurrency: string): Promise<RateResolver> {
-  return service().buildRateResolver(rows, targetCurrency);
+export function buildRateResolver(
+  rows: SnapshotRow[],
+  targetCurrency: string,
+  options?: { activeWindow?: ActiveRateWindow | null },
+): Promise<RateResolver> {
+  return service().buildRateResolver(rows, targetCurrency, options);
 }

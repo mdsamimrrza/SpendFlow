@@ -38,7 +38,11 @@
 // Never 200 on failure; never stack traces/SQL/secrets in errors.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+// Exact pin (audit run-1): identity of shipped third-party code must equal the
+// reviewed repo source; the floating '@2' range let esm.sh's redirect pick the
+// version at deploy time. 2.116.0 is the version root deno.lock hashes —
+// bump only with a source diff so the review and the deploy match.
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.116.0';
 
 const USER_BUCKETS = ['receipts', 'avatars'] as const;
 

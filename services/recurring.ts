@@ -213,6 +213,18 @@ export async function updateRecurringRule(
   if (input.description !== undefined) {
     input = { ...input, description: input.description?.trim().slice(0, 500) || null };
   }
+  // audit run-1: update mirrors createRecurringRule's shape checks so the two
+  // write paths can't diverge (interval_days <= 0 used to be able to freeze a
+  // chain when routed through an update instead of create).
+  if (input.next_due_date !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(String(input.next_due_date))) {
+    throw new Error('Enter a valid next due date.');
+  }
+  if (input.frequency === 'custom' && (input.interval_days !== undefined || input.frequency !== undefined)) {
+    const days = Number(input.interval_days);
+    if (!Number.isInteger(days) || days < 1 || days > 365) {
+      throw new Error('Custom cycle needs a repeat length of 1–365 days.');
+    }
+  }
   // Ownership is enforced by RLS; the explicit user scope is defense in depth.
   let query = supabase
     .from('recurring_rules')
@@ -468,6 +480,9 @@ export async function payPlanFromForm(
     .single();
   if (ruleError) throw ruleError;
   const rule = ruleRow as RecurringRule;
+  // audit run-1: this write path must validate through the single money
+  // validation source like every other amount write (validateAmount/MAX_AMOUNT).
+  const amount = validateAmount(values.amount);
 
   const slot = rule.next_due_date;
   const paidDate = values.date;
@@ -482,7 +497,7 @@ export async function payPlanFromForm(
     .insert({
       user_id: userId,
       category_id: values.category_id,
-      amount: values.amount,
+      amount,
       currency: values.currency,
       description: values.description?.trim() || rule.description || null,
       notes: values.notes?.trim() || null,
@@ -510,7 +525,7 @@ export async function payPlanFromForm(
   const nextDue = nextDueDate(paidDate, rule.frequency, rule.interval_days);
   const { data: advanced, error: advanceError } = await supabase
     .from('recurring_rules')
-    .update({ next_due_date: nextDue, amount: values.amount, currency: values.currency })
+    .update({ next_due_date: nextDue, amount, currency: values.currency })
     .eq('id', rule.id)
     .eq('user_id', userId)
     .eq('next_due_date', slot)
@@ -561,7 +576,9 @@ export async function undoLatestOccurrencePayment(
     return null;
   }
 
-  const { error: deleteError } = await supabase.from('expenses').delete().eq('id', latest.id);
+  // user_id filter is defense-in-depth like every sibling delete — RLS is the
+  // authority (audit run-1 consistency note).
+  const { error: deleteError } = await supabase.from('expenses').delete().eq('id', latest.id).eq('user_id', userId);
   if (deleteError) throw deleteError;
 
   let query = supabase

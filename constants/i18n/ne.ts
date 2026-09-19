@@ -402,6 +402,7 @@ onboarding_country_title: 'तपाईंको देश',
 
   // ── FX / "आजको दरमा" ──
   curAtTodayRate: 'आजको दरमा',
+  curAtTxnRate: 'कारोबार मितिको दरमा',
 
   // ── ट्रान्सफर ──
   transfer_title: 'पैसा ट्रान्सफर गर्नुहोस्',

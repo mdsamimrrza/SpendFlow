@@ -2,11 +2,14 @@ import { createClient } from '@supabase/supabase-js';
 import './load-maintenance-env';
 import { createExchangeService } from '../services/exchange';
 
-const url = process.env.SUPABASE_URL || process.env.EXPO_PUBLIC_SUPABASE_URL;
-const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY;
+const url = process.env.SUPABASE_URL;
+// audit run-1: no '|| SUPABASE_KEY' downgrade — the class of the arbitrary
+// SUPABASE_KEY value cannot be verified, and under a client key RLS turns the
+// scan into a 0-row no-op that still reports completion.
+const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!url || !key) {
-  console.error('Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY before running this one-time backfill.');
+  console.error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required — client keys cannot backfill across tenants.');
   process.exit(1);
 }
 

@@ -8,7 +8,12 @@ const BASELINE_EFFECTIVE_FROM = '1900-01-01';
 function todayISO(): string {
   const d = new Date();
   const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  // audit run-1: the DB trigger and the UPDATE WITH CHECK compare effective_from
+  // against current_date (UTC). A device-local date lets a UTC+05:45..+09 user's
+  // late-evening change land on a date the server considers "tomorrow" and get
+  // rejected, silently dropping the audit row. Use the UTC calendar date so the
+  // client and server agree on "today".
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
 }
 
 // numeric columns can come back as string or number depending on the driver

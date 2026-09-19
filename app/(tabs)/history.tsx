@@ -258,10 +258,12 @@ export default function HistoryScreen() {
     });
   }, [expenses.items, selectedCategoryId, typeFilter]);
 
-  // Every expense converts at its own transaction date, never today's rate —
-  // shared snapshot-resolver hook (identical source used by Analytics, Export,
-  // P&L and the net-worth rollup, so totals can never disagree between screens).
-  const { resolver: rateResolver, convertAtDate, convertToday } = useRateResolver(
+  // Display conversion: rows inside the ACTIVE cycle price at TODAY's live
+  // rate (active month = live everywhere); rows before it stay frozen at
+  // their transaction-date rate — shared resolver hook (identical source used
+  // by Analytics, Export, P&L and the net-worth rollup, so totals can never
+  // disagree between screens).
+  const { resolver: rateResolver, convertAtDate, convertFrozen } = useRateResolver(
     filteredExpenses,
     preferredCurrency,
   );
@@ -317,20 +319,20 @@ export default function HistoryScreen() {
     return filteredExpenses.reduce((max, expense) => Math.max(max, convertAtDate(expense)), 0);
   }, [filteredExpenses, convertAtDate]);
 
-  // "At today's rate" counterpart of the filtered totals (hidden when identical
-  // or while today's cross is unresolved — see TodayRateLine).
-  const todayTotals = useMemo(() => {
-    if (!convertToday || !rateResolver) return null;
+  // "At transaction-date rates" debugger counterpart of the filtered totals:
+  // the headline is LIVE for rows in the active month; this frozen pair
+  // cross-checks the historical value (hidden when the bases agree — see
+  // TodayRateLine).
+  const frozenTotals = useMemo(() => {
+    if (!convertFrozen || !rateResolver) return null;
     let inc = 0;
     let exp = 0;
     for (const r of filteredExpenses) {
-      const v = convertToday(r);
-      if (v == null) return null;
-      if (r.type === 'income') inc += v;
-      else exp += v;
+      if (r.type === 'income') inc += convertFrozen(r);
+      else exp += convertFrozen(r);
     }
     return { income: inc, expense: exp };
-  }, [filteredExpenses, convertToday, rateResolver]);
+  }, [filteredExpenses, convertFrozen, rateResolver]);
 
   const fmt = useMemo(
     () => (n: number) => formatMoney(n, preferredCurrency, isPrivacyMode),
@@ -762,10 +764,10 @@ export default function HistoryScreen() {
           </View>
         </Card>
 
-        {/* "At today's rate" collapsible line — mirrors Overview hero */}
+        {/* "At transaction-date rates" debugger line — mirrors Overview hero */}
         <TodayRateLine
-          frozen={{ income: flowTotals.totalIncome, expense: flowTotals.totalExpense }}
-          today={todayTotals}
+          live={{ income: flowTotals.totalIncome, expense: flowTotals.totalExpense }}
+          frozen={frozenTotals}
           fmt={fmt}
         />
 

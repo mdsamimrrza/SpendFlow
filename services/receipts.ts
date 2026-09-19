@@ -56,10 +56,21 @@ function sanitizeExtension(fileName?: string | null, mimeType?: string | null): 
  * `<userId>/<file>` paths). Returns null for local device URIs (file://,
  * content://, data:, blob:) and non-receipt remote URLs, which cannot be
  * managed or re-signed.
+ *
+ * When `ownerUid` is provided, a path whose first folder is NOT the owner's
+ * is rejected (audit run-1): the DB column is free text and the storage
+ * server's sign-endpoint policy evaluation is provider behavior we must not
+ * rely on — never voluntarily mint a signed URL for another tenant's object.
  */
-export function extractReceiptPath(stored: string | null | undefined): string | null {
+export function extractReceiptPath(stored: string | null | undefined, ownerUid?: string | null): string | null {
   if (!stored) return null;
   if (/^(file|content|data|blob):/i.test(stored)) return null;
+
+  const bind = (path: string | null): string | null => {
+    if (path === null) return null;
+    if (ownerUid === undefined) return path;
+    return ownerUid && path.startsWith(`${ownerUid}/`) ? path : null;
+  };
 
   if (/^https?:\/\//i.test(stored)) {
     // Legacy public URL shape: .../storage/v1/object/[public/]<bucket>/<path>
@@ -70,12 +81,12 @@ export function extractReceiptPath(stored: string | null | undefined): string | 
     const [bucket, ...segments] = rest.split('/');
     if (bucket !== RECEIPT_BUCKET || segments.length === 0) return null;
     const path = segments.join('/');
-    return path.includes('..') ? null : path;
+    return bind(path.includes('..') ? null : path);
   }
 
   // Raw storage path: <userId>/<timestamp>-<random>.<ext>
   if (stored.includes('/') && !stored.includes('..') && !stored.startsWith('/')) {
-    return stored;
+    return bind(stored);
   }
   return null;
 }
@@ -88,8 +99,19 @@ export function extractReceiptPath(stored: string | null | undefined): string | 
  */
 export async function resolveReceiptUrl(stored: string | null | undefined): Promise<string | null> {
   if (!stored) return null;
-  const path = extractReceiptPath(stored);
-  if (!path) return stored;
+  // Owner-bind against the CURRENT session (audit run-1): a row can carry a
+  // planted 'victimUid/file.jpg' path; without this check the app would sign
+  // it on render. Without a session nothing is signed — local attachment URIs
+  // keep their legacy pass-through exactly as before.
+  const { data } = await supabase.auth.getSession().catch(() => ({ data: { session: null } }));
+  const uid = data.session?.user?.id ?? null;
+  const path = extractReceiptPath(stored, uid);
+  if (!path) {
+    // Un-manageable shape (file://, content://, foreign http URL…) → pass
+    // through to <Image> exactly like before; a manageable storage path that
+    // failed ONLY the owner bind → suppress instead of signing.
+    return extractReceiptPath(stored) ? null : stored;
+  }
 
   try {
     const { data, error } = await supabase.storage
@@ -113,37 +135,6 @@ export async function deleteReceipt(stored: string | null | undefined): Promise<
     await supabase.storage.from(RECEIPT_BUCKET).remove([path]);
   } catch {
     // Ignore — the object may already be gone.
-  }
-}
-
-/**
- * Removes every object under the user's receipts folder (used on account
- * deletion). Best-effort: failures are swallowed so the wipe flow continues.
- */
-export async function deleteUserReceipts(userId: string): Promise<void> {
-  try {
-    // Converging pagination: objects are removed between listings, so an
-    // advancing offset would skip survivors (the folder shrinks under the
-    // cursor). Re-list from the top each round; stop on the first empty page.
-    // The round ceiling ends the loop (and the caller treats it as a failure)
-    // rather than silently leaving objects behind.
-    for (let round = 0; round < 50; round++) {
-      const { data } = await supabase.storage
-        .from(RECEIPT_BUCKET)
-        .list(userId, { limit: 100 });
-      const files = (data ?? []).map((item) => `${userId}/${item.name}`);
-      if (files.length === 0) return;
-      await supabase.storage.from(RECEIPT_BUCKET).remove(files);
-      if (files.length < 100) {
-        // Partial page — verify the folder is actually empty now.
-        const { data: recheck } = await supabase.storage
-          .from(RECEIPT_BUCKET)
-          .list(userId, { limit: 1 });
-        if (!recheck || recheck.length === 0) return;
-      }
-    }
-  } catch {
-    // Ignore — storage cleanup is best-effort during account deletion.
   }
 }
 

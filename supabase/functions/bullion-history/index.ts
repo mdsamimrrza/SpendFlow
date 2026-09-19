@@ -24,6 +24,15 @@ const CORS_HEADERS = {
   'Content-Type': 'application/json',
 };
 
+// Warm-instance response cache (audit run-1): the publishable key is public,
+// so any holder of a released APK could drive the two 2-year Yahoo fetches
+// per request and bill operator egress. Daily bars only change once a day —
+// one 10-minute TTL collapses repeat volume against a shared cache per warm
+// container (bounded per range), instead of per caller.
+type CachedSeries = { rows: Array<{ date: string; goldUsdPerOz: number; silverUsdPerOz: number }>; expiresAt: number };
+const CACHE_TTL_MS = 10 * 60 * 1000;
+const seriesCache = new Map<string, CachedSeries>();
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { status: 204, headers: CORS_HEADERS });
@@ -44,6 +53,11 @@ Deno.serve(async (req) => {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 10_000);
   try {
+    const cached = seriesCache.get(range);
+    let rows: CachedSeries['rows'];
+    if (cached && cached.expiresAt > Date.now()) {
+      rows = cached.rows;
+    } else {
     const chartUrl = (symbol: string) =>
       `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=${range}`;
     const [goldRes, silverRes] = await Promise.all([
@@ -75,12 +89,14 @@ Deno.serve(async (req) => {
     const goldByDate = await parse(goldRes);
     const silverByDate = await parse(silverRes);
 
-    const rows: Array<{ date: string; goldUsdPerOz: number; silverUsdPerOz: number }> = [];
+    rows = [];
     for (const [date, gold] of goldByDate) {
       const silver = silverByDate.get(date);
       if (silver) rows.push({ date, goldUsdPerOz: gold, silverUsdPerOz: silver });
     }
     rows.sort((a, b) => a.date.localeCompare(b.date));
+    seriesCache.set(range, { rows, expiresAt: Date.now() + CACHE_TTL_MS });
+    }
 
     return new Response(JSON.stringify({ rows: rows.slice(-days) }), { headers: CORS_HEADERS });
   } catch (e) {

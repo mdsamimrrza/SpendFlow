@@ -16,6 +16,7 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { CategoryIcon } from '@/components/ui/CategoryIcon';
 import { Text } from '@/components/ui/Text';
 import { useAuth } from '@/hooks/useAuth';
+import { useActiveCycleWindow } from '@/hooks/useActiveCycleWindow';
 import { useLanguage } from '@/hooks/useLanguage';
 import { convertExpense } from '@/services/exchange';
 import { usePrivacy } from '@/hooks/usePrivacy';
@@ -50,6 +51,7 @@ export const ExpenseItem = React.memo(function ExpenseItem({ expense, onDelete, 
   const { profile } = useAuth();
   const { isPrivacyMode } = usePrivacy();
   const router = useRouter();
+  const activeWindow = useActiveCycleWindow();
 
   const [detailModalOpen, setDetailModalOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
@@ -63,9 +65,9 @@ export const ExpenseItem = React.memo(function ExpenseItem({ expense, onDelete, 
   const catColor =
     expense.categories?.color ||
     (expense.type === 'income' ? theme.colors.income : theme.colors.primary);
-  // Snapshot-aware display amount: the parent may pass a pre-converted value
-  // (history does); otherwise this row converts at its OWN date via its
-  // exchange_rate_to_usd snapshot — never today's market rate.
+  // Display amount: the parent may pass a pre-converted value (history does);
+  // otherwise this row converts with the active-window rule — live rate for
+  // the active financial month, frozen transaction-date rate before it.
   const [ownConverted, setOwnConverted] = useState<number | null>(
     displayAmount ?? (isDifferentCurrency ? null : Number(expense.amount)),
   );
@@ -87,6 +89,7 @@ export const ExpenseItem = React.memo(function ExpenseItem({ expense, onDelete, 
         exchange_rate_to_usd: expense.exchange_rate_to_usd,
       },
       preferredCurrency,
+      activeWindow,
     )
       .then((v) => {
         if (!cancelled) setOwnConverted(v);
@@ -97,7 +100,7 @@ export const ExpenseItem = React.memo(function ExpenseItem({ expense, onDelete, 
     return () => {
       cancelled = true;
     };
-  }, [displayAmount, expense.id, expense.amount, expense.currency, expense.date, expense.exchange_rate_to_usd, preferredCurrency]);
+  }, [displayAmount, expense.id, expense.amount, expense.currency, expense.date, expense.exchange_rate_to_usd, preferredCurrency, activeWindow]);
   const convertedAmount = ownConverted;
 
   // Swipe Left PanResponder Gesture

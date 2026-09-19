@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { EXPENSE_CACHE_PREFIX, LEGACY_EXPENSE_CACHE_KEY, PAGE_SIZE } from '@/constants/app';
+import { CURRENCIES, EXPENSE_CACHE_PREFIX, LEGACY_EXPENSE_CACHE_KEY, PAGE_SIZE } from '@/constants/app';
 import { createCategory, listCategories } from '@/services/categories';
 import { listBankAccounts } from '@/services/bankAccounts';
 import { getRate } from '@/services/exchange';
@@ -364,9 +364,26 @@ export async function importExpensesFromCsv(userId: string, csv: string) {
     const accountName = stripExportQuote(indexOf('account') >= 0 ? cells[indexOf('account')] : '', 100) ?? '';
     const bank_account_id = accountName ? accountByName.get(accountName.toLowerCase()) ?? null : null;
 
-    // Time: free-typed "HH:MM[:SS]" — shape-validated, quote-stripped.
+    // Time: free-typed "HH:MM[:SS]" — shape AND range validated, quote-stripped.
     const rawTime = stripExportQuote(indexOf('time') >= 0 ? cells[indexOf('time')] : '', 8) ?? '';
-    const time = /^\d{1,2}:\d{2}(:\d{2})?$/.test(rawTime) ? rawTime : null;
+    const timeMatch = /^(\d{1,2}):(\d{2})(:\d{2})?$/.exec(rawTime);
+    const time =
+      timeMatch && Number(timeMatch[1]) < 24 && Number(timeMatch[2]) < 60 ? rawTime : null;
+
+    // Currency: only the 12 supported ISO codes; anything else would pass the
+    // DB ^[A-Z]{3}$ CHECK and then silently fall back to 1:1 USD conversion.
+    const rawCurrency = (indexOf('currency') >= 0 ? cells[indexOf('currency')] || 'NPR' : 'NPR')
+      .trim()
+      .toUpperCase()
+      .slice(0, 3);
+    const currency = (CURRENCIES as readonly string[]).includes(rawCurrency) ? rawCurrency : 'NPR';
+
+    // Payment method: the DB enum is the shape authority — map foreign (and
+    // formula-prefixed) values to 'Other' here so no raw cell text is stored.
+    const rawPaymentMethod = (indexOf('payment method') >= 0 ? cells[indexOf('payment method')] : 'Cash') || 'Cash';
+    const payment_method = (['Cash', 'Card', 'UPI', 'Other'] as readonly string[]).includes(rawPaymentMethod)
+      ? rawPaymentMethod
+      : 'Other';
 
     return {
       user_id: userId,
@@ -374,11 +391,11 @@ export async function importExpensesFromCsv(userId: string, csv: string) {
       amount,
       type,
       time,
-      currency: (indexOf('currency') >= 0 ? cells[indexOf('currency')] || 'NPR' : 'NPR').trim().toUpperCase().slice(0, 3) || 'NPR',
+      currency,
       category_id: category?.id ?? null,
       category_meta: { name: categoryName, icon: categoryIcon, color: categoryColor, type },
       bank_account_id,
-      payment_method: (indexOf('payment method') >= 0 ? cells[indexOf('payment method')] : 'Cash') || 'Cash',
+      payment_method,
       description: stripExportQuote(indexOf('description') >= 0 ? cells[indexOf('description')] : null, MAX_DESCRIPTION_LENGTH),
       notes: stripExportQuote(indexOf('notes') >= 0 ? cells[indexOf('notes')] : null, MAX_NOTES_LENGTH),
     };

@@ -5,25 +5,25 @@ import { NPR_PER_INR, seedTodayRatesFromUnitsPerUsd } from '@/services/exchange'
 const RATES_STORAGE_KEY = 'spendflow_exchange_rates_cache';
 const CACHE_EXPIRY_MS = 6 * 60 * 60 * 1000; // 6 hours
 
-// Baseline fallback rates relative to 1 USD (refreshed 2026-09-09)
+// Baseline fallback rates relative to 1 USD (refreshed 2026-09-16)
 const DEFAULT_RATES: Record<string, number> = {
   USD: 1.0,
-  // 94.84 INR/USD × 1.60 (NRB peg) — kept peg-consistent by construction.
-  NPR: 151.74,
-  INR: 94.84,
+  // 95.99 INR/USD × 1.60 (NRB peg) — kept peg-consistent by construction.
+  NPR: 153.58,
+  INR: 95.99,
   QAR: 3.64,
-  GBP: 0.738,
-  EUR: 0.86,
+  GBP: 0.742,
+  EUR: 0.8667,
   AED: 3.6725,
   SAR: 3.75,
-  CAD: 1.378,
-  AUD: 1.386,
-  JPY: 153.8,
-  SGD: 1.265,
-  MYR: 4.06,
-  KRW: 1341.0,
-  THB: 32.9,
-  CNY: 6.73,
+  CAD: 1.3913,
+  AUD: 1.4031,
+  JPY: 155.08,
+  SGD: 1.2727,
+  MYR: 4.0844,
+  KRW: 1360.36,
+  THB: 33.29,
+  CNY: 6.7268,
 };
 
 let inMemoryRates: Record<string, number> = { ...DEFAULT_RATES };

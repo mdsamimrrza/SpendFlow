@@ -157,10 +157,11 @@ export default function ProfitLossScreen() {
     [expenses.items, from, to],
   );
 
-  // Snapshot-aware conversion: every P&L figure resolves each row at its own
-  // date (row snapshot first), matching History/Dashboard exactly.
-  // Shared snapshot-resolver hook (same source as the other money screens).
-  const { resolver: rateResolver, convertToday } = useRateResolver(expenses.items, currency);
+  // Display conversion: rows inside the ACTIVE cycle price at TODAY's live
+  // rate (active month = live everywhere); rows before it stay frozen at
+  // their transaction-date rate, matching History/Dashboard exactly.
+  // Shared resolver hook (same source as the other money screens).
+  const { resolver: rateResolver, convertFrozen } = useRateResolver(expenses.items, currency);
 
   useEffect(() => {
     // Prefill with the budget converted into the display currency — editing and
@@ -181,19 +182,18 @@ export default function ProfitLossScreen() {
   const netResult = totalIncome - totalExpense;
   const isProfit = netResult >= 0;
 
-  // "At today's rate" counterpart of the period totals (self-hiding line).
-  const plTodayTotals = useMemo(() => {
-    if (!convertToday || !rateResolver) return null;
+  // "At transaction-date rates" debugger counterpart of the period totals
+  // (self-hiding line; headline is LIVE for the active month).
+  const plFrozenTotals = useMemo(() => {
+    if (!convertFrozen || !rateResolver) return null;
     let inc = 0;
     let exp = 0;
     for (const r of itemsInRange) {
-      const v = convertToday(r);
-      if (v == null) return null;
-      if (r.type === 'income') inc += v;
-      else exp += v;
+      if (r.type === 'income') inc += convertFrozen(r);
+      else exp += convertFrozen(r);
     }
     return { income: inc, expense: exp };
-  }, [itemsInRange, convertToday, rateResolver]);
+  }, [itemsInRange, convertFrozen, rateResolver]);
 
   const fmt = useMemo(
     () => (n: number) => formatMoney(n, currency, isPrivacyMode),
@@ -1319,10 +1319,10 @@ export default function ProfitLossScreen() {
               </Text>
             </View>
 
-            {/* "At today's rate" collapsible line — mirrors Overview/History */}
+            {/* "At transaction-date rates" debugger line — mirrors Overview/History */}
             <TodayRateLine
-              frozen={{ income: totalIncome, expense: totalExpense }}
-              today={plTodayTotals}
+              live={{ income: totalIncome, expense: totalExpense }}
+              frozen={plFrozenTotals}
               fmt={fmt}
             />
           </Card>

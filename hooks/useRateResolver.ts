@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { buildRateResolver, type RateResolver, getRate } from '@/services/exchange';
-import type { SnapshotRow } from '@/services/exchange';
+import { buildRateResolver, type RateResolver, type SnapshotRow } from '@/services/exchange';
+import { useActiveCycleWindow } from '@/hooks/useActiveCycleWindow';
 import { isoDate } from '@/utils/format';
 
 export interface RateResolverState {
@@ -9,24 +9,31 @@ export interface RateResolverState {
    *  signature rebuilds, so fresh data never re-skeletons the UI. Offline
    *  builds fail → ready still becomes true → callers render fallbacks. */
   ready: boolean;
-  /** Converts one transaction at its own transaction date (row snapshot first,
-   *  never today's rate) into the hook's target currency; 0 while the resolver
-   *  has not settled. History & Analytics hand-rolled byte-identical copies of
-   *  this — this is now THE implementation. */
+  /** Converts one transaction for DISPLAY: rows inside the ACTIVE financial
+   *  cycle price at TODAY's live rate (active month = live everywhere); rows
+   *  before the cycle start stay frozen at their transaction-date rate.
+   *  0 while the resolver has not settled. */
   convertAtDate: (row: { amount: number | string; currency?: string | null; date: string }) => number;
-  /** "At today's rate" counterpart: same amount priced through TODAY's live cross
-   *  on BOTH sides (brokerage market-value pattern). Returns null while rates
-   *  are unresolved so callers can hide the line entirely instead of showing a
-   *  wrong "today" figure. Mirrors web's useRowConverter.convertToday —
-   *  SYNCHRONOUS because today's rates are pre-fetched into the resolver's cache. */
+  /** ALWAYS the transaction-date basis (never today's rate) — used by the
+   *  "At transaction-date rates" debugger line to cross-check the live
+   *  headline against the frozen historical value. */
+  convertFrozen: (row: { amount: number | string; currency?: string | null; date: string }) => number;
+  /** Explicit today-only conversion (both sides at today's live cross).
+   *  Returns null while rates are unresolved so callers can hide the line
+   *  entirely instead of showing a wrong "today" figure. SYNCHRONOUS because
+   *  today's rates are pre-fetched into the resolver's cache. */
   convertToday: (row: { amount: number | string; currency?: string | null; date: string }) => number | null;
 }
 
 /**
- * Resolves transaction amounts with their frozen rate snapshots.  Consumers
- * deliberately receive no live-rate fallback while the resolver is loading.
+ * Resolves transaction amounts for display. The ACTIVE financial cycle window
+ * (from the user's profile) is applied centrally here: in-window rows price at
+ * today's live rate, everything before the window stays frozen — so every
+ * consumer (Dashboard, History, Analytics, P&L, charts, budget cards) shows
+ * the same basis without any per-screen formulas.
  */
 export function useRateResolver(rows: SnapshotRow[], targetCurrency: string): RateResolverState {
+  const activeWindow = useActiveCycleWindow();
   const [resolver, setResolver] = useState<RateResolver | null>(null);
   const [ready, setReady] = useState(false);
   const everReadyRef = useRef(false);
@@ -34,8 +41,11 @@ export function useRateResolver(rows: SnapshotRow[], targetCurrency: string): Ra
   // buildRateResolver reads only currency/date/snapshot per row, so that
   // content — not the array identity — determines the resolver.  Keying the
   // rebuild on this signature keeps callers that pass inline literals
-  // (`[] as Expense[]`) or unmemoized filters from looping setState.
-  const signature = `${(targetCurrency || 'USD').toUpperCase()}#${rows
+  // (`[] as Expense[]`) or unmemoized filters from looping setState. The
+  // window and today's date are part of the signature: the live-rate rule
+  // re-resolves when the cycle changes or the day rolls over.
+  const windowKey = `${activeWindow.from}#${activeWindow.to}`;
+  const signature = `${(targetCurrency || 'USD').toUpperCase()}#${windowKey}#${isoDate()}#${rows
     .map((row) => `${(row.currency || 'USD').toUpperCase()}|${row.date}|${Number(row.exchange_rate_to_usd) || 0}`)
     .join(';')}`;
 
@@ -49,7 +59,7 @@ export function useRateResolver(rows: SnapshotRow[], targetCurrency: string): Ra
         setReady(true);
       }
     };
-    buildRateResolver(rows, targetCurrency)
+    buildRateResolver(rows, targetCurrency, { activeWindow })
       .then(settle)
       .catch(() => settle(null));
     return () => {
@@ -57,19 +67,27 @@ export function useRateResolver(rows: SnapshotRow[], targetCurrency: string): Ra
     };
   }, [signature]);
 
-  const convertAtDate = useCallback(
-    (row: { amount: number | string; currency?: string | null; date: string }) =>
+  const convert = useCallback(
+    (row: { amount: number | string; currency?: string | null; date: string }, basis: 'auto' | 'frozen') =>
       resolver
-        ? resolver.convert(Number(row.amount), row.currency || 'NPR', targetCurrency, row.date)
+        ? resolver.convert(Number(row.amount), row.currency || 'NPR', targetCurrency, row.date, basis)
         : 0,
     [resolver, targetCurrency],
+  );
+
+  const convertAtDate = useCallback(
+    (row: { amount: number | string; currency?: string | null; date: string }) => convert(row, 'auto'),
+    [convert],
+  );
+
+  const convertFrozen = useCallback(
+    (row: { amount: number | string; currency?: string | null; date: string }) => convert(row, 'frozen'),
+    [convert],
   );
 
   // "At today's rate" conversion: both sides of the cross resolve at TODAY's live
   // rate (never the stored snapshot). Returns null while rates are unresolved so
   // callers can hide the line entirely instead of showing a wrong "today" figure.
-  // Mirrors web's useRowConverter.convertToday — SYNCHRONOUS because today's rates
-  // are pre-fetched and cached inside the RateResolver via buildRateResolver.
   const convertToday = useCallback(
     (row: { amount: number | string; currency?: string | null; date: string }) => {
       if (!resolver) return null;
@@ -88,5 +106,5 @@ export function useRateResolver(rows: SnapshotRow[], targetCurrency: string): Ra
     [resolver, targetCurrency],
   );
 
-  return { resolver, ready, convertAtDate, convertToday };
+  return { resolver, ready, convertAtDate, convertFrozen, convertToday };
 }

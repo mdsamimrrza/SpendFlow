@@ -23,7 +23,8 @@
 // Errors are coarse on purpose: never leaks account state, emails, or SQL.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+// Exact pin (audit run-1) — keep in sync with delete-account + deno.lock.
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.116.0';
 
 const COOLDOWN_SECONDS = 60;
 const VALID_PURPOSES = new Set(['account_deletion', 'email_change']);
@@ -123,12 +124,12 @@ Deno.serve(async (req: Request) => {
     // Any other insert failure (e.g. FK — no public.users row for a brand-new
     // account whose profile creation failed) must NOT read as a cooldown; the
     // caller sees a retryable error instead of a silent 60s lockout.
+    // audit run-1: PLAIN insert — upsert() merges on conflict and can never
+    // raise 23505, which made the guard below dead code and let every
+    // concurrent first-send slip through the check-then-act window.
     const { error: insertError } = await admin
       .from('security_otp_sends')
-      .upsert(
-        { user_id: userId, purpose, last_sent_at: new Date().toISOString() },
-        { onConflict: 'user_id,purpose' },
-      );
+      .insert({ user_id: userId, purpose, last_sent_at: new Date().toISOString() });
     if (insertError) {
       const isUniqueViolation = (insertError as { code?: string }).code === '23505';
       return isUniqueViolation ? fail(429, 'cooldown_active') : fail(500, 'cooldown_store_failed');

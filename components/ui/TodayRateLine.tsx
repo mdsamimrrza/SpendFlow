@@ -7,28 +7,32 @@ import { useTheme } from '@/hooks/useTheme';
 import { useLanguage } from '@/hooks/useLanguage';
 
 export interface TodayRateLineProps {
-  frozen: { income: number; expense: number };
-  today: { income: number; expense: number } | null;
+  /** Headline basis for the rendered period — LIVE rates for the active
+   *  financial month, transaction-date rates for closed periods. */
+  live: { income: number; expense: number };
+  /** ALWAYS transaction-date totals — shown inside the collapsible so the
+   *  frozen historical value can be cross-checked against the live headline. */
+  frozen: { income: number; expense: number } | null;
   fmt: (n: number) => string;
   style?: ViewStyle;
 }
 
 /**
- * "At today's rate" second view (brokerage cost-basis/market-value pattern):
- * period totals stay HEADLINE-FROZEN at each day's rate (QuickBooks/Xero behavior);
- * this optional card shows what the SAME money is worth at today's live cross.
- * Collapsible: starts CLOSED — tap the header to reveal the two figures,
- * tap again to fold it back. Hides itself entirely when the two bases agree
- * (nothing to explain) or while today's rates are unresolved.
+ * "At transaction-date rates" debugger line (kept TEMPORARILY to cross-check
+ * the live-rate rule): headline totals for the ACTIVE financial month are
+ * priced at today's live rate everywhere; this collapsible shows what the
+ * SAME money is worth frozen at each transaction's own date. Collapsible:
+ * starts CLOSED. Hides itself entirely when the two bases agree (nothing to
+ * cross-check) or while the frozen totals are unresolved.
  * Callers pass masked formatters so privacy mode applies like every other figure.
  */
-export function TodayRateLine({ frozen, today, fmt, style }: TodayRateLineProps) {
+export function TodayRateLine({ live, frozen, fmt, style }: TodayRateLineProps) {
   const { t } = useLanguage();
   const theme = useTheme();
   const [open, setOpen] = useState(false);
 
-  if (!today) return null;
-  const drift = Math.abs(frozen.income - today.income) + Math.abs(frozen.expense - today.expense);
+  if (!frozen) return null;
+  const drift = Math.abs(live.income - frozen.income) + Math.abs(live.expense - frozen.expense);
   if (drift < 0.01) return null;
 
   return (
@@ -39,7 +43,7 @@ export function TodayRateLine({ frozen, today, fmt, style }: TodayRateLineProps)
         accessibilityState={{ expanded: open }}
         style={styles.header as ViewStyle}
       >
-        <Text style={styles.headerText as TextStyle}>{t('curAtTodayRate')}</Text>
+        <Text style={styles.headerText as TextStyle}>{t('curAtTxnRate')}</Text>
         <ChevronDown
           size={14}
           color={theme.colors.textMuted}
@@ -56,14 +60,14 @@ export function TodayRateLine({ frozen, today, fmt, style }: TodayRateLineProps)
               <View style={[styles.dot as ViewStyle, { backgroundColor: theme.colors.income }]} />
               <Text style={styles.rowLabel as TextStyle}>{t('pl_income')}</Text>
             </View>
-            <Text style={[styles.rowValue as TextStyle, { color: theme.colors.income }]}>{fmt(today.income)}</Text>
+            <Text style={[styles.rowValue as TextStyle, { color: theme.colors.income }]}>{fmt(frozen.income)}</Text>
           </View>
           <View style={styles.row as ViewStyle}>
             <View style={styles.rowLeft as ViewStyle}>
               <View style={[styles.dot as ViewStyle, { backgroundColor: theme.colors.danger }]} />
               <Text style={styles.rowLabel as TextStyle}>{t('pl_expense')}</Text>
             </View>
-            <Text style={[styles.rowValue as TextStyle, { color: theme.colors.danger }]}>{fmt(today.expense)}</Text>
+            <Text style={[styles.rowValue as TextStyle, { color: theme.colors.danger }]}>{fmt(frozen.expense)}</Text>
           </View>
         </View>
       )}

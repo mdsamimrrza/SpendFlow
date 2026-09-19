@@ -40,8 +40,14 @@ const chunkKey = (key: string, index: number) => `${key}-${index}`;
 async function readChunks(key: string): Promise<string | null> {
   const count = await SecureStore.getItemAsync(chunkCountKey(key)).catch(() => null);
   if (count === null) return null;
+  // A corrupt/non-numeric count is an unusable entry, not an empty session —
+  // fail closed to null (drop session, re-auth) instead of '' (audit run-1
+  // hardening: make the intent explicit; Number('abc') previously looped zero
+  // times and returned '' which supabase-js then failed to JSON.parse).
+  const total = Number(count);
+  if (!Number.isFinite(total) || total < 0) return null;
   let value = '';
-  for (let i = 0; i < Number(count); i++) {
+  for (let i = 0; i < total; i++) {
     const chunk = await SecureStore.getItemAsync(chunkKey(key, i)).catch(() => null);
     if (chunk === null) return null; // partial entry is unusable
     value += chunk;

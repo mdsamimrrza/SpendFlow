@@ -113,7 +113,11 @@ async function triggerExpenseNotifications(
       await getCycleEndDay(userId),
     );
     const monthItems = currentItems.filter((item) => item.date >= month.from && item.date <= month.to);
-    const rateResolver = await buildRateResolver(monthItems, currency);
+    // The notification path follows the same live-rate rule as the screens:
+    // month rows price at today's rate, so budget alerts match what the user sees.
+    const rateResolver = await buildRateResolver(monthItems, currency, {
+      activeWindow: { from: month.from, to: month.to },
+    });
     const monthTotal = sumExpenses(monthItems, currency, rateResolver);
     const monthlyBudget = await getEffectiveMonthlyBudget(userId, currency, rateResolver);
 

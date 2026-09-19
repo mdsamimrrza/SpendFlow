@@ -51,10 +51,11 @@ export default function HomeScreen() {
 
   const preferredCurrency = profile?.preferred_currency ?? 'NPR';
 
-  // Snapshot-aware conversion: every dashboard total resolves each row at its
-  // OWN date (using the row's exchange_rate_to_usd snapshot where present) —
-  // identical to History, so the two screens can never diverge.
-  const { resolver: rateResolver, ready: resolverReady, convertToday } = useRateResolver(expenses.items, preferredCurrency);
+  // Display conversion: rows inside the ACTIVE cycle price at TODAY's live
+  // rate (active month = live everywhere); rows before it stay frozen at
+  // their transaction-date rate — identical to History, so the two screens
+  // can never diverge.
+  const { resolver: rateResolver, ready: resolverReady, convertFrozen } = useRateResolver(expenses.items, preferredCurrency);
 
   const refreshProfileRef = useRef(refreshProfile);
   refreshProfileRef.current = refreshProfile;
@@ -113,20 +114,20 @@ export default function HomeScreen() {
     return rawBudget > 0 ? spentInBudgetCcy / rawBudget : 0;
   }, [profile, rateResolver, currentMonthItems]);
 
-  // "At today's rate" counterpart of the hero totals (hidden when identical
-  // or while today's cross is unresolved — see TodayRateLine).
-  const todayTotals = useMemo(() => {
-    if (!convertToday || !rateResolver) return null;
+  // "At transaction-date rates" debugger counterpart of the hero totals: the
+  // headline is LIVE for the active month; this frozen pair cross-checks the
+  // historical value (line self-hides when the two bases agree — see
+  // TodayRateLine).
+  const frozenTotals = useMemo(() => {
+    if (!convertFrozen || !rateResolver) return null;
     let inc = 0;
     let exp = 0;
     for (const r of currentMonthItems) {
-      const v = convertToday(r);
-      if (v == null) return null;
-      if (r.type === 'income') inc += v;
-      else exp += v;
+      if (r.type === 'income') inc += convertFrozen(r);
+      else exp += convertFrozen(r);
     }
     return { income: inc, expense: exp };
-  }, [currentMonthItems, convertToday, rateResolver]);
+  }, [currentMonthItems, convertFrozen, rateResolver]);
 
   const fmt = useMemo(
     () => (n: number) => formatMoney(n, preferredCurrency, isPrivacyMode),
@@ -304,8 +305,8 @@ export default function HomeScreen() {
               budgetRatioBase={budgetRatioBase}
               footer={
                 <TodayRateLine
-                  frozen={{ income: monthIncome, expense: monthTotal }}
-                  today={todayTotals}
+                  live={{ income: monthIncome, expense: monthTotal }}
+                  frozen={frozenTotals}
                   fmt={fmt}
                 />
               }
