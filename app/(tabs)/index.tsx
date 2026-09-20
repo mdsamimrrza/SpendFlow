@@ -367,7 +367,7 @@ export default function HomeScreen() {
           ) : null
         }
         ListEmptyComponent={
-          (expenses.items.length === 0 || forceEmptyState) ? (
+          (expenses.items.length === 0) ? (
             <EmptyState
               icon={ReceiptText}
               title={t('home_no_expenses_title')}
@@ -379,6 +379,19 @@ export default function HomeScreen() {
           ) : null
         }
       />
+
+      {forceEmptyState && (
+        <View style={{ padding: theme.spacing.lg, paddingTop: 0 }}>
+          <EmptyState
+            icon={ReceiptText}
+            title={t('home_no_expenses_title')}
+            message={t('home_no_expenses_message')}
+            hint={emptyHint}
+            actionLabel={t('home_add_expense')}
+            onAction={() => router.push('/expense/add')}
+          />
+        </View>
+      )}
 
       {/* Profile quick drawer modal */}
       <ProfileQuickCard visible={profileCardOpen} onClose={() => setProfileCardOpen(false)} />
