@@ -23,6 +23,7 @@ import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
 import { usePrivacyScreen } from '@/hooks/usePrivacyScreen';
 import { useTheme } from '@/hooks/useTheme';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { currentMonthRange, getCycleMeta, getCycleLabel, getMonthlyBudget, isoDate, sumExpenses, formatMoney } from '@/utils/format';
 import { CURRENCY_DETAILS } from '@/constants/app';
 
@@ -47,6 +48,14 @@ export default function HomeScreen() {
     fetchAll: true,
   });
   const [profileCardOpen, setProfileCardOpen] = useState(false);
+  const [forceEmptyState, setForceEmptyState] = useState(false);
+
+  // Load debug flag
+  useEffect(() => {
+    AsyncStorage.getItem('@spendflow_debug_force_empty')
+      .then((val) => val ? setForceEmptyState(JSON.parse(val)) : null)
+      .catch(() => {});
+  }, []);
 
   const preferredCurrency = profile?.preferred_currency ?? 'NPR';
 
@@ -356,14 +365,16 @@ export default function HomeScreen() {
           ) : null
         }
         ListEmptyComponent={
-          <EmptyState
-            icon={ReceiptText}
-            title={t('home_no_expenses_title')}
-            message={t('home_no_expenses_message')}
-            hint={emptyHint}
-            actionLabel={t('home_add_expense')}
-            onAction={() => router.push('/expense/add')}
-          />
+          (expenses.items.length === 0 || forceEmptyState) ? (
+            <EmptyState
+              icon={ReceiptText}
+              title={t('home_no_expenses_title')}
+              message={t('home_no_expenses_message')}
+              hint={emptyHint}
+              actionLabel={t('home_add_expense')}
+              onAction={() => router.push('/expense/add')}
+            />
+          ) : null
         }
       />
 
