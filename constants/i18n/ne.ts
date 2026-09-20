@@ -44,9 +44,6 @@ export const ne: typeof en = {
   home_add_bill: 'बिल थप्नुहोस्',
   home_view_analytics: 'विश्लेषण',
   home_export_data: 'निर्यात',
-  home_scan_receipt: 'रसिद स्क्यान',
-  home_recurring: 'नियमित',
-  home_transfer: 'स्थानान्तरण',
 
   // ── इतिहास स्क्रिन ──
   history_title: 'कारोबार इतिहास',

@@ -42,9 +42,6 @@ export const en = {
   home_add_bill: 'Add Bill',
   home_view_analytics: 'Insights',
   home_export_data: 'Export',
-  home_scan_receipt: 'Scan Receipt',
-  home_recurring: 'Recurring',
-  home_transfer: 'Transfer',
 
   // ── History Screen ──
   history_title: 'History',
