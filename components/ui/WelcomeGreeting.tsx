@@ -42,21 +42,12 @@ function capitalize(name: string): string {
   return name.charAt(0).toUpperCase() + name.slice(1);
 }
 
-const STARS: { top: number; left: `${number}%`; size: number; alpha: number }[] = [
-  { top: 26, left: "12%", size: 3, alpha: 0.8 },
-  { top: 52, left: "80%", size: 4, alpha: 0.55 },
-  { top: 98, left: "9%", size: 2.5, alpha: 0.5 },
-  { top: 34, left: "90%", size: 2.5, alpha: 0.65 },
-  { top: 112, left: "82%", size: 3, alpha: 0.45 },
-  { top: 72, left: "38%", size: 2, alpha: 0.5 },
-];
-
 interface WelcomeGreetingProps {
   onClose?: () => void;
 }
 
 export function WelcomeGreeting({ onClose }: WelcomeGreetingProps) {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const { t, language } = useLanguage();
   const { profile, session } = useAuth();
   const router = useRouter();
@@ -69,9 +60,9 @@ export function WelcomeGreeting({ onClose }: WelcomeGreetingProps) {
   const [dontShowAgain, setDontShowAgain] = useState(false);
 
   const opacity = useRef(new Animated.Value(0)).current;
-  const scale = useRef(new Animated.Value(0.9)).current;
-  const translateY = useRef(new Animated.Value(24)).current;
-  const glowPulse = useRef(new Animated.Value(0.35)).current;
+  const scale = useRef(new Animated.Value(0.92)).current;
+  const translateY = useRef(new Animated.Value(20)).current;
+  const shownRef = useRef(false);
 
   const rawName =
     profile?.display_name?.trim() ||
@@ -81,9 +72,17 @@ export function WelcomeGreeting({ onClose }: WelcomeGreetingProps) {
 
   const isMorning = slot === "morning";
 
-  const heroColors: [string, string, string] = isMorning
-    ? ["#FCD34D", "#F59E0B", "#EA580C"]
-    : ["#312E81", "#4C1D95", "#7C3AED"];
+  const accent = isMorning ? (isDark ? "#FBBF24" : "#B45309") : isDark ? "#A5B4FC" : "#4F46E5";
+  const accentSoft = isMorning
+    ? isDark
+      ? "rgba(251, 191, 36, 0.14)"
+      : "rgba(180, 83, 9, 0.10)"
+    : isDark
+      ? "rgba(165, 180, 252, 0.14)"
+      : "rgba(79, 70, 229, 0.10)";
+  const topBar: [string, string] = isMorning
+    ? ["#FCD34D", "#F59E0B"]
+    : ["#818CF8", "#7C3AED"];
 
   const title = isMorning ? t("welcome_morning_title") : t("welcome_evening_title");
   const message = isMorning ? t("welcome_morning_message") : t("welcome_evening_message");
@@ -134,8 +133,8 @@ export function WelcomeGreeting({ onClose }: WelcomeGreetingProps) {
 
   const playEnter = useCallback(() => {
     opacity.setValue(0);
-    scale.setValue(0.9);
-    translateY.setValue(24);
+    scale.setValue(0.92);
+    translateY.setValue(20);
     Animated.parallel([
       Animated.timing(opacity, {
         toValue: 1,
@@ -145,13 +144,13 @@ export function WelcomeGreeting({ onClose }: WelcomeGreetingProps) {
       }),
       Animated.timing(scale, {
         toValue: 1,
-        duration: 360,
-        easing: Easing.out(Easing.back(1.2)),
+        duration: 340,
+        easing: Easing.out(Easing.back(1.15)),
         useNativeDriver: true,
       }),
       Animated.timing(translateY, {
         toValue: 0,
-        duration: 320,
+        duration: 300,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }),
@@ -169,7 +168,7 @@ export function WelcomeGreeting({ onClose }: WelcomeGreetingProps) {
           useNativeDriver: true,
         }),
         Animated.timing(scale, {
-          toValue: 0.93,
+          toValue: 0.95,
           duration: 180,
           easing: Easing.in(Easing.cubic),
           useNativeDriver: true,
@@ -183,28 +182,8 @@ export function WelcomeGreeting({ onClose }: WelcomeGreetingProps) {
   );
 
   useEffect(() => {
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(glowPulse, {
-          toValue: 0.85,
-          duration: 1600,
-          easing: Easing.inOut(Easing.ease),
-          useNativeDriver: true,
-        }),
-        Animated.timing(glowPulse, {
-          toValue: 0.35,
-          duration: 1600,
-          easing: Easing.inOut(Easing.ease),
-          useNativeDriver: true,
-        }),
-      ]),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [glowPulse]);
-
-  useEffect(() => {
-    if (!slot) return;
+    if (!slot || shownRef.current) return;
+    shownRef.current = true;
     let cancelled = false;
     (async () => {
       const stored = await readStored();
@@ -256,6 +235,7 @@ export function WelcomeGreeting({ onClose }: WelcomeGreetingProps) {
           style={[
             styles.card,
             {
+              backgroundColor: colors.surface,
               borderColor: colors.border,
               opacity,
               transform: [{ translateY }, { scale }],
@@ -263,54 +243,42 @@ export function WelcomeGreeting({ onClose }: WelcomeGreetingProps) {
           ]}
         >
           <LinearGradient
-            colors={heroColors}
+            colors={topBar}
             start={{ x: 0, y: 0 }}
-            end={{ x: 0.5, y: 1 }}
-            style={styles.hero}
-          >
-            {!isMorning &&
-              STARS.map((s, i) => (
-                <View
-                  key={i}
-                  style={[
-                    styles.star,
-                    { top: s.top, left: s.left, width: s.size, height: s.size, opacity: s.alpha },
-                  ]}
-                />
-              ))}
+            end={{ x: 1, y: 0 }}
+            style={styles.topBar}
+          />
 
-            <View style={styles.iconWrap}>
-              <Animated.View style={[styles.glow, { opacity: glowPulse }]} />
-              <View style={styles.iconRing}>
-                <View style={styles.iconCore}>
-                  <SlotIcon size={34} color="#FFFFFF" strokeWidth={2} />
-                </View>
+          <View style={styles.content}>
+            <View style={styles.headerRow}>
+              <View style={[styles.iconChip, { backgroundColor: accentSoft }]}>
+                <SlotIcon size={15} color={accent} strokeWidth={2.4} />
               </View>
+              <Text style={[styles.dateLabel, { color: colors.faint }]} numberOfLines={1}>
+                {dateLabel}
+              </Text>
+              <View style={styles.headerSpacer} />
+              <Pressable
+                onPress={() => close(true)}
+                style={[styles.closeButton, { backgroundColor: colors.surfaceElevated }]}
+                hitSlop={12}
+                accessibilityRole="button"
+                accessibilityLabel={t("welcome_dismiss")}
+              >
+                <X size={15} color={colors.textMuted} />
+              </Pressable>
             </View>
 
-            <Text style={styles.heroEyebrow}>{t("welcome_back")}</Text>
+            <Text style={[styles.eyebrow, { color: accent }]}>{t("welcome_back")}</Text>
             <Text
-              style={styles.heroTitle}
+              style={[styles.title, { color: colors.text }]}
               numberOfLines={2}
               adjustsFontSizeToFit
-              minimumFontScale={0.75}
+              minimumFontScale={0.8}
             >
-              {title}, {displayName}
+              {title},{"\n"}
+              <Text style={{ color: accent }}>{displayName}</Text>
             </Text>
-            {dateLabel !== "" && <Text style={styles.heroDate}>{dateLabel}</Text>}
-
-            <Pressable
-              onPress={() => close(true)}
-              style={styles.closeButton}
-              hitSlop={12}
-              accessibilityRole="button"
-              accessibilityLabel={t("welcome_dismiss")}
-            >
-              <X size={15} color="#FFFFFF" />
-            </Pressable>
-          </LinearGradient>
-
-          <View style={[styles.body, { backgroundColor: colors.surface }]}>
             <Text style={[styles.message, { color: colors.textMuted }]}>{message}</Text>
 
             <Pressable
@@ -324,23 +292,10 @@ export function WelcomeGreeting({ onClose }: WelcomeGreetingProps) {
                 end={{ x: 1, y: 0 }}
                 style={styles.primaryGradient}
               >
-                <ActionIcon size={18} color="#FFFFFF" strokeWidth={2.5} />
+                <ActionIcon size={17} color="#FFFFFF" strokeWidth={2.5} />
                 <Text style={styles.primaryButtonText}>{actionLabel}</Text>
               </LinearGradient>
             </Pressable>
-
-            <Pressable
-              onPress={() => close(true)}
-              style={styles.secondaryButton}
-              hitSlop={6}
-              accessibilityRole="button"
-            >
-              <Text style={[styles.secondaryButtonText, { color: colors.textMuted }]}>
-                {t("welcome_dismiss")}
-              </Text>
-            </Pressable>
-
-            <View style={[styles.divider, { backgroundColor: colors.border }]} />
 
             <Pressable
               onPress={toggleOptOut}
@@ -358,9 +313,9 @@ export function WelcomeGreeting({ onClose }: WelcomeGreetingProps) {
                   },
                 ]}
               >
-                {dontShowAgain && <Check size={13} color="#FFFFFF" strokeWidth={3} />}
+                {dontShowAgain && <Check size={12} color="#FFFFFF" strokeWidth={3} />}
               </View>
-              <Text style={[styles.optOutLabel, { color: colors.textMuted }]}>
+              <Text style={[styles.optOutLabel, { color: colors.faint }]}>
                 {t("welcome_dont_show")}
               </Text>
             </Pressable>
@@ -374,7 +329,7 @@ export function WelcomeGreeting({ onClose }: WelcomeGreetingProps) {
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.62)",
+    backgroundColor: "rgba(0, 0, 0, 0.55)",
     alignItems: "center",
     justifyContent: "center",
     padding: 24,
@@ -388,111 +343,77 @@ const styles = StyleSheet.create({
   },
   card: {
     width: "100%",
-    maxWidth: 380,
-    borderRadius: 30,
+    maxWidth: 360,
+    borderRadius: 24,
     borderWidth: 1,
     overflow: "hidden",
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 24 },
-    shadowOpacity: 0.35,
-    shadowRadius: 48,
-    elevation: 24,
+    shadowOffset: { width: 0, height: 18 },
+    shadowOpacity: 0.3,
+    shadowRadius: 36,
+    elevation: 20,
   },
-  hero: {
-    paddingTop: 24,
-    paddingBottom: 20,
+  topBar: {
+    height: 4,
+  },
+  content: {
+    paddingHorizontal: 24,
+    paddingTop: 20,
+    paddingBottom: 22,
+  },
+  headerRow: {
+    flexDirection: "row",
     alignItems: "center",
-    overflow: "hidden",
+    gap: 8,
   },
-  star: {
-    position: "absolute",
-    borderRadius: 999,
-    backgroundColor: "#FFFFFF",
+  iconChip: {
+    width: 30,
+    height: 30,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  dateLabel: {
+    flexShrink: 1,
+    fontSize: 12,
+    fontWeight: "600",
+    letterSpacing: 0.2,
+  },
+  headerSpacer: {
+    flex: 1,
   },
   closeButton: {
-    position: "absolute",
-    top: 14,
-    right: 14,
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(255, 255, 255, 0.18)",
-  },
-  iconWrap: {
-    width: 116,
-    height: 116,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
     alignItems: "center",
     justifyContent: "center",
   },
-  glow: {
-    position: "absolute",
-    width: 116,
-    height: 116,
-    borderRadius: 58,
-    backgroundColor: "rgba(255, 255, 255, 0.3)",
-  },
-  iconRing: {
-    width: 88,
-    height: 88,
-    borderRadius: 44,
-    borderWidth: 1.5,
-    borderColor: "rgba(255, 255, 255, 0.4)",
-    backgroundColor: "rgba(255, 255, 255, 0.14)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  iconCore: {
-    width: 68,
-    height: 68,
-    borderRadius: 34,
-    backgroundColor: "rgba(255, 255, 255, 0.24)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  heroEyebrow: {
-    marginTop: 12,
-    fontSize: 10.5,
+  eyebrow: {
+    marginTop: 22,
+    fontSize: 11,
     fontWeight: "800",
-    letterSpacing: 2.2,
+    letterSpacing: 2,
     textTransform: "uppercase",
-    color: "rgba(255, 255, 255, 0.8)",
   },
-  heroTitle: {
-    marginTop: 5,
-    fontSize: 25,
-    lineHeight: 32,
-    fontWeight: "800",
-    letterSpacing: -0.3,
-    textAlign: "center",
-    color: "#FFFFFF",
-    includeFontPadding: false,
-    paddingHorizontal: 20,
-  },
-  heroDate: {
+  title: {
     marginTop: 6,
-    fontSize: 12,
-    fontWeight: "700",
-    color: "rgba(255, 255, 255, 0.78)",
-    letterSpacing: 0.3,
-  },
-  body: {
-    paddingHorizontal: 24,
-    paddingTop: 22,
-    paddingBottom: 20,
-    alignItems: "center",
+    fontSize: 30,
+    lineHeight: 38,
+    fontWeight: "800",
+    letterSpacing: -0.5,
+    includeFontPadding: false,
   },
   message: {
+    marginTop: 10,
     fontSize: 14.5,
     lineHeight: 22,
     fontWeight: "500",
-    textAlign: "center",
   },
   primaryButton: {
-    marginTop: 18,
+    marginTop: 22,
     width: "100%",
-    borderRadius: 16,
+    borderRadius: 14,
     overflow: "hidden",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 8 },
@@ -517,23 +438,8 @@ const styles = StyleSheet.create({
     letterSpacing: 0.2,
     color: "#FFFFFF",
   },
-  secondaryButton: {
-    marginTop: 4,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-  },
-  secondaryButtonText: {
-    fontSize: 14,
-    fontWeight: "700",
-  },
-  divider: {
-    width: "100%",
-    height: 1,
-    opacity: 0.7,
-    marginTop: 8,
-    marginBottom: 12,
-  },
   optOutRow: {
+    marginTop: 16,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
@@ -541,9 +447,9 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   checkbox: {
-    width: 20,
-    height: 20,
-    borderRadius: 7,
+    width: 18,
+    height: 18,
+    borderRadius: 6,
     borderWidth: 2,
     alignItems: "center",
     justifyContent: "center",
