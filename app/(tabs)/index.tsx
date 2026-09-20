@@ -15,6 +15,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { StockTrendChart } from '@/components/expense/StockTrendChart';
 import { Text } from '@/components/ui/Text';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
+import { WelcomeGreeting } from '@/components/ui/WelcomeGreeting';
 import { useAuth } from '@/hooks/useAuth';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { useRateResolver } from '@/hooks/useRateResolver';
@@ -254,6 +255,9 @@ export default function HomeScreen() {
         }
         ListHeaderComponent={
           <View style={{ gap: theme.spacing.lg }}>
+            {/* Welcome Greeting Popup */}
+            <WelcomeGreeting />
+
             {/* 1. TOP APP BAR */}
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
               <View style={{ gap: 2 }}>

@@ -45,6 +45,16 @@ export const ne: typeof en = {
   home_view_analytics: 'विश्लेषण',
   home_export_data: 'निर्यात',
 
+  // ── Welcome Greeting ──
+  welcome_morning_title: 'शुभ प्रभात! ☀️',
+  welcome_morning_message: 'हरेक रुपैयाँ ट्र्याक गरी आफ्नो दिनको सुरुवात गर्नुहोस्। सानो आदतले ठूलो सम्पत्ति बनाउँछ।',
+  welcome_morning_action: 'पहिलो खर्च थप्नुहोस्',
+  welcome_evening_title: 'शुभ सन्ध्या! 🌙',
+  welcome_evening_message: 'आज तपाईंको खर्च कस्तो रह्यो? बिरामीअघि छुटेको खर्च लग गर्नुहोस्।',
+  welcome_evening_action: 'आजको समीक्षा गर्नुहोस्',
+  welcome_dismiss: 'अहिले नदेखाउनुहोस्',
+  welcome_dont_show: 'यसलाई फेरि नदेखाउनुहोस्',
+
   // ── इतिहास स्क्रिन ──
   history_title: 'कारोबार इतिहास',
   history_search_placeholder: 'शीर्षक, व्यापारी वा विवरण खोज्नुहोस्...',
