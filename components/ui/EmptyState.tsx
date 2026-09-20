@@ -9,12 +9,14 @@ export function EmptyState({
   icon: Icon,
   title,
   message,
+  hint,
   actionLabel,
   onAction,
 }: {
   icon: LucideIcon;
   title: string;
   message: string;
+  hint?: string;
   actionLabel?: string;
   onAction?: () => void;
 }) {
@@ -59,6 +61,21 @@ export function EmptyState({
         <Text muted style={{ textAlign: 'center', fontSize: 13, lineHeight: 18, color: theme.colors.textMuted }}>
           {message}
         </Text>
+        {hint && (
+          <Text
+            style={{
+              textAlign: 'center',
+              fontSize: 12,
+              lineHeight: 17,
+              color: theme.colors.primary,
+              fontWeight: '600',
+              marginTop: 8,
+              paddingHorizontal: 4,
+            }}
+          >
+            {hint}
+          </Text>
+        )}
       </View>
 
       {actionLabel && onAction ? (

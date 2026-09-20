@@ -119,6 +119,14 @@ export default function HomeScreen() {
   );
   const currentHour = new Date().getHours();
   const greeting = currentHour < 12 ? t('home_greeting_morning') : currentHour < 17 ? t('home_greeting_afternoon') : t('home_greeting_evening');
+  // Time-aware empty state hint
+  const emptyHint = currentHour < 12
+    ? t('home_no_expenses_hint_morning')
+    : currentHour < 17
+    ? t('home_no_expenses_hint_afternoon')
+    : currentHour < 21
+    ? t('home_no_expenses_hint_evening')
+    : t('home_no_expenses_hint_night');
 
   const formattedDate = new Date().toLocaleDateString(language === 'ne' ? 'ne-NP' : language === 'hi' ? 'hi-IN' : 'en-US', {
     weekday: 'short',
@@ -352,6 +360,7 @@ export default function HomeScreen() {
             icon={ReceiptText}
             title={t('home_no_expenses_title')}
             message={t('home_no_expenses_message')}
+            hint={emptyHint}
             actionLabel={t('home_add_expense')}
             onAction={() => router.push('/expense/add')}
           />
