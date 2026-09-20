@@ -44,6 +44,9 @@ export const hi: typeof en = {
   home_add_bill: 'बिल जोड़ें',
   home_view_analytics: 'विश्लेषण',
   home_export_data: 'निर्यात',
+  home_scan_receipt: 'रसीद स्कैन',
+  home_recurring: 'नियमित',
+  home_transfer: 'ट्रांसफर',
 
   // ── इतिहास स्क्रीन ──
   history_title: 'लेनदेन इतिहास',
