@@ -50,13 +50,6 @@ export default function HomeScreen() {
   const [profileCardOpen, setProfileCardOpen] = useState(false);
   const [forceEmptyState, setForceEmptyState] = useState(false);
 
-  // Load debug flag
-  useEffect(() => {
-    AsyncStorage.getItem('@spendflow_debug_force_empty')
-      .then((val) => val ? setForceEmptyState(JSON.parse(val)) : null)
-      .catch(() => {});
-  }, []);
-
   const preferredCurrency = profile?.preferred_currency ?? 'NPR';
 
   // Display conversion: rows inside the ACTIVE cycle price at TODAY's live
@@ -69,6 +62,15 @@ export default function HomeScreen() {
   refreshProfileRef.current = refreshProfile;
   const refreshExpensesRef = useRef(expenses.refresh);
   refreshExpensesRef.current = expenses.refresh;
+
+  // Read debug flag on every focus (so Settings toggle works immediately)
+  useFocusEffect(
+    useCallback(() => {
+      AsyncStorage.getItem('@spendflow_debug_force_empty')
+        .then((val) => val ? setForceEmptyState(JSON.parse(val)) : null)
+        .catch(() => {});
+    }, []),
+  );
 
   useFocusEffect(
     useCallback(() => {
