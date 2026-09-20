@@ -15,7 +15,6 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { StockTrendChart } from '@/components/expense/StockTrendChart';
 import { Text } from '@/components/ui/Text';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
-import { TodayRateLine } from '@/components/ui/TodayRateLine';
 import { useAuth } from '@/hooks/useAuth';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { useRateResolver } from '@/hooks/useRateResolver';
@@ -55,7 +54,7 @@ export default function HomeScreen() {
   // rate (active month = live everywhere); rows before it stay frozen at
   // their transaction-date rate — identical to History, so the two screens
   // can never diverge.
-  const { resolver: rateResolver, ready: resolverReady, convertFrozen } = useRateResolver(expenses.items, preferredCurrency);
+  const { resolver: rateResolver, ready: resolverReady } = useRateResolver(expenses.items, preferredCurrency);
 
   const refreshProfileRef = useRef(refreshProfile);
   refreshProfileRef.current = refreshProfile;
@@ -113,21 +112,6 @@ export default function HomeScreen() {
     const spentInBudgetCcy = sumExpenses(currentMonthItems, budgetCcy, rateResolver, 'expense');
     return rawBudget > 0 ? spentInBudgetCcy / rawBudget : 0;
   }, [profile, rateResolver, currentMonthItems]);
-
-  // "At transaction-date rates" debugger counterpart of the hero totals: the
-  // headline is LIVE for the active month; this frozen pair cross-checks the
-  // historical value (line self-hides when the two bases agree — see
-  // TodayRateLine).
-  const frozenTotals = useMemo(() => {
-    if (!convertFrozen || !rateResolver) return null;
-    let inc = 0;
-    let exp = 0;
-    for (const r of currentMonthItems) {
-      if (r.type === 'income') inc += convertFrozen(r);
-      else exp += convertFrozen(r);
-    }
-    return { income: inc, expense: exp };
-  }, [currentMonthItems, convertFrozen, rateResolver]);
 
   const fmt = useMemo(
     () => (n: number) => formatMoney(n, preferredCurrency, isPrivacyMode),
@@ -303,13 +287,6 @@ export default function HomeScreen() {
               monthIncome={monthIncome}
               prevMonthIncome={prevMonthIncome}
               budgetRatioBase={budgetRatioBase}
-              footer={
-                <TodayRateLine
-                  live={{ income: monthIncome, expense: monthTotal }}
-                  frozen={frozenTotals}
-                  fmt={fmt}
-                />
-              }
             />
 
             {/* 2.5 BILLS DUE — open recurring slots with one-tap Mark Paid */}

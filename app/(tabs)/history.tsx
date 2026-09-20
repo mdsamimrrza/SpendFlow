@@ -59,7 +59,6 @@ import { PrivacyEyeButton } from '@/components/ui/PrivacyEyeButton';
 import { Text } from '@/components/ui/Text';
 import { showToast } from '@/components/ui/Toast';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
-import { TodayRateLine } from '@/components/ui/TodayRateLine';
 import { SORT_OPTIONS } from '@/constants/app';
 import { useAuth } from '@/hooks/useAuth';
 import { useExpenses } from '@/hooks/useExpenses';
@@ -263,7 +262,7 @@ export default function HistoryScreen() {
   // their transaction-date rate — shared resolver hook (identical source used
   // by Analytics, Export, P&L and the net-worth rollup, so totals can never
   // disagree between screens).
-  const { resolver: rateResolver, convertAtDate, convertFrozen } = useRateResolver(
+  const { resolver: rateResolver, convertAtDate } = useRateResolver(
     filteredExpenses,
     preferredCurrency,
   );
@@ -318,21 +317,6 @@ export default function HistoryScreen() {
     if (filteredExpenses.length === 0) return 0;
     return filteredExpenses.reduce((max, expense) => Math.max(max, convertAtDate(expense)), 0);
   }, [filteredExpenses, convertAtDate]);
-
-  // "At transaction-date rates" debugger counterpart of the filtered totals:
-  // the headline is LIVE for rows in the active month; this frozen pair
-  // cross-checks the historical value (hidden when the bases agree — see
-  // TodayRateLine).
-  const frozenTotals = useMemo(() => {
-    if (!convertFrozen || !rateResolver) return null;
-    let inc = 0;
-    let exp = 0;
-    for (const r of filteredExpenses) {
-      if (r.type === 'income') inc += convertFrozen(r);
-      else exp += convertFrozen(r);
-    }
-    return { income: inc, expense: exp };
-  }, [filteredExpenses, convertFrozen, rateResolver]);
 
   const fmt = useMemo(
     () => (n: number) => formatMoney(n, preferredCurrency, isPrivacyMode),
@@ -763,13 +747,6 @@ export default function HistoryScreen() {
             </Pressable>
           </View>
         </Card>
-
-        {/* "At transaction-date rates" debugger line — mirrors Overview hero */}
-        <TodayRateLine
-          live={{ income: flowTotals.totalIncome, expense: flowTotals.totalExpense }}
-          frozen={frozenTotals}
-          fmt={fmt}
-        />
 
         {/* ── 3. SEARCH & FILTERS TOOLBAR (WITH IN-PLACE FLOATING DROPDOWNS) ── */}
         <View style={{ zIndex: 6000, position: 'relative' }}>

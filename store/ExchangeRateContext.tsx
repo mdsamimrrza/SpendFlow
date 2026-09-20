@@ -5,29 +5,6 @@ import { NPR_PER_INR, seedTodayRatesFromUnitsPerUsd } from '@/services/exchange'
 const RATES_STORAGE_KEY = 'spendflow_exchange_rates_cache';
 const CACHE_EXPIRY_MS = 6 * 60 * 60 * 1000; // 6 hours
 
-// Baseline fallback rates relative to 1 USD (refreshed 2026-09-16)
-const DEFAULT_RATES: Record<string, number> = {
-  USD: 1.0,
-  // 95.99 INR/USD × 1.60 (NRB peg) — kept peg-consistent by construction.
-  NPR: 153.58,
-  INR: 95.99,
-  QAR: 3.64,
-  GBP: 0.742,
-  EUR: 0.8667,
-  AED: 3.6725,
-  SAR: 3.75,
-  CAD: 1.3913,
-  AUD: 1.4031,
-  JPY: 155.08,
-  SGD: 1.2727,
-  MYR: 4.0844,
-  KRW: 1360.36,
-  THB: 33.29,
-  CNY: 6.7268,
-};
-
-let inMemoryRates: Record<string, number> = { ...DEFAULT_RATES };
-
 // Nepal Rastra Bank peg (1 INR = 1.60 NPR, fixed since 1993): the live API's
 // NPR rate is a floating-market value and must never be consumed as-is —
 // every rate map that leaves this module derives NPR from its INR rate.
@@ -38,92 +15,54 @@ function applyNprPeg(rates: Record<string, number>): Record<string, number> {
   }
   return rates;
 }
-// Truth about where inMemoryRates came from. 'live' = fresh provider data;
-// 'cached' = stored provider data past its TTL; 'estimated' = hardcoded
-// offline baseline only. Consumers surface this instead of silently presenting
-// estimated values as current market data.
+
+let inMemoryRates: Record<string, number> = {};
 let inMemoryStatus: RateStatus = 'estimated';
 let inMemoryFetchedAt: number | null = null;
 
 const PRIMARY_RATES_API =
   process.env.EXPO_PUBLIC_EXCHANGE_RATE_API_URL || 'https://open.er-api.com/v6/latest/USD';
-const FALLBACK_RATES_API =
-  process.env.EXPO_PUBLIC_EXCHANGE_RATE_FALLBACK_API_URL ||
-  'https://api.exchangerate-api.com/v4/latest/USD';
 
 export type RateStatus = 'live' | 'cached' | 'estimated';
 
 async function fetchExchangeRates(): Promise<Record<string, number>> {
-  try {
-    // 1. Check AsyncStorage cache
-    const rawCache = await AsyncStorage.getItem(RATES_STORAGE_KEY);
-    if (rawCache) {
-      const parsed: RatesCache = JSON.parse(rawCache);
-      const isFresh = Date.now() - parsed.timestamp < CACHE_EXPIRY_MS;
-      if (parsed.rates && Object.keys(parsed.rates).length > 0) {
-        inMemoryRates = applyNprPeg({ ...DEFAULT_RATES, ...parsed.rates });
-        inMemoryFetchedAt = parsed.timestamp;
-        inMemoryStatus = isFresh ? 'live' : 'cached';
-        if (isFresh) {
-          // Feed the persistent rate memory so dashboard resolver builds skip
-          // their own provider round trip for today's date.
-          seedTodayRatesFromUnitsPerUsd(inMemoryRates);
-          return inMemoryRates;
-        }
-      }
-    }
-
-    // 2. Fetch fresh live rates from primary open exchange API
-    let data: any = null;
-    try {
-      const response = await fetch(PRIMARY_RATES_API, {
-        headers: { Accept: 'application/json' },
-      });
-      if (response.ok) {
-        data = await response.json();
-      }
-    } catch {
-      // If primary fails, try secondary live API endpoint
-      try {
-        const fallbackRes = await fetch(FALLBACK_RATES_API, {
-          headers: { Accept: 'application/json' },
-        });
-        if (fallbackRes.ok) {
-          data = await fallbackRes.json();
-        }
-      } catch {
-        // Both network requests failed
-      }
-    }
-
-    if (data && data.rates) {
-      const newRates: Record<string, number> = applyNprPeg({
-        ...DEFAULT_RATES,
-        ...data.rates,
-      });
-
-      inMemoryRates = newRates;
+  // 1. Check AsyncStorage cache (only if fresh)
+  const rawCache = await AsyncStorage.getItem(RATES_STORAGE_KEY);
+  if (rawCache) {
+    const parsed: RatesCache = JSON.parse(rawCache);
+    const isFresh = Date.now() - parsed.timestamp < CACHE_EXPIRY_MS;
+    if (parsed.rates && Object.keys(parsed.rates).length > 0 && isFresh) {
+      inMemoryRates = applyNprPeg({ ...parsed.rates });
+      inMemoryFetchedAt = parsed.timestamp;
       inMemoryStatus = 'live';
-      inMemoryFetchedAt = Date.now();
-      seedTodayRatesFromUnitsPerUsd(newRates);
-      await AsyncStorage.setItem(
-        RATES_STORAGE_KEY,
-        JSON.stringify({ timestamp: Date.now(), rates: newRates }),
-      );
-      return newRates;
+      seedTodayRatesFromUnitsPerUsd(inMemoryRates);
+      return inMemoryRates;
     }
-  } catch (error) {
-    // Fallback gracefully to in-memory or cached rates
   }
 
-  // No live data and nothing better in cache: whatever inMemoryRates holds is
-  // at best a stale copy — its existing inMemoryStatus says which. If even
-  // that was never populated from a provider, it is the estimated baseline.
-  if (inMemoryStatus === 'live' && inMemoryFetchedAt !== null &&
-    Date.now() - inMemoryFetchedAt >= CACHE_EXPIRY_MS) {
-    inMemoryStatus = 'cached';
+  // 2. Fetch fresh live rates — PRIMARY ONLY, no fallback, no DEFAULT_RATES merge
+  const response = await fetch(PRIMARY_RATES_API, {
+    headers: { Accept: 'application/json' },
+  });
+  if (!response.ok) {
+    throw new Error(`Exchange rate API failed: ${response.status} ${response.statusText}`);
   }
-  return inMemoryRates;
+  const data = await response.json();
+  if (!data?.rates) {
+    throw new Error('Exchange rate API returned invalid data');
+  }
+
+  const newRates: Record<string, number> = applyNprPeg({ ...data.rates });
+
+  inMemoryRates = newRates;
+  inMemoryStatus = 'live';
+  inMemoryFetchedAt = Date.now();
+  seedTodayRatesFromUnitsPerUsd(newRates);
+  await AsyncStorage.setItem(
+    RATES_STORAGE_KEY,
+    JSON.stringify({ timestamp: Date.now(), rates: newRates }),
+  );
+  return newRates;
 }
 
 function getCachedRates(): Record<string, number> {
@@ -149,8 +88,8 @@ function convertCurrency(
 ): number {
   if (fromCurrency === toCurrency || !amount) return amount;
 
-  const fromRate = rates[fromCurrency] || DEFAULT_RATES[fromCurrency] || 1;
-  const toRate = rates[toCurrency] || DEFAULT_RATES[toCurrency] || 1;
+  const fromRate = rates[fromCurrency] ?? 1;
+  const toRate = rates[toCurrency] ?? 1;
 
   if (fromRate <= 0) return amount;
 
@@ -212,8 +151,12 @@ export function ExchangeRateProvider({ children }: PropsWithChildren) {
           setLoading(false);
         }
       })
-      .catch(() => {
-        if (mounted) setLoading(false);
+      .catch((err) => {
+        if (mounted) {
+          setLoading(false);
+          // Error will surface to any error boundary / Sentry
+          console.error('[ExchangeRateProvider] Live fetch failed:', err);
+        }
       });
 
     return () => {

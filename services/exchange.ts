@@ -533,28 +533,17 @@ export function createExchangeService(client: SupabaseClient) {
       }
     }
 
-    // One DB round trip answers the rest via nearest-known-date.
-    if (missing.size) {
-      const dbRates = await loadDbRates();
-      for (const [k, pair] of [...missing]) {
-        if (cache.has(k)) {
-          missing.delete(k);
-          continue;
-        }
-        const nearest = nearestDbRate(dbRates.get(pair.c), pair.d);
-        if (nearest !== null) {
-          cache.set(k, nearest);
-          rememberRate(pair.c, pair.d, nearest);
-          missing.delete(k);
-        }
-      }
-    }
-
-    // A live market quote is valid only for today/future values. Historical
-    // records must never be silently re-valued using today's quote.
+    // Split missing into: live dates (>= today) and historical dates (< today).
+    // For live dates (active month uses today's rate): try LIVE API FIRST.
+    // For historical dates: DB first (frozen snapshots).
     const liveMissing = new Map(
       [...missing].filter(([, pair]) => pair.d >= todayIso()),
     );
+    const historicalMissing = new Map(
+      [...missing].filter(([, pair]) => pair.d < todayIso()),
+    );
+
+    // 1. LIVE API for today/future dates (active month pricing)
     if (liveMissing.size) {
       const latest = await loadLatestUnitsPerUsd();
       if (latest) {
@@ -564,8 +553,27 @@ export function createExchangeService(client: SupabaseClient) {
             const rate = round8(1 / units);
             cache.set(k, rate);
             rememberRate(pair.c, pair.d, rate);
-            missing.delete(k);
+            liveMissing.delete(k);
           }
+        }
+      }
+      // Any still-missing live dates fall through to DB below
+    }
+
+    // 2. DB for historical dates + any live dates the API missed
+    const allStillMissing = new Map([...historicalMissing, ...liveMissing]);
+    if (allStillMissing.size) {
+      const dbRates = await loadDbRates();
+      for (const [k, pair] of [...allStillMissing]) {
+        if (cache.has(k)) {
+          allStillMissing.delete(k);
+          continue;
+        }
+        const nearest = nearestDbRate(dbRates.get(pair.c), pair.d);
+        if (nearest !== null) {
+          cache.set(k, nearest);
+          rememberRate(pair.c, pair.d, nearest);
+          allStillMissing.delete(k);
         }
       }
     }

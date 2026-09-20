@@ -11,7 +11,6 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Text } from '@/components/ui/Text';
 import { showToast, ToastHost } from '@/components/ui/Toast';
 import { CalendarModal, DateRange } from '@/components/ui/CalendarModal';
-import { TodayRateLine } from '@/components/ui/TodayRateLine';
 import { useAuth } from '@/hooks/useAuth';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { useRateResolver } from '@/hooks/useRateResolver';
@@ -161,7 +160,7 @@ export default function ProfitLossScreen() {
   // rate (active month = live everywhere); rows before it stay frozen at
   // their transaction-date rate, matching History/Dashboard exactly.
   // Shared resolver hook (same source as the other money screens).
-  const { resolver: rateResolver, convertFrozen } = useRateResolver(expenses.items, currency);
+  const { resolver: rateResolver } = useRateResolver(expenses.items, currency);
 
   useEffect(() => {
     // Prefill with the budget converted into the display currency — editing and
@@ -181,19 +180,6 @@ export default function ProfitLossScreen() {
   );
   const netResult = totalIncome - totalExpense;
   const isProfit = netResult >= 0;
-
-  // "At transaction-date rates" debugger counterpart of the period totals
-  // (self-hiding line; headline is LIVE for the active month).
-  const plFrozenTotals = useMemo(() => {
-    if (!convertFrozen || !rateResolver) return null;
-    let inc = 0;
-    let exp = 0;
-    for (const r of itemsInRange) {
-      if (r.type === 'income') inc += convertFrozen(r);
-      else exp += convertFrozen(r);
-    }
-    return { income: inc, expense: exp };
-  }, [itemsInRange, convertFrozen, rateResolver]);
 
   const fmt = useMemo(
     () => (n: number) => formatMoney(n, currency, isPrivacyMode),
@@ -1318,13 +1304,6 @@ export default function ProfitLossScreen() {
                 {isProfit ? '+' : '−'}{formatMoney(Math.abs(netResult), currency, isPrivacyMode)}
               </Text>
             </View>
-
-            {/* "At transaction-date rates" debugger line — mirrors Overview/History */}
-            <TodayRateLine
-              live={{ income: totalIncome, expense: totalExpense }}
-              frozen={plFrozenTotals}
-              fmt={fmt}
-            />
           </Card>
         );
       })()}

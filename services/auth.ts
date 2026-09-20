@@ -11,6 +11,7 @@ import { supabase } from '@/utils/supabase';
 import { beginPendingAuthFlow, endPendingAuthFlow, isTrustedAuthUrl } from '@/utils/authFlow';
 import { seedDefaultCategories } from './categories';
 import { ensureUserSettingsBaseline, recordUserSettingsChange } from './settingsHistory';
+import { savePasswordToManager } from '@/utils/credentialManager';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -73,6 +74,11 @@ export async function signInWithEmail(email: string, password: string) {
     password,
   });
   if (error) throw error;
+
+  // Offer to save password to system password manager (Google Password Manager, Bitwarden, etc.)
+  // Fire-and-forget: don't block auth flow if the prompt fails or user cancels
+  void savePasswordToManager(email, password).catch(() => undefined);
+
   return data;
 }
 
@@ -83,6 +89,11 @@ export async function signUpWithEmail(email: string, password: string, displayNa
     options: { data: { display_name: displayName } },
   });
   if (error) throw error;
+
+  // Offer to save password to system password manager (Google Password Manager, Bitwarden, etc.)
+  // Fire-and-forget: don't block auth flow if the prompt fails or user cancels
+  void savePasswordToManager(email, password).catch(() => undefined);
+
   return data;
 }
 
@@ -453,6 +464,9 @@ export async function changePassword(currentPassword: string, newPassword: strin
 
   const { error } = await supabase.auth.updateUser({ password: newPassword });
   if (error) throw error;
+
+  // Offer to update the saved password in system password manager
+  void savePasswordToManager(user.email, newPassword).catch(() => undefined);
 }
 
 export async function sendEmailChangeOtp(currentEmail: string): Promise<{ rateLimited?: boolean }> {

@@ -129,43 +129,6 @@ function utf8ToBase64(str: string): string {
   return bytesToBase64(bytes);
 }
 
-// Blob → base64 without relying on RN's incomplete Blob polyfill (RN's Blob
-// class has NO arrayBuffer()/text()). Preferred path: RN core's native
-// FileReaderModule accepts the blob's internal `data` and returns a data: URL;
-// strip the prefix and the base64 is ready for the SAF write. Fallbacks: the
-// WHATWG Response polyfill RN ships, then a future Blob.arrayBuffer.
-async function blobToBase64(blob: Blob): Promise<string> {
-  const anyBlob = blob as unknown as { arrayBuffer?: () => Promise<ArrayBuffer>; data?: unknown };
-  // 1) RN core's native FileReaderModule — reads the blob's internal `data`
-  //    and returns a data: URL. Guarded: if it rejects or is absent we fall
-  //    through instead of failing the whole export.
-  try {
-    const nativeFR = (NativeModules as Record<
-      string,
-      { readAsDataURL?: (data: unknown) => Promise<string> } | undefined
-    >)?.FileReaderModule;
-    if (nativeFR?.readAsDataURL && anyBlob.data) {
-      const dataUrl = await nativeFR.readAsDataURL(anyBlob.data);
-      const comma = dataUrl.indexOf(',');
-      if (comma >= 0) return dataUrl.slice(comma + 1);
-    }
-  } catch {
-    // fall through to the JS-side readers
-  }
-  // 2) WHATWG Response polyfill (RN ships one) can read a Blob body.
-  const Res = (globalThis as {
-    Response?: new (body?: Blob) => { arrayBuffer: () => Promise<ArrayBuffer> };
-  }).Response;
-  if (Res) {
-    return bytesToBase64(new Uint8Array(await new Res(blob).arrayBuffer()));
-  }
-  // 3) A future runtime may add Blob.arrayBuffer after all.
-  if (typeof anyBlob.arrayBuffer === 'function') {
-    return bytesToBase64(new Uint8Array(await anyBlob.arrayBuffer()));
-  }
-  throw new Error('This build cannot read the generated spreadsheet — reload the app.');
-}
-
 function downloadWebFile(blob: Blob, filename: string) {
   if (typeof window === 'undefined') return;
   const url = window.URL.createObjectURL(blob);
@@ -345,64 +308,86 @@ export async function exportExcel(
   const fileName = generateExportFileName(expenses, 'xlsx');
   const resolver = await buildRateResolver(expenses, currency, { activeWindow });
   const summary = groupByCategory(expenses, currency, resolver);
-  // Share base = the same converted expense-only totals the summary is built
-  // from — never the raw sum of all records (income / mixed currencies would
-  // push shares above 100%).
   const totalAmount = summary.reduce((s, item) => s + item.total, 0);
 
-  const expenseRows = [
-    [
-      { value: 'Date' },
-      { value: 'Type' },
-      { value: 'Time' },
-      { value: 'Amount' },
-      { value: 'Currency' },
-      { value: 'Category' },
-      { value: 'Payment Method' },
-      { value: 'Description' },
-      { value: 'Notes' },
-    ],
-    ...expenses.map((expense) => [
-      { value: expense.date },
-      { value: expense.type || 'expense' },
-      { value: expense.time || '' },
-      { value: Number(expense.amount) },
-      { value: sanitizeSpreadsheetCell(expense.currency) },
-      { value: sanitizeSpreadsheetCell(expense.categories?.name ?? 'Other') },
-      { value: sanitizeSpreadsheetCell(expense.payment_method) },
-      { value: sanitizeSpreadsheetCell(expense.description ?? '') },
-      { value: sanitizeSpreadsheetCell(expense.notes ?? '') },
-    ]),
+  // Use exceljs to create the workbook — writes directly to filesystem,
+  // avoiding the Blob → base64 round-trip that fails on RN's Blob polyfill.
+  const ExcelJS = await import('exceljs');
+  const workbook = new ExcelJS.Workbook();
+
+  // Sheet 1: Expenses Ledger
+  const ledgerSheet = workbook.addWorksheet('Expenses Ledger');
+  ledgerSheet.columns = [
+    { header: 'Date', key: 'date', width: 12 },
+    { header: 'Type', key: 'type', width: 10 },
+    { header: 'Time', key: 'time', width: 8 },
+    { header: 'Amount', key: 'amount', width: 14 },
+    { header: 'Currency', key: 'currency', width: 10 },
+    { header: 'Category', key: 'category', width: 20 },
+    { header: 'Payment Method', key: 'paymentMethod', width: 16 },
+    { header: 'Description', key: 'description', width: 30 },
+    { header: 'Notes', key: 'notes', width: 30 },
   ];
 
-  const summaryRows = [
-    [{ value: 'Category' }, { value: 'Total' }, { value: 'Share %' }],
-    ...summary.map((item) => [
-      { value: sanitizeSpreadsheetCell(`${categoryIcon(item.icon)} ${item.label}`) },
-      { value: formatMoney(item.total, currency) },
-      { value: `${totalAmount > 0 ? Math.round((item.total / totalAmount) * 100) : 0}%` },
-    ]),
-  ];
+  // Style header row
+  ledgerSheet.getRow(1).font = { bold: true };
+  ledgerSheet.getRow(1).fill = {
+    type: 'pattern',
+    pattern: 'solid',
+    fgColor: { argb: 'FFF1F5F9' },
+  };
 
-  const writeXlsxFileModule = await import('write-excel-file');
-  const writeXlsxFile = writeXlsxFileModule.default;
-
-  const blob = await writeXlsxFile([expenseRows, summaryRows], {
-    sheets: ['Expenses Ledger', 'Category Analytics'],
+  expenses.forEach((expense) => {
+    ledgerSheet.addRow({
+      date: expense.date,
+      type: expense.type || 'expense',
+      time: expense.time || '',
+      amount: Number(expense.amount),
+      currency: sanitizeSpreadsheetCell(expense.currency),
+      category: sanitizeSpreadsheetCell(expense.categories?.name ?? 'Other'),
+      paymentMethod: sanitizeSpreadsheetCell(expense.payment_method),
+      description: sanitizeSpreadsheetCell(expense.description ?? ''),
+      notes: sanitizeSpreadsheetCell(expense.notes ?? ''),
+    });
   });
-  if (!blob || typeof blob !== 'object') {
-    throw new Error('Excel generation returned no file data');
-  }
+
+  // Sheet 2: Category Analytics
+  const summarySheet = workbook.addWorksheet('Category Analytics');
+  summarySheet.columns = [
+    { header: 'Category', key: 'category', width: 25 },
+    { header: 'Total', key: 'total', width: 18 },
+    { header: 'Share %', key: 'share', width: 12 },
+  ];
+  summarySheet.getRow(1).font = { bold: true };
+  summarySheet.getRow(1).fill = {
+    type: 'pattern',
+    pattern: 'solid',
+    fgColor: { argb: 'FFF1F5F9' },
+  };
+
+  summary.forEach((item) => {
+    summarySheet.addRow({
+      category: sanitizeSpreadsheetCell(`${categoryIcon(item.icon)} ${item.label}`),
+      total: formatMoney(item.total, currency),
+      share: `${totalAmount > 0 ? Math.round((item.total / totalAmount) * 100) : 0}%`,
+    });
+  });
 
   if (Platform.OS === 'web') {
+    // Web: write to buffer, create Blob, trigger download
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
     downloadWebFile(blob, fileName);
     return 'saved';
   }
 
-  // Native Mobile: Write to named cache file
+  // Native Mobile: write to buffer, convert to base64, write to cache as base64
+  // so saveOrShareFile can read it for SAF writes (which require base64).
+  const buffer = await workbook.xlsx.writeBuffer();
+  const base64 = bytesToBase64(new Uint8Array(buffer));
   const fileUri = `${FileSystem.cacheDirectory}${fileName}`;
-  const base64 = await blobToBase64(blob);
-
   await FileSystem.writeAsStringAsync(fileUri, base64, {
     encoding: FileSystem.EncodingType.Base64,
   });

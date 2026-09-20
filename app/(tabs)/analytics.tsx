@@ -38,7 +38,6 @@ import { PrivacyEyeButton } from '@/components/ui/PrivacyEyeButton';
 import { Text } from '@/components/ui/Text';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
 import { CalendarModal, DateRange } from '@/components/ui/CalendarModal';
-import { TodayRateLine } from '@/components/ui/TodayRateLine';
 import { useAuth } from '@/hooks/useAuth';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { useExpenses } from '@/hooks/useExpenses';
@@ -130,7 +129,7 @@ export default function AnalyticsScreen() {
   // rate (active month = live everywhere); rows before it stay frozen at
   // their transaction-date rate — shared resolver hook (same source as
   // History/Export/P&L).
-  const { resolver: rateResolver, convertAtDate, convertFrozen } = useRateResolver(
+  const { resolver: rateResolver, convertAtDate } = useRateResolver(
     filteredItems,
     preferredCurrency,
   );
@@ -144,19 +143,6 @@ export default function AnalyticsScreen() {
     [incomeItems, convertAtDate],
   );
   const netSavings = totalIncome - totalSpend;
-
-  // "At transaction-date rates" debugger counterpart of the period totals
-  // (self-hiding line; headline is LIVE for the active month).
-  const anFrozenTotals = useMemo(() => {
-    if (!convertFrozen || !rateResolver) return null;
-    let inc = 0;
-    let exp = 0;
-    for (const r of filteredItems) {
-      if (r.type === 'income') inc += convertFrozen(r);
-      else exp += convertFrozen(r);
-    }
-    return { income: inc, expense: exp };
-  }, [filteredItems, convertFrozen, rateResolver]);
 
   const fmt = useMemo(
     () => (n: number) => formatMoney(n, preferredCurrency, isPrivacyMode),
@@ -664,13 +650,6 @@ export default function AnalyticsScreen() {
               </Pressable>
             </View>
           </View>
-
-          {/* "At transaction-date rates" debugger line — mirrors Overview/History/P&L */}
-          <TodayRateLine
-            live={{ income: totalIncome, expense: totalSpend }}
-            frozen={anFrozenTotals}
-            fmt={fmt}
-          />
 
           {/* 0–100 Financial Health Score Card */}
           <FinancialHealthScoreCard

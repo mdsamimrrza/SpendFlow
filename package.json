@@ -9,6 +9,7 @@
     "@react-native-ml-kit/text-recognition": "^2.0.0",
     "@supabase/supabase-js": "^2.47.10",
     "date-fns": "^4.1.0",
+    "exceljs": "^4.4.0",
     "expo": "~57.0.22",
     "expo-apple-authentication": "~57.0.2",
     "expo-auth-session": "~57.0.12",
@@ -44,7 +45,6 @@
     "react-native-svg": "15.15.4",
     "react-native-url-polyfill": "^2.0.0",
     "react-native-web": "^0.21.0",
-    "write-excel-file": "^1.4.30",
     "zod": "^3.24.1"
   },
   "devDependencies": {
