@@ -2,11 +2,12 @@
 
 import React, { useEffect, useState } from "react";
 import { View, Text, Pressable, StyleSheet, Animated, Easing } from "react-native";
-import { Sun, Moon, X, Sparkles, CheckCircle2 } from "lucide-react-native";
+import { Sun, Moon, X, Sparkles, CheckCircle2, ArrowRight } from "lucide-react-native";
 import { useTheme } from "@/hooks/useTheme";
 import { useLanguage } from "@/hooks/useLanguage";
 import { useAuth } from "@/hooks/useAuth";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { LinearGradient } from "expo-linear-gradient";
 
 const STORAGE_KEY = "@spendflow_welcome_greeting";
 
@@ -36,18 +37,24 @@ export function WelcomeGreeting({ onClose }: WelcomeGreetingProps) {
 
   const greetingData = isMorning ? {
     icon: Sun,
-    iconBg: "rgba(245, 158, 11, 0.15)",
+    gradient: ["#FEF3C7", "#FDE68A", "#FCD34D"],
     iconColor: "#F59E0B",
     title: t("welcome_morning_title") || "Good Morning! ☀️",
     message: t("welcome_morning_message") || "Start your day by tracking every rupee. Small habits build big wealth.",
     actionLabel: t("welcome_morning_action") || "Add First Expense",
+    accent: "#F59E0B",
+    accentLight: "rgba(245, 158, 11, 0.12)",
+    accentMedium: "rgba(245, 158, 11, 0.2)",
   } : {
     icon: Moon,
-    iconBg: "rgba(129, 140, 248, 0.15)",
-    iconColor: "#818CF8",
+    gradient: ["#E0E7FF", "#C7D2FE", "#A5B4FC"],
+    iconColor: "#6366F1",
     title: t("welcome_evening_title") || "Good Evening! 🌙",
     message: t("welcome_evening_message") || "How did your spending go today? Log any missing expenses before you relax.",
     actionLabel: t("welcome_evening_action") || "Review Today",
+    accent: "#6366F1",
+    accentLight: "rgba(99, 102, 241, 0.12)",
+    accentMedium: "rgba(99, 102, 241, 0.2)",
   };
 
   useEffect(() => {
@@ -145,7 +152,7 @@ style={[
           <Animated.View
             style={[
               styles.iconWrapper,
-              { backgroundColor: greetingData.iconBg },
+              { backgroundColor: greetingData.accentLight },
             ]}
           >
             <greetingData.icon size={28} color={greetingData.iconColor} />
@@ -246,103 +253,173 @@ const styles = StyleSheet.create({
     padding: 20,
     zIndex: 1000,
   },
+  glassContainer: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderRadius: 28,
+    overflow: "hidden",
+  },
+  gradientBackground: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderRadius: 28,
+    borderWidth: 1.5,
+  },
   container: {
     width: "100%",
     maxWidth: 360,
-    borderRadius: 24,
-    padding: 24,
-    gap: 20,
-    borderWidth: 1,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 20 },
-    shadowOpacity: 0.25,
-    shadowRadius: 30,
-    elevation: 20,
+    borderRadius: 28,
+    overflow: "hidden",
   },
   header: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    marginBottom: 4,
   },
   iconWrapper: {
-    width: 56,
-    height: 56,
-    borderRadius: 18,
+    width: 64,
+    height: 64,
+    borderRadius: 20,
     alignItems: "center",
     justifyContent: "center",
+    borderWidth: 2,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.15,
+    shadowRadius: 20,
+    elevation: 8,
   },
   closeButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
+    width: 40,
+    height: 40,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
+    backgroundColor: "rgba(0,0,0,0.04)",
   },
   content: {
-    gap: 8,
+    gap: 16,
+  },
+  greetingContainer: {
   },
   greeting: {
-    fontSize: 22,
-    fontWeight: "800",
-    letterSpacing: -0.3,
+    fontSize: 26,
+    fontWeight: "900",
+    letterSpacing: -0.5,
     textAlign: "center",
+    lineHeight: 34,
   },
   message: {
-    fontSize: 14,
-    lineHeight: 22,
+    fontSize: 15,
+    lineHeight: 24,
     textAlign: "center",
     fontWeight: "500",
   },
+  divider: {
+    height: 1.5,
+    borderRadius: 1,
+    marginTop: 8,
+    marginBottom: 4,
+  },
   actions: {
     flexDirection: "row",
-    gap: 12,
-    marginTop: 4,
+    gap: 14,
+    marginTop: 8,
   },
   primaryAction: {
     flex: 1,
+    borderRadius: 18,
+    overflow: "hidden",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.25,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  primaryActionGradient: {
+    borderRadius: 18,
+    paddingVertical: 18,
+    paddingHorizontal: 24,
+  },
+  primaryActionContent: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 8,
-    paddingVertical: 14,
-    borderRadius: 14,
+    gap: 10,
   },
   actionText: {
-    fontSize: 14,
-    fontWeight: "700",
+    fontSize: 15,
+    fontWeight: "800",
     color: "#FFFFFF",
+    letterSpacing: 0.2,
+  },
+  buttonGlow: {
+    position: "absolute",
+    top: -2,
+    left: -2,
+    right: -2,
+    bottom: -2,
+    borderRadius: 20,
   },
   secondaryAction: {
     flex: 1,
-    paddingVertical: 14,
-    borderRadius: 14,
+    borderRadius: 18,
+    borderWidth: 1.5,
+    overflow: "hidden",
+  },
+  secondaryActionContent: {
+    paddingVertical: 18,
+    paddingHorizontal: 24,
     alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#E2E8F0",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.05)",
   },
   secondaryActionText: {
-    fontSize: 14,
-    fontWeight: "600",
+    fontSize: 15,
+    fontWeight: "700",
+    letterSpacing: 0.2,
   },
   checkboxWrapper: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 8,
-    marginTop: 4,
+    gap: 10,
+    marginTop: 8,
     paddingVertical: 4,
   },
+  checkboxTouch: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
   checkbox: {
-    width: 20,
-    height: 20,
-    borderRadius: 6,
-    borderWidth: 2,
+    width: 22,
+    height: 22,
+    borderRadius: 7,
+    borderWidth: 2.5,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "transparent",
+  },
+  checkIcon: {
+    width: 22,
+    height: 22,
     alignItems: "center",
     justifyContent: "center",
   },
   checkboxLabel: {
-    fontSize: 12,
-    fontWeight: "500",
+    fontSize: 12.5,
+    fontWeight: "600",
+    letterSpacing: 0.2,
   },
 });
 

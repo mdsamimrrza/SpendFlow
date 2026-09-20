@@ -238,6 +238,9 @@ export default function HomeScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
+      {/* Welcome Greeting - Centered Modal Overlay */}
+      <WelcomeGreeting />
+
       <FlatList
         data={latestExpenses}
         keyExtractor={(item) => item.id}
@@ -255,9 +258,6 @@ export default function HomeScreen() {
         }
         ListHeaderComponent={
           <View style={{ gap: theme.spacing.lg }}>
-            {/* Welcome Greeting Popup */}
-            <WelcomeGreeting />
-
             {/* 1. TOP APP BAR */}
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
               <View style={{ gap: 2 }}>
