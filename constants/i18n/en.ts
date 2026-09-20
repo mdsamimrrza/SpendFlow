@@ -40,14 +40,16 @@ export const en = {
   home_add_expense: 'Add expense',
 
   // ── Welcome Greeting ──
-  welcome_morning_title: 'Good Morning! ☀️',
+  welcome_back: 'Welcome back',
+  welcome_morning_title: 'Good morning',
   welcome_morning_message: 'Start your day by tracking every rupee. Small habits build big wealth.',
   welcome_morning_action: 'Add First Expense',
-  welcome_evening_title: 'Good Evening! 🌙',
+  welcome_evening_title: 'Good evening',
   welcome_evening_message: 'How did your spending go today? Log any missing expenses before you relax.',
   welcome_evening_action: 'Review Today',
   welcome_dismiss: 'Not now',
   welcome_dont_show: 'Don\'t show this again',
+  welcome_twice_daily: 'Shows twice a day — morning & evening',
   home_quick_actions: 'Quick Actions',
   home_add_bill: 'Add Bill',
   home_view_analytics: 'Insights',

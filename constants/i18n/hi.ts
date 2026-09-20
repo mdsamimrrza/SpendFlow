@@ -46,14 +46,16 @@ export const hi: typeof en = {
   home_export_data: 'निर्यात',
 
   // ── Welcome Greeting ──
-  welcome_morning_title: 'शुभ प्रभात! ☀️',
+  welcome_back: 'वापस स्वागत है',
+  welcome_morning_title: 'शुभ प्रभात',
   welcome_morning_message: 'हर रुपये को ट्रैक करके अपना दिन शुरू करें। छोटी आदतें बड़ी दौलत बनाती हैं।',
   welcome_morning_action: 'पहला खर्च जोड़ें',
-  welcome_evening_title: 'शुभ संध्या! 🌙',
+  welcome_evening_title: 'शुभ संध्या',
   welcome_evening_message: 'आज आपका खर्च कैसा रहा? आराम करने से पहले कोई छूटा खर्च लॉग करें।',
   welcome_evening_action: 'आज की समीक्षा करें',
   welcome_dismiss: 'अभी नहीं',
   welcome_dont_show: 'यह दोबारा न दिखाएं',
+  welcome_twice_daily: 'दिन में दो बार दिखता है — सुबह और शाम',
 
   // ── इतिहास स्क्रीन ──
   history_title: 'लेनदेन इतिहास',

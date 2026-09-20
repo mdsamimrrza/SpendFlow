@@ -1,425 +1,556 @@
-"use client";
-
-import React, { useEffect, useState } from "react";
-import { View, Text, Pressable, StyleSheet, Animated, Easing } from "react-native";
-import { Sun, Moon, X, Sparkles, CheckCircle2, ArrowRight } from "lucide-react-native";
-import { useTheme } from "@/hooks/useTheme";
-import { useLanguage } from "@/hooks/useLanguage";
-import { useAuth } from "@/hooks/useAuth";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Animated,
+  Easing,
+  Modal,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
+import { ArrowRight, Check, Moon, Plus, Sun, X } from "lucide-react-native";
+import { useRouter } from "expo-router";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as Haptics from "expo-haptics";
+import { useAuth } from "@/hooks/useAuth";
+import { useLanguage } from "@/hooks/useLanguage";
+import { useTheme } from "@/hooks/useTheme";
 
 const STORAGE_KEY = "@spendflow_welcome_greeting";
+
+type Slot = "morning" | "evening";
+
+interface StoredState {
+  dontShowAgain?: boolean;
+  morning?: string;
+  evening?: string;
+}
+
+function getSlot(hour: number): Slot | null {
+  if (hour >= 5 && hour < 12) return "morning";
+  if (hour >= 17 && hour < 22) return "evening";
+  return null;
+}
+
+function todayKey(): string {
+  return new Date().toISOString().split("T")[0] ?? "";
+}
+
+function capitalize(name: string): string {
+  if (!name) return name;
+  return name.charAt(0).toUpperCase() + name.slice(1);
+}
+
+const STARS: { top: number; left: `${number}%`; size: number; alpha: number }[] = [
+  { top: 26, left: "12%", size: 3, alpha: 0.8 },
+  { top: 52, left: "80%", size: 4, alpha: 0.55 },
+  { top: 98, left: "9%", size: 2.5, alpha: 0.5 },
+  { top: 34, left: "90%", size: 2.5, alpha: 0.65 },
+  { top: 112, left: "82%", size: 3, alpha: 0.45 },
+  { top: 72, left: "38%", size: 2, alpha: 0.5 },
+];
 
 interface WelcomeGreetingProps {
   onClose?: () => void;
 }
 
 export function WelcomeGreeting({ onClose }: WelcomeGreetingProps) {
-  const { isDark, colors } = useTheme();
+  const { colors } = useTheme();
   const { t, language } = useLanguage();
-  const { profile } = useAuth();
+  const { profile, session } = useAuth();
+  const router = useRouter();
+
+  const slot = useMemo(() => getSlot(new Date().getHours()), []);
+  const userId = profile?.id ?? session?.user?.id ?? "";
+  const storageKey = userId ? `${STORAGE_KEY}:${userId}` : STORAGE_KEY;
+
   const [visible, setVisible] = useState(false);
   const [dontShowAgain, setDontShowAgain] = useState(false);
-  const [anim, setAnim] = useState({ 
-    opacity: new Animated.Value(0), 
-    translateY: new Animated.Value(50),
-    scale: new Animated.Value(0.9)
-  });
 
-  const displayName = profile?.display_name || profile?.email?.split("@")[0] || "there";
-  const currentHour = new Date().getHours();
-  
-  // Determine greeting period
-  const isMorning = currentHour >= 5 && currentHour < 12;
-  const isEvening = currentHour >= 17 && currentHour < 22;
-  const shouldShow = isMorning || isEvening;
+  const opacity = useRef(new Animated.Value(0)).current;
+  const scale = useRef(new Animated.Value(0.9)).current;
+  const translateY = useRef(new Animated.Value(24)).current;
+  const glowPulse = useRef(new Animated.Value(0.35)).current;
 
-  const greetingData = isMorning ? {
-    icon: Sun,
-    gradient: ["#FEF3C7", "#FDE68A", "#FCD34D"],
-    iconColor: "#F59E0B",
-    title: t("welcome_morning_title") || "Good Morning! ☀️",
-    message: t("welcome_morning_message") || "Start your day by tracking every rupee. Small habits build big wealth.",
-    actionLabel: t("welcome_morning_action") || "Add First Expense",
-    accent: "#F59E0B",
-    accentLight: "rgba(245, 158, 11, 0.12)",
-    accentMedium: "rgba(245, 158, 11, 0.2)",
-  } : {
-    icon: Moon,
-    gradient: ["#E0E7FF", "#C7D2FE", "#A5B4FC"],
-    iconColor: "#6366F1",
-    title: t("welcome_evening_title") || "Good Evening! 🌙",
-    message: t("welcome_evening_message") || "How did your spending go today? Log any missing expenses before you relax.",
-    actionLabel: t("welcome_evening_action") || "Review Today",
-    accent: "#6366F1",
-    accentLight: "rgba(99, 102, 241, 0.12)",
-    accentMedium: "rgba(99, 102, 241, 0.2)",
-  };
+  const rawName =
+    profile?.display_name?.trim() ||
+    profile?.email?.split("@")[0]?.trim() ||
+    "friend";
+  const displayName = capitalize(rawName);
 
-  useEffect(() => {
-    if (!shouldShow) {
-      if (onClose) onClose();
-      return;
+  const isMorning = slot === "morning";
+
+  const heroColors: [string, string, string] = isMorning
+    ? ["#FCD34D", "#F59E0B", "#EA580C"]
+    : ["#312E81", "#4C1D95", "#7C3AED"];
+
+  const title = isMorning ? t("welcome_morning_title") : t("welcome_evening_title");
+  const message = isMorning ? t("welcome_morning_message") : t("welcome_evening_message");
+  const actionLabel = isMorning ? t("welcome_morning_action") : t("welcome_evening_action");
+  const ActionIcon = isMorning ? Plus : ArrowRight;
+  const SlotIcon = isMorning ? Sun : Moon;
+
+  const dateLabel = useMemo(() => {
+    const locale = language === "ne" ? "ne-NP" : language === "hi" ? "hi-IN" : "en-US";
+    try {
+      return new Date().toLocaleDateString(locale, {
+        weekday: "long",
+        day: "numeric",
+        month: "long",
+      });
+    } catch {
+      return "";
     }
+  }, [language]);
 
-    // Check if user dismissed for today
-    const checkDismissed = async () => {
-      try {
-        const stored = await AsyncStorage.getItem(STORAGE_KEY);
-        if (stored) {
-          const data = JSON.parse(stored);
-          const today = new Date().toISOString().split("T")[0];
-          // Check if dismissed for this period today
-          if (data.dismissed === today && data.period === (isMorning ? "morning" : "evening")) {
-            if (onClose) onClose();
-            return;
-          }
-          // Check global don't show again
-          if (data.dontShowAgain) {
-            if (onClose) onClose();
-            return;
-          }
-        }
-        setVisible(true);
-        // Auto-hide after 15 seconds
-        setTimeout(() => {
-          if (visible) handleClose(false);
-        }, 15000);
-      } catch {
-        setVisible(true);
-      }
-    };
-    checkDismissed();
-  }, [shouldShow, isMorning, visible, onClose]);
-
-  useEffect(() => {
-    if (visible) {
-      Animated.parallel([
-        Animated.timing(anim.opacity, { toValue: 1, duration: 400, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-        Animated.timing(anim.translateY, { toValue: 0, duration: 500, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-        Animated.timing(anim.scale, { toValue: 1, duration: 500, easing: Easing.out(Easing.back(1.2)), useNativeDriver: true }),
-      ]).start();
+  const readStored = useCallback(async (): Promise<StoredState> => {
+    try {
+      const raw = await AsyncStorage.getItem(storageKey);
+      if (raw) return (JSON.parse(raw) as StoredState) ?? {};
+      // Honor opt-outs saved under the legacy global key.
+      const legacy = await AsyncStorage.getItem(STORAGE_KEY);
+      if (legacy) return (JSON.parse(legacy) as StoredState) ?? {};
+    } catch {
+      // Corrupt storage → treat as never shown.
     }
-  }, [visible]);
+    return {};
+  }, [storageKey]);
 
-  const handleClose = async (setDismissed: boolean) => {
+  const persistClose = useCallback(async () => {
+    if (!slot) return;
+    try {
+      const prev = await readStored();
+      const next: StoredState = {
+        ...prev,
+        [slot]: todayKey(),
+        dontShowAgain: dontShowAgain || prev.dontShowAgain === true,
+      };
+      await AsyncStorage.setItem(storageKey, JSON.stringify(next));
+    } catch {
+      // Non-credential UI state — safe to ignore write failures.
+    }
+  }, [dontShowAgain, readStored, slot, storageKey]);
+
+  const playEnter = useCallback(() => {
+    opacity.setValue(0);
+    scale.setValue(0.9);
+    translateY.setValue(24);
     Animated.parallel([
-      Animated.timing(anim.opacity, { toValue: 0, duration: 300, easing: Easing.in(Easing.cubic), useNativeDriver: true }),
-      Animated.timing(anim.translateY, { toValue: -50, duration: 300, easing: Easing.in(Easing.cubic), useNativeDriver: true }),
-      Animated.timing(anim.scale, { toValue: 0.9, duration: 300, easing: Easing.in(Easing.cubic), useNativeDriver: true }),
-    ]).start(() => {
-      setVisible(false);
-      if (onClose) onClose();
-    });
+      Animated.timing(opacity, {
+        toValue: 1,
+        duration: 240,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(scale, {
+        toValue: 1,
+        duration: 360,
+        easing: Easing.out(Easing.back(1.2)),
+        useNativeDriver: true,
+      }),
+      Animated.timing(translateY, {
+        toValue: 0,
+        duration: 320,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [opacity, scale, translateY]);
 
-    if (setDismissed) {
-      try {
-        const today = new Date().toISOString().split("T")[0];
-        await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify({
-          dismissed: today,
-          period: isMorning ? "morning" : "evening",
-          dontShowAgain,
-        }));
-      } catch {}
-    }
-  };
+  const close = useCallback(
+    (persist: boolean) => {
+      if (persist) void persistClose();
+      Animated.parallel([
+        Animated.timing(opacity, {
+          toValue: 0,
+          duration: 180,
+          easing: Easing.in(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.timing(scale, {
+          toValue: 0.93,
+          duration: 180,
+          easing: Easing.in(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]).start(() => {
+        setVisible(false);
+        onClose?.();
+      });
+    },
+    [onClose, opacity, persistClose, scale],
+  );
 
-  if (!visible || !shouldShow) return null;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(glowPulse, {
+          toValue: 0.85,
+          duration: 1600,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(glowPulse, {
+          toValue: 0.35,
+          duration: 1600,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [glowPulse]);
+
+  useEffect(() => {
+    if (!slot) return;
+    let cancelled = false;
+    (async () => {
+      const stored = await readStored();
+      if (cancelled) return;
+      if (stored.dontShowAgain) return;
+      if (stored[slot] === todayKey()) return;
+      setVisible(true);
+      playEnter();
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [playEnter, readStored, slot]);
+
+  const handleAction = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    close(true);
+    const target = isMorning ? "/expense/add" : "/history";
+    setTimeout(() => {
+      router.push(target as never);
+    }, 240);
+  }, [close, isMorning, router]);
+
+  const toggleOptOut = useCallback(() => {
+    Haptics.selectionAsync().catch(() => {});
+    setDontShowAgain((v) => !v);
+  }, []);
+
+  if (!slot) return null;
 
   return (
-    <Animated.View
-style={[
-          styles.overlay,
-          { backgroundColor: isDark ? "rgba(0,0,0,0.7)" : "rgba(0,0,0,0.5)" }
-        ]}
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      statusBarTranslucent
+      presentationStyle="fullScreen"
+      onRequestClose={() => close(true)}
     >
-      <Animated.View
-        style={[
-          styles.container,
-          { backgroundColor: colors.surface },
-          {
-            opacity: anim.opacity,
-            transform: [
-              { translateY: anim.translateY },
-              { scale: anim.scale },
-            ],
-          },
-        ]}
-      >
-        {/* Header with icon */}
-        <View style={styles.header}>
-          <Animated.View
-            style={[
-              styles.iconWrapper,
-              { backgroundColor: greetingData.accentLight },
-            ]}
-          >
-            <greetingData.icon size={28} color={greetingData.iconColor} />
-          </Animated.View>
-          
-          <Pressable
-            onPress={() => handleClose(false)}
-            style={styles.closeButton}
-            hitSlop={12}
-          >
-            <X size={20} color={colors.textMuted} />
-          </Pressable>
-        </View>
-
-        {/* Greeting content */}
-        <View style={styles.content}>
-          <Text style={[
-            styles.greeting,
-            { color: colors.text },
-          ]}>
-            {greetingData.title}
-          </Text>
-          
-          <Text style={[
-            styles.message,
-            { color: colors.textMuted },
-          ]}>
-            {displayName.charAt(0).toUpperCase() + displayName.slice(1)}, {greetingData.message}
-          </Text>
-        </View>
-
-        {/* Action buttons */}
-        <View style={styles.actions}>
-          <Pressable
-            onPress={() => {
-              handleClose(false);
-              // Navigate based on action
-            }}
-            style={[
-              styles.primaryAction,
-              { backgroundColor: colors.primary },
-            ]}
-          >
-            <Sparkles size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
-            <Text style={styles.actionText}>{greetingData.actionLabel}</Text>
-          </Pressable>
-
-          <Pressable
-            onPress={() => handleClose(true)}
-            style={styles.secondaryAction}
-          >
-            <Text style={[
-              styles.secondaryActionText,
-              { color: colors.textMuted },
-            ]}>
-              {t("welcome_dismiss") || "Not now"}
-            </Text>
-          </Pressable>
-        </View>
-
-        {/* Don't show again checkbox */}
+      <View style={styles.overlay}>
+        {/* Click-outside dismissal layer */}
         <Pressable
-          onPress={() => setDontShowAgain(!dontShowAgain)}
-          style={styles.checkboxWrapper}
+          style={styles.backdrop}
+          onPress={() => close(true)}
+          accessibilityLabel={t("welcome_dismiss")}
+        />
+        <Animated.View
+          style={[
+            styles.card,
+            {
+              borderColor: colors.border,
+              opacity,
+              transform: [{ translateY }, { scale }],
+            },
+          ]}
         >
-          <Animated.View
-            style={[
-              styles.checkbox,
-              { 
-                backgroundColor: dontShowAgain ? colors.primary : "transparent",
-                borderColor: dontShowAgain ? colors.primary : colors.border,
-              },
-            ]}
+          <LinearGradient
+            colors={heroColors}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 0.5, y: 1 }}
+            style={styles.hero}
           >
-            {dontShowAgain && <CheckCircle2 size={16} color="#FFFFFF" />}
-          </Animated.View>
-          <Text style={[
-            styles.checkboxLabel,
-            { color: colors.textMuted },
-          ]}>
-            {t("welcome_dont_show") || "Don't show this again"}
-          </Text>
-        </Pressable>
-      </Animated.View>
-    </Animated.View>
+            {!isMorning &&
+              STARS.map((s, i) => (
+                <View
+                  key={i}
+                  style={[
+                    styles.star,
+                    { top: s.top, left: s.left, width: s.size, height: s.size, opacity: s.alpha },
+                  ]}
+                />
+              ))}
+
+            <View style={styles.iconWrap}>
+              <Animated.View style={[styles.glow, { opacity: glowPulse }]} />
+              <View style={styles.iconRing}>
+                <View style={styles.iconCore}>
+                  <SlotIcon size={34} color="#FFFFFF" strokeWidth={2} />
+                </View>
+              </View>
+            </View>
+
+            <Text style={styles.heroEyebrow}>{t("welcome_back")}</Text>
+            <Text
+              style={styles.heroTitle}
+              numberOfLines={2}
+              adjustsFontSizeToFit
+              minimumFontScale={0.75}
+            >
+              {title}, {displayName}
+            </Text>
+            {dateLabel !== "" && <Text style={styles.heroDate}>{dateLabel}</Text>}
+
+            <Pressable
+              onPress={() => close(true)}
+              style={styles.closeButton}
+              hitSlop={12}
+              accessibilityRole="button"
+              accessibilityLabel={t("welcome_dismiss")}
+            >
+              <X size={15} color="#FFFFFF" />
+            </Pressable>
+          </LinearGradient>
+
+          <View style={[styles.body, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.message, { color: colors.textMuted }]}>{message}</Text>
+
+            <Pressable
+              onPress={handleAction}
+              style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}
+              accessibilityRole="button"
+            >
+              <LinearGradient
+                colors={[colors.primary, colors.primaryStrong]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={styles.primaryGradient}
+              >
+                <ActionIcon size={18} color="#FFFFFF" strokeWidth={2.5} />
+                <Text style={styles.primaryButtonText}>{actionLabel}</Text>
+              </LinearGradient>
+            </Pressable>
+
+            <Pressable
+              onPress={() => close(true)}
+              style={styles.secondaryButton}
+              hitSlop={6}
+              accessibilityRole="button"
+            >
+              <Text style={[styles.secondaryButtonText, { color: colors.textMuted }]}>
+                {t("welcome_dismiss")}
+              </Text>
+            </Pressable>
+
+            <View style={[styles.divider, { backgroundColor: colors.border }]} />
+
+            <Pressable
+              onPress={toggleOptOut}
+              style={styles.optOutRow}
+              hitSlop={8}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: dontShowAgain }}
+            >
+              <View
+                style={[
+                  styles.checkbox,
+                  {
+                    borderColor: dontShowAgain ? colors.primary : colors.border,
+                    backgroundColor: dontShowAgain ? colors.primary : "transparent",
+                  },
+                ]}
+              >
+                {dontShowAgain && <Check size={13} color="#FFFFFF" strokeWidth={3} />}
+              </View>
+              <Text style={[styles.optOutLabel, { color: colors.textMuted }]}>
+                {t("welcome_dont_show")}
+              </Text>
+            </Pressable>
+          </View>
+        </Animated.View>
+      </View>
+    </Modal>
   );
 }
 
 const styles = StyleSheet.create({
   overlay: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    justifyContent: "center",
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.62)",
     alignItems: "center",
-    padding: 20,
-    zIndex: 1000,
+    justifyContent: "center",
+    padding: 24,
   },
-  glassContainer: {
+  backdrop: {
     position: "absolute",
     top: 0,
     left: 0,
     right: 0,
     bottom: 0,
-    borderRadius: 28,
-    overflow: "hidden",
   },
-  gradientBackground: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    borderRadius: 28,
-    borderWidth: 1.5,
-  },
-  container: {
+  card: {
     width: "100%",
-    maxWidth: 360,
-    borderRadius: 28,
+    maxWidth: 380,
+    borderRadius: 30,
+    borderWidth: 1,
+    overflow: "hidden",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 24 },
+    shadowOpacity: 0.35,
+    shadowRadius: 48,
+    elevation: 24,
+  },
+  hero: {
+    paddingTop: 24,
+    paddingBottom: 20,
+    alignItems: "center",
     overflow: "hidden",
   },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 4,
-  },
-  iconWrapper: {
-    width: 64,
-    height: 64,
-    borderRadius: 20,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 2,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.15,
-    shadowRadius: 20,
-    elevation: 8,
+  star: {
+    position: "absolute",
+    borderRadius: 999,
+    backgroundColor: "#FFFFFF",
   },
   closeButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 14,
+    position: "absolute",
+    top: 14,
+    right: 14,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(0,0,0,0.04)",
+    backgroundColor: "rgba(255, 255, 255, 0.18)",
   },
-  content: {
-    gap: 16,
+  iconWrap: {
+    width: 116,
+    height: 116,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  greetingContainer: {
+  glow: {
+    position: "absolute",
+    width: 116,
+    height: 116,
+    borderRadius: 58,
+    backgroundColor: "rgba(255, 255, 255, 0.3)",
   },
-  greeting: {
-    fontSize: 26,
-    fontWeight: "900",
-    letterSpacing: -0.5,
+  iconRing: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    borderWidth: 1.5,
+    borderColor: "rgba(255, 255, 255, 0.4)",
+    backgroundColor: "rgba(255, 255, 255, 0.14)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  iconCore: {
+    width: 68,
+    height: 68,
+    borderRadius: 34,
+    backgroundColor: "rgba(255, 255, 255, 0.24)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  heroEyebrow: {
+    marginTop: 12,
+    fontSize: 10.5,
+    fontWeight: "800",
+    letterSpacing: 2.2,
+    textTransform: "uppercase",
+    color: "rgba(255, 255, 255, 0.8)",
+  },
+  heroTitle: {
+    marginTop: 5,
+    fontSize: 25,
+    lineHeight: 32,
+    fontWeight: "800",
+    letterSpacing: -0.3,
     textAlign: "center",
-    lineHeight: 34,
+    color: "#FFFFFF",
+    includeFontPadding: false,
+    paddingHorizontal: 20,
+  },
+  heroDate: {
+    marginTop: 6,
+    fontSize: 12,
+    fontWeight: "700",
+    color: "rgba(255, 255, 255, 0.78)",
+    letterSpacing: 0.3,
+  },
+  body: {
+    paddingHorizontal: 24,
+    paddingTop: 22,
+    paddingBottom: 20,
+    alignItems: "center",
   },
   message: {
-    fontSize: 15,
-    lineHeight: 24,
-    textAlign: "center",
+    fontSize: 14.5,
+    lineHeight: 22,
     fontWeight: "500",
+    textAlign: "center",
   },
-  divider: {
-    height: 1.5,
-    borderRadius: 1,
-    marginTop: 8,
-    marginBottom: 4,
-  },
-  actions: {
-    flexDirection: "row",
-    gap: 14,
-    marginTop: 8,
-  },
-  primaryAction: {
-    flex: 1,
-    borderRadius: 18,
+  primaryButton: {
+    marginTop: 18,
+    width: "100%",
+    borderRadius: 16,
     overflow: "hidden",
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.25,
-    shadowRadius: 20,
-    elevation: 10,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.2,
+    shadowRadius: 16,
+    elevation: 8,
   },
-  primaryActionGradient: {
-    borderRadius: 18,
-    paddingVertical: 18,
-    paddingHorizontal: 24,
-  },
-  primaryActionContent: {
+  primaryGradient: {
+    paddingVertical: 15,
+    paddingHorizontal: 16,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 10,
+    gap: 8,
   },
-  actionText: {
-    fontSize: 15,
+  pressed: {
+    opacity: 0.88,
+  },
+  primaryButtonText: {
+    fontSize: 15.5,
     fontWeight: "800",
+    letterSpacing: 0.2,
     color: "#FFFFFF",
-    letterSpacing: 0.2,
   },
-  buttonGlow: {
-    position: "absolute",
-    top: -2,
-    left: -2,
-    right: -2,
-    bottom: -2,
-    borderRadius: 20,
+  secondaryButton: {
+    marginTop: 4,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
   },
-  secondaryAction: {
-    flex: 1,
-    borderRadius: 18,
-    borderWidth: 1.5,
-    overflow: "hidden",
-  },
-  secondaryActionContent: {
-    paddingVertical: 18,
-    paddingHorizontal: 24,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.05)",
-  },
-  secondaryActionText: {
-    fontSize: 15,
+  secondaryButtonText: {
+    fontSize: 14,
     fontWeight: "700",
-    letterSpacing: 0.2,
   },
-  checkboxWrapper: {
+  divider: {
+    width: "100%",
+    height: 1,
+    opacity: 0.7,
+    marginTop: 8,
+    marginBottom: 12,
+  },
+  optOutRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 10,
-    marginTop: 8,
-    paddingVertical: 4,
-  },
-  checkboxTouch: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingVertical: 4,
-    paddingHorizontal: 8,
+    gap: 8,
+    paddingVertical: 2,
   },
   checkbox: {
-    width: 22,
-    height: 22,
+    width: 20,
+    height: 20,
     borderRadius: 7,
-    borderWidth: 2.5,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "transparent",
-  },
-  checkIcon: {
-    width: 22,
-    height: 22,
+    borderWidth: 2,
     alignItems: "center",
     justifyContent: "center",
   },
-  checkboxLabel: {
+  optOutLabel: {
     fontSize: 12.5,
     fontWeight: "600",
-    letterSpacing: 0.2,
   },
 });
 
