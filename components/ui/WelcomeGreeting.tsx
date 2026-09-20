@@ -9,7 +9,16 @@ import {
   View,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
-import { ArrowRight, Check, Moon, Plus, Sun, X } from "lucide-react-native";
+import {
+  ArrowRight,
+  Check,
+  Moon,
+  Plus,
+  Sparkles,
+  Star,
+  Sun,
+  X,
+} from "lucide-react-native";
 import { useRouter } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Haptics from "expo-haptics";
@@ -60,8 +69,8 @@ export function WelcomeGreeting({ onClose }: WelcomeGreetingProps) {
   const [dontShowAgain, setDontShowAgain] = useState(false);
 
   const opacity = useRef(new Animated.Value(0)).current;
-  const scale = useRef(new Animated.Value(0.92)).current;
-  const translateY = useRef(new Animated.Value(20)).current;
+  const scale = useRef(new Animated.Value(0.9)).current;
+  const translateY = useRef(new Animated.Value(24)).current;
   const shownRef = useRef(false);
 
   const rawName =
@@ -75,14 +84,18 @@ export function WelcomeGreeting({ onClose }: WelcomeGreetingProps) {
   const accent = isMorning ? (isDark ? "#FBBF24" : "#B45309") : isDark ? "#A5B4FC" : "#4F46E5";
   const accentSoft = isMorning
     ? isDark
-      ? "rgba(251, 191, 36, 0.14)"
-      : "rgba(180, 83, 9, 0.10)"
+      ? "rgba(251, 191, 36, 0.16)"
+      : "rgba(180, 83, 9, 0.12)"
     : isDark
-      ? "rgba(165, 180, 252, 0.14)"
-      : "rgba(79, 70, 229, 0.10)";
-  const topBar: [string, string] = isMorning
-    ? ["#FCD34D", "#F59E0B"]
-    : ["#818CF8", "#7C3AED"];
+      ? "rgba(165, 180, 252, 0.16)"
+      : "rgba(79, 70, 229, 0.12)";
+  const halo: [string, string] = isMorning
+    ? isDark
+      ? ["#F59E0B", "#B45309"]
+      : ["#FCD34D", "#F59E0B"]
+    : isDark
+      ? ["#818CF8", "#4C1D95"]
+      : ["#A5B4FC", "#6366F1"];
 
   const title = isMorning ? t("welcome_morning_title") : t("welcome_evening_title");
   const message = isMorning ? t("welcome_morning_message") : t("welcome_evening_message");
@@ -133,8 +146,8 @@ export function WelcomeGreeting({ onClose }: WelcomeGreetingProps) {
 
   const playEnter = useCallback(() => {
     opacity.setValue(0);
-    scale.setValue(0.92);
-    translateY.setValue(20);
+    scale.setValue(0.9);
+    translateY.setValue(24);
     Animated.parallel([
       Animated.timing(opacity, {
         toValue: 1,
@@ -144,13 +157,13 @@ export function WelcomeGreeting({ onClose }: WelcomeGreetingProps) {
       }),
       Animated.timing(scale, {
         toValue: 1,
-        duration: 340,
-        easing: Easing.out(Easing.back(1.15)),
+        duration: 360,
+        easing: Easing.out(Easing.back(1.2)),
         useNativeDriver: true,
       }),
       Animated.timing(translateY, {
         toValue: 0,
-        duration: 300,
+        duration: 320,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }),
@@ -168,7 +181,7 @@ export function WelcomeGreeting({ onClose }: WelcomeGreetingProps) {
           useNativeDriver: true,
         }),
         Animated.timing(scale, {
-          toValue: 0.95,
+          toValue: 0.93,
           duration: 180,
           easing: Easing.in(Easing.cubic),
           useNativeDriver: true,
@@ -242,84 +255,121 @@ export function WelcomeGreeting({ onClose }: WelcomeGreetingProps) {
             },
           ]}
         >
-          <LinearGradient
-            colors={topBar}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0 }}
-            style={styles.topBar}
-          />
+          {/* Decorative art header */}
+          <View pointerEvents="none" style={styles.art}>
+            <LinearGradient
+              colors={[accentSoft, "transparent"]}
+              style={styles.wash}
+            />
+            <View style={[styles.blob, styles.blobLeft, { backgroundColor: accentSoft }]} />
+            <View style={[styles.blob, styles.blobRight, { backgroundColor: accentSoft }]} />
+          </View>
 
-          <View style={styles.content}>
-            <View style={styles.headerRow}>
-              <View style={[styles.iconChip, { backgroundColor: accentSoft }]}>
-                <SlotIcon size={15} color={accent} strokeWidth={2.4} />
-              </View>
-              <Text style={[styles.dateLabel, { color: colors.faint }]} numberOfLines={1}>
-                {dateLabel}
-              </Text>
-              <View style={styles.headerSpacer} />
-              <Pressable
-                onPress={() => close(true)}
-                style={[styles.closeButton, { backgroundColor: colors.surfaceElevated }]}
-                hitSlop={12}
-                accessibilityRole="button"
-                accessibilityLabel={t("welcome_dismiss")}
-              >
-                <X size={15} color={colors.textMuted} />
-              </Pressable>
+          <View style={styles.topRow}>
+            <View style={[styles.datePill, { backgroundColor: accentSoft }]}>
+              <SlotIcon size={12} color={accent} strokeWidth={2.5} />
+              <Text style={[styles.datePillText, { color: accent }]}>{dateLabel}</Text>
             </View>
-
-            <Text style={[styles.eyebrow, { color: accent }]}>{t("welcome_back")}</Text>
-            <Text
-              style={[styles.title, { color: colors.text }]}
-              numberOfLines={2}
-              adjustsFontSizeToFit
-              minimumFontScale={0.8}
-            >
-              {title},{"\n"}
-              <Text style={{ color: accent }}>{displayName}</Text>
-            </Text>
-            <Text style={[styles.message, { color: colors.textMuted }]}>{message}</Text>
-
             <Pressable
-              onPress={handleAction}
-              style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}
+              onPress={() => close(true)}
+              style={[styles.closeButton, { backgroundColor: colors.surfaceElevated }]}
+              hitSlop={12}
               accessibilityRole="button"
+              accessibilityLabel={t("welcome_dismiss")}
             >
-              <LinearGradient
-                colors={[colors.primary, colors.primaryStrong]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-                style={styles.primaryGradient}
-              >
-                <ActionIcon size={17} color="#FFFFFF" strokeWidth={2.5} />
-                <Text style={styles.primaryButtonText}>{actionLabel}</Text>
-              </LinearGradient>
-            </Pressable>
-
-            <Pressable
-              onPress={toggleOptOut}
-              style={styles.optOutRow}
-              hitSlop={8}
-              accessibilityRole="checkbox"
-              accessibilityState={{ checked: dontShowAgain }}
-            >
-              <View
-                style={[
-                  styles.checkbox,
-                  {
-                    borderColor: dontShowAgain ? colors.primary : colors.border,
-                    backgroundColor: dontShowAgain ? colors.primary : "transparent",
-                  },
-                ]}
-              >
-                {dontShowAgain && <Check size={12} color="#FFFFFF" strokeWidth={3} />}
-              </View>
-              <Text style={[styles.optOutLabel, { color: colors.faint }]}>
-                {t("welcome_dont_show")}
-              </Text>
+              <X size={16} color={colors.textMuted} />
             </Pressable>
           </View>
+
+          <View style={styles.haloWrap}>
+            <LinearGradient colors={halo} style={styles.halo}>
+              <View style={[styles.haloInner, { backgroundColor: colors.surface }]}>
+                <SlotIcon size={36} color={accent} strokeWidth={2.2} />
+              </View>
+            </LinearGradient>
+            <View
+              style={[
+                styles.sparkleBadge,
+                styles.sparkleLeft,
+                { backgroundColor: colors.surfaceElevated, borderColor: colors.border },
+              ]}
+            >
+              <Sparkles size={13} color={accent} />
+            </View>
+            <View
+              style={[
+                styles.sparkleBadge,
+                styles.sparkleRight,
+                { backgroundColor: colors.surfaceElevated, borderColor: colors.border },
+              ]}
+            >
+              <Star size={12} color={accent} />
+            </View>
+          </View>
+
+          <Text style={[styles.eyebrow, { color: accent }]}>{t("welcome_back")}</Text>
+          <Text
+            style={[styles.title, { color: colors.text }]}
+            numberOfLines={2}
+            adjustsFontSizeToFit
+            minimumFontScale={0.8}
+          >
+            {title}, {displayName}
+          </Text>
+          <LinearGradient colors={halo} style={styles.rule} />
+          <Text style={[styles.message, { color: colors.textMuted }]}>{message}</Text>
+
+          <Pressable
+            onPress={handleAction}
+            style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}
+            accessibilityRole="button"
+          >
+            <LinearGradient
+              colors={[colors.primary, colors.primaryStrong]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.primaryGradient}
+            >
+              <ActionIcon size={18} color="#FFFFFF" strokeWidth={2.5} />
+              <Text style={styles.primaryButtonText}>{actionLabel}</Text>
+            </LinearGradient>
+          </Pressable>
+
+          <Pressable
+            onPress={() => close(true)}
+            style={styles.secondaryButton}
+            hitSlop={6}
+            accessibilityRole="button"
+          >
+            <Text style={[styles.secondaryButtonText, { color: colors.textMuted }]}>
+              {t("welcome_dismiss")}
+            </Text>
+          </Pressable>
+
+          <View style={[styles.divider, { backgroundColor: colors.border }]} />
+
+          <Pressable
+            onPress={toggleOptOut}
+            style={styles.optOutRow}
+            hitSlop={8}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: dontShowAgain }}
+          >
+            <View
+              style={[
+                styles.checkbox,
+                {
+                  borderColor: dontShowAgain ? colors.primary : colors.border,
+                  backgroundColor: dontShowAgain ? colors.primary : "transparent",
+                },
+              ]}
+            >
+              {dontShowAgain && <Check size={13} color="#FFFFFF" strokeWidth={3} />}
+            </View>
+            <Text style={[styles.optOutLabel, { color: colors.textMuted }]}>
+              {t("welcome_dont_show")}
+            </Text>
+          </Pressable>
         </Animated.View>
       </View>
     </Modal>
@@ -329,7 +379,7 @@ export function WelcomeGreeting({ onClose }: WelcomeGreetingProps) {
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.55)",
+    backgroundColor: "rgba(0, 0, 0, 0.6)",
     alignItems: "center",
     justifyContent: "center",
     padding: 24,
@@ -343,86 +393,158 @@ const styles = StyleSheet.create({
   },
   card: {
     width: "100%",
-    maxWidth: 360,
-    borderRadius: 24,
+    maxWidth: 380,
+    borderRadius: 28,
     borderWidth: 1,
+    paddingHorizontal: 28,
+    paddingTop: 20,
+    paddingBottom: 24,
+    alignItems: "center",
     overflow: "hidden",
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 18 },
-    shadowOpacity: 0.3,
-    shadowRadius: 36,
+    shadowOffset: { width: 0, height: 20 },
+    shadowOpacity: 0.32,
+    shadowRadius: 40,
     elevation: 20,
   },
-  topBar: {
-    height: 4,
+  art: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
   },
-  content: {
-    paddingHorizontal: 24,
-    paddingTop: 20,
-    paddingBottom: 22,
+  wash: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 190,
   },
-  headerRow: {
+  blob: {
+    position: "absolute",
+    width: 130,
+    height: 130,
+    borderRadius: 65,
+  },
+  blobLeft: {
+    top: -48,
+    left: -48,
+  },
+  blobRight: {
+    top: -34,
+    right: -56,
+  },
+  topRow: {
+    width: "100%",
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    justifyContent: "space-between",
   },
-  iconChip: {
-    width: 30,
-    height: 30,
-    borderRadius: 10,
+  datePill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    borderRadius: 9999,
+    paddingHorizontal: 13,
+    paddingVertical: 7,
+  },
+  datePillText: {
+    fontSize: 11.5,
+    fontWeight: "800",
+    letterSpacing: 0.4,
+  },
+  closeButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     alignItems: "center",
     justifyContent: "center",
   },
-  dateLabel: {
-    flexShrink: 1,
-    fontSize: 12,
-    fontWeight: "600",
-    letterSpacing: 0.2,
+  haloWrap: {
+    marginTop: 18,
+    marginBottom: 16,
+    width: 150,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  headerSpacer: {
-    flex: 1,
+  halo: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.25,
+    shadowRadius: 20,
+    elevation: 10,
   },
-  closeButton: {
+  haloInner: {
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  sparkleBadge: {
+    position: "absolute",
     width: 30,
     height: 30,
     borderRadius: 15,
+    borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
   },
+  sparkleLeft: {
+    left: 2,
+    top: 8,
+  },
+  sparkleRight: {
+    right: 2,
+    bottom: 8,
+  },
   eyebrow: {
-    marginTop: 22,
-    fontSize: 11,
+    fontSize: 11.5,
     fontWeight: "800",
-    letterSpacing: 2,
+    letterSpacing: 1.6,
     textTransform: "uppercase",
   },
   title: {
-    marginTop: 6,
-    fontSize: 30,
-    lineHeight: 38,
+    marginTop: 8,
+    fontSize: 26,
+    lineHeight: 33,
     fontWeight: "800",
-    letterSpacing: -0.5,
+    letterSpacing: -0.4,
+    textAlign: "center",
     includeFontPadding: false,
   },
+  rule: {
+    marginTop: 12,
+    width: 52,
+    height: 5,
+    borderRadius: 3,
+  },
   message: {
-    marginTop: 10,
-    fontSize: 14.5,
-    lineHeight: 22,
+    marginTop: 12,
+    fontSize: 15,
+    lineHeight: 23,
     fontWeight: "500",
+    textAlign: "center",
   },
   primaryButton: {
-    marginTop: 22,
+    marginTop: 20,
     width: "100%",
-    borderRadius: 14,
+    borderRadius: 16,
     overflow: "hidden",
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.2,
-    shadowRadius: 16,
-    elevation: 8,
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.25,
+    shadowRadius: 20,
+    elevation: 10,
   },
   primaryGradient: {
-    paddingVertical: 15,
+    paddingVertical: 16,
     paddingHorizontal: 16,
     flexDirection: "row",
     alignItems: "center",
@@ -433,13 +555,28 @@ const styles = StyleSheet.create({
     opacity: 0.88,
   },
   primaryButtonText: {
-    fontSize: 15.5,
+    fontSize: 16,
     fontWeight: "800",
     letterSpacing: 0.2,
     color: "#FFFFFF",
   },
+  secondaryButton: {
+    marginTop: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+  },
+  secondaryButtonText: {
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  divider: {
+    width: "100%",
+    height: 1,
+    opacity: 0.7,
+    marginTop: 12,
+    marginBottom: 14,
+  },
   optOutRow: {
-    marginTop: 16,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
@@ -447,9 +584,9 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   checkbox: {
-    width: 18,
-    height: 18,
-    borderRadius: 6,
+    width: 20,
+    height: 20,
+    borderRadius: 7,
     borderWidth: 2,
     alignItems: "center",
     justifyContent: "center",
