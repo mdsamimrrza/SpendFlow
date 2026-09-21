@@ -58,7 +58,6 @@
   },
   "scripts": {
     "postinstall": "patch-package",
-    "eas-build-pre-install": "bash scripts/eas-pre-install.sh",
     "start": "expo start",
     "typecheck": "tsc --noEmit",
     "android": "expo run:android",
