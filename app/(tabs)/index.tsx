@@ -5,11 +5,13 @@ import { ArrowRight, Plus, ReceiptText } from 'lucide-react-native';
 import { Avatar } from '@/components/ui/Avatar';
 import { BudgetLimitHeroCard } from '@/components/expense/BudgetLimitHeroCard';
 import { BillsDueStrip } from '@/components/expense/BillsDueStrip';
+import { WeeklyDigest } from '@/components/expense/WeeklyDigest';
 import { CategoryBreakdown } from '@/components/expense/Charts';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ExpenseItem } from '@/components/expense/ExpenseItem';
 import { PressableScale } from '@/components/ui/PressableScale';
 import { ProfileQuickCard } from '@/components/ui/ProfileQuickCard';
+import { QuickAddSheet, QuickTemplate } from '@/components/expense/QuickAddSheet';
 import { PrivacyEyeButton } from '@/components/ui/PrivacyEyeButton';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { StockTrendChart } from '@/components/expense/StockTrendChart';
@@ -24,7 +26,8 @@ import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
 import { usePrivacyScreen } from '@/hooks/usePrivacyScreen';
 import { useTheme } from '@/hooks/useTheme';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Haptics from 'expo-haptics';
+import { showToast } from '@/components/ui/Toast';
 import { currentMonthRange, getCycleMeta, getCycleLabel, getMonthlyBudget, isoDate, sumExpenses, formatMoney } from '@/utils/format';
 import { CURRENCY_DETAILS } from '@/constants/app';
 
@@ -49,9 +52,66 @@ export default function HomeScreen() {
     fetchAll: true,
   });
   const [profileCardOpen, setProfileCardOpen] = useState(false);
-  const [forceEmptyState, setForceEmptyState] = useState(false);
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
 
   const preferredCurrency = profile?.preferred_currency ?? 'NPR';
+
+  // Frequent-expense templates (test feature): top categories by use-count
+  // over the last 90 days, stamped with their most recent amount.
+  const quickTemplates = useMemo<QuickTemplate[]>(() => {
+    const cutoff = isoDate(new Date(Date.now() - 90 * 86400000));
+    const groups = new Map<string, typeof expenses.items>();
+    for (const e of expenses.items) {
+      if (e.type === 'income' || e.date < cutoff) continue;
+      const arr = groups.get(e.category_id) ?? [];
+      arr.push(e);
+      groups.set(e.category_id, arr);
+    }
+    return [...groups.values()]
+      .map((arr) => {
+        const latest = [...arr].sort((a, b) => b.date.localeCompare(a.date))[0]!;
+        return {
+          category_id: latest.category_id,
+          label: latest.description || latest.categories?.name || 'Expense',
+          icon: latest.categories?.icon ?? 'tag',
+          color: latest.categories?.color ?? theme.colors.primary,
+          amount: Number(latest.amount) || 0,
+          currency: latest.currency || preferredCurrency,
+          payment_method: latest.payment_method,
+          type: 'expense' as const,
+          count: arr.length,
+        };
+      })
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 4);
+  }, [expenses.items, preferredCurrency, theme.colors.primary]);
+
+  const handleQuickPick = useCallback(
+    (tpl: QuickTemplate) => {
+      setQuickAddOpen(false);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
+      void (async () => {
+        try {
+          await expenses.save({
+            amount: tpl.amount,
+            category_id: tpl.category_id,
+            currency: tpl.currency,
+            description: tpl.label,
+            date: isoDate(),
+            time: null,
+            payment_method: tpl.payment_method,
+            bank_account_id: null,
+            type: 'expense',
+          });
+          showToast({ message: t('quick_add_done'), type: 'success' });
+        } catch (err) {
+          showToast({ message: err instanceof Error ? err.message : t('common_error'), type: 'error' });
+        }
+      })();
+    },
+    [expenses.save, t],
+  );
+
 
   // Display conversion: rows inside the ACTIVE cycle price at TODAY's live
   // rate (active month = live everywhere); rows before it stay frozen at
@@ -63,15 +123,6 @@ export default function HomeScreen() {
   refreshProfileRef.current = refreshProfile;
   const refreshExpensesRef = useRef(expenses.refresh);
   refreshExpensesRef.current = expenses.refresh;
-
-  // Read debug flag on every focus (so Settings toggle works immediately)
-  useFocusEffect(
-    useCallback(() => {
-      AsyncStorage.getItem('@spendflow_debug_force_empty')
-        .then((val) => val ? setForceEmptyState(JSON.parse(val)) : null)
-        .catch(() => {});
-    }, []),
-  );
 
   useFocusEffect(
     useCallback(() => {
@@ -114,6 +165,32 @@ export default function HomeScreen() {
   }, [expenses.items, preferredCurrency, rateResolver]);
 
   const monthlyBudget = getMonthlyBudget(profile, rateResolver, preferredCurrency);
+
+  // Recent-row duplicate (same fresh-entry semantics as History).
+  const handleDuplicateRecent = useCallback(
+    (expense: import('@/types').Expense) => {
+      void (async () => {
+        try {
+          await expenses.save({
+            amount: Number(expense.amount) || 0,
+            category_id: expense.category_id,
+            currency: expense.currency,
+            description: expense.description,
+            date: isoDate(),
+            time: null,
+            payment_method: expense.payment_method,
+            bank_account_id: expense.bank_account_id ?? null,
+            notes: expense.notes ?? null,
+            type: expense.type ?? 'expense',
+          });
+          showToast({ message: t('expense_duplicated'), type: 'success' });
+        } catch (err) {
+          showToast({ message: err instanceof Error ? err.message : t('common_error'), type: 'error' });
+        }
+      })();
+    },
+    [expenses.save, t],
+  );
 
   // Budget ratio for BudgetLimitHeroCard: convert both expenses and budget to the budget's currency
   // using the SAME RateResolver (historical rates) for consistency across display currencies
@@ -241,6 +318,17 @@ export default function HomeScreen() {
       {/* Welcome Greeting - Centered Modal Overlay */}
       <WelcomeGreeting />
 
+      {/* Weekly Digest - Sunday popup (test feature) */}
+      <WeeklyDigest
+        expenses={expenses.items}
+        monthTotal={monthTotal}
+        monthlyBudget={monthlyBudget}
+        preferredCurrency={preferredCurrency}
+        cycleStartDay={cycleStartDay}
+        cycleEndDay={cycleEndDay}
+        rateResolver={rateResolver}
+      />
+
       <FlatList
         data={latestExpenses}
         keyExtractor={(item) => item.id}
@@ -249,8 +337,15 @@ export default function HomeScreen() {
           <RefreshControl
             refreshing={expenses.refreshing}
             onRefresh={() => {
-              void refreshProfile(true);
-              void expenses.refresh(true);
+              void (async () => {
+                try {
+                  await Promise.all([refreshProfile(true), expenses.refresh(true)]);
+                } catch {
+                  // Refresh is best-effort — the toast still confirms the gesture.
+                }
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
+                showToast({ message: t('home_synced'), type: 'success' });
+              })();
             }}
             tintColor={theme.colors.primary}
             colors={[theme.colors.primary]}
@@ -343,7 +438,7 @@ export default function HomeScreen() {
             </View>
           </View>
         }
-        renderItem={({ item }) => <ExpenseItem expense={item} />}
+        renderItem={({ item }) => <ExpenseItem expense={item} onDuplicate={handleDuplicateRecent} />}
         ListFooterComponent={
           expenses.items.length > 3 ? (
             <Link href="/history" asChild>
@@ -384,21 +479,16 @@ export default function HomeScreen() {
         }
       />
 
-      {forceEmptyState && (
-        <View style={{ padding: theme.spacing.lg, paddingTop: 0 }}>
-          <EmptyState
-            icon={ReceiptText}
-            title={t('home_no_expenses_title')}
-            message={t('home_no_expenses_message')}
-            hint={emptyHint}
-            actionLabel={t('home_add_expense')}
-            onAction={() => router.push('/expense/add')}
-          />
-        </View>
-      )}
-
       {/* Profile quick drawer modal */}
       <ProfileQuickCard visible={profileCardOpen} onClose={() => setProfileCardOpen(false)} />
+
+      {/* FAB long-press quick-add sheet */}
+      <QuickAddSheet
+        visible={quickAddOpen && quickTemplates.length > 0}
+        onClose={() => setQuickAddOpen(false)}
+        templates={quickTemplates}
+        onPick={handleQuickPick}
+      />
 
       {/* Floating + Add Expense Button with subtle micro-drift */}
       <Animated.View
@@ -412,6 +502,13 @@ export default function HomeScreen() {
         <Link href="/expense/add" asChild>
           <PressableScale
             activeScale={0.85}
+            delayLongPress={350}
+            onLongPress={() => {
+              if (quickTemplates.length === 0) return;
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
+              setQuickAddOpen(true);
+            }}
+            accessibilityLabel={t('home_add_expense')}
             style={{
               width: 56,
               height: 56,

@@ -15,14 +15,12 @@ import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import {
   Bell,
-  Bug,
   Check,
   ChevronRight,
   Coins,
   DollarSign,
   Download,
   Edit2,
-  Eye,
   Fingerprint,
   Globe,
   HelpCircle,
@@ -85,21 +83,6 @@ export default function SettingsScreen() {
   const [showCategoryBudgets, setShowCategoryBudgets] = useState(false);
   const [signOutModalOpen, setSignOutModalOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
-
-  // Debug: force empty state on home for testing
-  const [forceEmptyState, setForceEmptyState] = useState(false);
-
-  // Persist forceEmptyState to AsyncStorage
-  useEffect(() => {
-    AsyncStorage.setItem('@spendflow_debug_force_empty', JSON.stringify(forceEmptyState)).catch(() => {});
-  }, [forceEmptyState]);
-
-  // Load initial value
-  useEffect(() => {
-    AsyncStorage.getItem('@spendflow_debug_force_empty')
-      .then((val) => val ? setForceEmptyState(JSON.parse(val)) : null)
-      .catch(() => {});
-  }, []);
 
 
   const preferredCurrency = profile?.preferred_currency ?? 'NPR';
@@ -814,91 +797,6 @@ export default function SettingsScreen() {
               <ChevronRight size={16} color={theme.colors.textMuted} />
             </View>
           </Pressable>
-
-          {/* Dotted Divider */}
-          <View style={{ height: 1, backgroundColor: theme.colors.border, marginHorizontal: 16, opacity: 0.6 }} />
-
-          {/* Item 6: Debug / Test Tools */}
-          <View
-            style={{
-              paddingHorizontal: 16,
-              paddingVertical: 14,
-              borderRadius: 0,
-              backgroundColor: theme.isDark ? 'rgba(148, 163, 184, 0.08)' : '#F8FAFC',
-            }}
-          >
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
-                <View
-                  style={{
-                    width: 38,
-                    height: 38,
-                    borderRadius: 10,
-                    backgroundColor: theme.isDark ? 'rgba(148, 163, 184, 0.2)' : '#E2E8F0',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                >
-                  <Bug size={19} color={theme.isDark ? '#94A3B8' : '#475569'} />
-                </View>
-                <View style={{ gap: 2 }}>
-                  <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
-                    Developer Tools
-                  </Text>
-                  <Text variant="caption" muted style={{ fontSize: 11 }}>
-                    Test features & debug options
-                  </Text>
-                </View>
-              </View>
-            </View>
-
-            <View style={{ marginTop: 12, gap: 10 }}>
-              {/* Force Empty State Toggle */}
-              <View
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  padding: 12,
-                  borderRadius: theme.radius.md,
-                  backgroundColor: theme.colors.surface,
-                  borderWidth: 1,
-                  borderColor: theme.colors.border,
-                }}
-              >
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                  <View
-                    style={{
-                      width: 32,
-                      height: 32,
-                      borderRadius: 8,
-                      backgroundColor: theme.isDark ? 'rgba(14, 165, 233, 0.15)' : '#E0F2FE',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                  >
-                    <Eye size={16} color="#0EA5E9" />
-                  </View>
-                  <View style={{ gap: 1 }}>
-                    <Text style={{ fontSize: 13, fontWeight: '600', color: theme.colors.text }}>
-                      Force Empty State (Home)
-                    </Text>
-                    <Text variant="caption" muted style={{ fontSize: 10 }}>
-                      Shows time-aware hint without deleting data
-                    </Text>
-                  </View>
-                </View>
-                <Switch
-                  value={forceEmptyState}
-                  onValueChange={setForceEmptyState}
-                  trackColor={{ false: theme.colors.border, true: '#0EA5E9' }}
-                  thumbColor="#FFFFFF"
-                />
-              </View>
-
-              {/* Future: Add more debug tools here */}
-            </View>
-          </View>
 
         </View>
 

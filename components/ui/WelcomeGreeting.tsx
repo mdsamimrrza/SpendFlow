@@ -28,6 +28,9 @@ import { useTheme } from "@/hooks/useTheme";
 
 const STORAGE_KEY = "@spendflow_welcome_greeting";
 
+/** Set to true only for local popup testing (fires every refresh, any hour). */
+const TEST_SHOW_EVERY_REFRESH = false;
+
 type Slot = "morning" | "evening";
 
 interface StoredState {
@@ -61,7 +64,13 @@ export function WelcomeGreeting({ onClose }: WelcomeGreetingProps) {
   const { profile, session } = useAuth();
   const router = useRouter();
 
-  const slot = useMemo(() => getSlot(new Date().getHours()), []);
+  // TESTING: with the flag on, the slot locks to morning outside
+  // 5–12 / 17–22 so the popup fires at any hour. Flag off → real clock.
+  const slot = useMemo(() => {
+    const real = getSlot(new Date().getHours());
+    if (real) return real;
+    return TEST_SHOW_EVERY_REFRESH ? ('morning' as Slot) : null;
+  }, []);
   const userId = profile?.id ?? session?.user?.id ?? "";
   const storageKey = userId ? `${STORAGE_KEY}:${userId}` : STORAGE_KEY;
 
@@ -72,6 +81,9 @@ export function WelcomeGreeting({ onClose }: WelcomeGreetingProps) {
   const scale = useRef(new Animated.Value(0.9)).current;
   const translateY = useRef(new Animated.Value(24)).current;
   const shownRef = useRef(false);
+  // Re-entrancy guard: profile/expense refreshes re-run this effect — never
+  // re-pop while already visible or after dismissing within one mount.
+  const activeRef = useRef(false);
 
   const rawName =
     profile?.display_name?.trim() ||
@@ -130,7 +142,7 @@ export function WelcomeGreeting({ onClose }: WelcomeGreetingProps) {
   }, [storageKey]);
 
   const persistClose = useCallback(async () => {
-    if (!slot) return;
+    if (!slot || TEST_SHOW_EVERY_REFRESH) return;
     try {
       const prev = await readStored();
       const next: StoredState = {
@@ -188,6 +200,7 @@ export function WelcomeGreeting({ onClose }: WelcomeGreetingProps) {
         }),
       ]).start(() => {
         setVisible(false);
+        activeRef.current = false;
         onClose?.();
       });
     },
@@ -195,14 +208,25 @@ export function WelcomeGreeting({ onClose }: WelcomeGreetingProps) {
   );
 
   useEffect(() => {
-    if (!slot || shownRef.current) return;
-    shownRef.current = true;
+    if (!slot || activeRef.current) return;
+    activeRef.current = true;
+    // TESTING ONLY — bypasses the twice-a-day lock so the popup shows on
+    // every refresh. The Fast Refresh state guard is bypassed too.
+    if (!TEST_SHOW_EVERY_REFRESH) {
+      if (shownRef.current) return;
+      shownRef.current = true;
+    }
     let cancelled = false;
     (async () => {
-      const stored = await readStored();
+      if (!TEST_SHOW_EVERY_REFRESH) {
+        const stored = await readStored();
+        if (cancelled) return;
+        if (stored.dontShowAgain || stored[slot] === todayKey()) {
+          activeRef.current = false;
+          return;
+        }
+      }
       if (cancelled) return;
-      if (stored.dontShowAgain) return;
-      if (stored[slot] === todayKey()) return;
       setVisible(true);
       playEnter();
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});

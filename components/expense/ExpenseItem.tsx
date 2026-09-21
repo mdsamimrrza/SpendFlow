@@ -10,7 +10,7 @@ import {
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import { format, parseISO } from 'date-fns';
-import { Edit3, ReceiptText, StickyNote, Trash2 } from 'lucide-react-native';
+import { Copy, Edit3, ReceiptText, StickyNote, Trash2 } from 'lucide-react-native';
 import { ExpenseDetailModal } from '@/components/expense/ExpenseDetailModal';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { CategoryIcon } from '@/components/ui/CategoryIcon';
@@ -28,6 +28,7 @@ interface ExpenseItemProps {
   expense: Expense;
   onDelete?: (expense: Expense) => void;
   onPress?: (expense: Expense) => void;
+  onDuplicate?: (expense: Expense) => void;
   /** Pre-converted amount in the preferred currency (historical-rate aware). */
   displayAmount?: number;
 }
@@ -45,7 +46,7 @@ function shortDate(iso: string): string {
 // With stable props (stable expense object identities, memoized displayAmount
 // values, stable callbacks) a parent re-render no longer re-renders every row,
 // including their embedded modal trees.
-export const ExpenseItem = React.memo(function ExpenseItem({ expense, onDelete, onPress, displayAmount }: ExpenseItemProps) {
+export const ExpenseItem = React.memo(function ExpenseItem({ expense, onDelete, onPress, onDuplicate, displayAmount }: ExpenseItemProps) {
   const theme = useTheme();
   const { t } = useLanguage();
   const { profile } = useAuth();
@@ -114,18 +115,18 @@ export const ExpenseItem = React.memo(function ExpenseItem({ expense, onDelete, 
         translateX.stopAnimation();
       },
       onPanResponderMove: (_, gestureState) => {
-        // Allow swiping left (negative dx) up to -140px, or slightly right to close if already swiped
-        const initial = isSwipedRef.current ? -120 : 0;
-        const newX = Math.min(0, Math.max(-140, initial + gestureState.dx));
+        // Allow swiping left (negative dx) up to -200px, or slightly right to close if already swiped
+        const initial = isSwipedRef.current ? -180 : 0;
+        const newX = Math.min(0, Math.max(-200, initial + gestureState.dx));
         translateX.setValue(newX);
       },
       onPanResponderRelease: (_, gestureState) => {
-        if (gestureState.dx < -40 || (isSwipedRef.current && gestureState.dx < 30)) {
+        if (gestureState.dx < -60 || (isSwipedRef.current && gestureState.dx < 40)) {
           // Snap open
           void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
           isSwipedRef.current = true;
           Animated.spring(translateX, {
-            toValue: -120,
+            toValue: -180,
             friction: 7,
             tension: 60,
             useNativeDriver: true,
@@ -175,6 +176,16 @@ export const ExpenseItem = React.memo(function ExpenseItem({ expense, onDelete, 
     router.push(`/expense/${expense.id}` as any);
   }
 
+  function handleDuplicatePress() {
+    closeSwipe();
+    if (onDuplicate) {
+      onDuplicate(expense);
+    } else {
+      // Fallback: open the editor so nothing is silently lost.
+      router.push(`/expense/${expense.id}` as any);
+    }
+  }
+
   return (
     <>
       {/* ── ENTRY CARD (rounded, self-contained — the swipe tray clips to
@@ -197,7 +208,7 @@ export const ExpenseItem = React.memo(function ExpenseItem({ expense, onDelete, 
             right: 0,
             top: 0,
             bottom: 0,
-            width: 120,
+            width: 180,
             flexDirection: 'row',
             alignItems: 'center',
             justifyContent: 'flex-end',
@@ -207,7 +218,7 @@ export const ExpenseItem = React.memo(function ExpenseItem({ expense, onDelete, 
           <Pressable
             onPress={handleEditPress}
             style={{
-              width: 55,
+              width: 58,
               height: '100%',
               backgroundColor: theme.colors.primary,
               alignItems: 'center',
@@ -216,14 +227,32 @@ export const ExpenseItem = React.memo(function ExpenseItem({ expense, onDelete, 
             }}
           >
             <Edit3 size={16} color="#FFFFFF" />
-            <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '800' }}>Edit</Text>
+            <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '800' }}>{t('common_edit')}</Text>
+          </Pressable>
+
+          {/* Duplicate Button */}
+          <Pressable
+            onPress={handleDuplicatePress}
+            style={{
+              width: 62,
+              height: '100%',
+              backgroundColor: theme.colors.info,
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 2,
+            }}
+          >
+            <Copy size={16} color="#FFFFFF" />
+            <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '800' }} numberOfLines={1}>
+              {t('common_duplicate')}
+            </Text>
           </Pressable>
 
           {/* Delete Button */}
           <Pressable
             onPress={handleDeletePress}
             style={{
-              width: 65,
+              width: 60,
               height: '100%',
               backgroundColor: theme.colors.danger,
               alignItems: 'center',
@@ -232,7 +261,7 @@ export const ExpenseItem = React.memo(function ExpenseItem({ expense, onDelete, 
             }}
           >
             <Trash2 size={16} color="#FFFFFF" />
-            <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '800' }}>Delete</Text>
+            <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '800' }}>{t('common_delete')}</Text>
           </Pressable>
         </View>
 

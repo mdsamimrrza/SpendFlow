@@ -56,7 +56,7 @@ export function BudgetLimitHeroCard({
 }: BudgetLimitHeroCardProps) {
   const theme = useTheme();
   const currencyDetails = CURRENCY_DETAILS[preferredCurrency as keyof typeof CURRENCY_DETAILS] ?? { flag: '💱', label: preferredCurrency };
-  const { language } = useLanguage();
+  const { language, t } = useLanguage();
   const { isPrivacyMode } = usePrivacy();
   const { width: screenWidth } = useWindowDimensions();
   const isCompact = screenWidth < 380;
@@ -172,6 +172,19 @@ export function BudgetLimitHeroCard({
   } else if (monthIncome > 0) {
     incPctVsLastMonth = 100;
     incIsUp = true;
+  }
+
+  // Net savings vs last month comparison (savings up = good = green)
+  const prevNetSavings = prevMonthIncome - prevMonthTotal;
+  let savePctVsLastMonth = 0;
+  let saveIsUp = true;
+  if (prevNetSavings !== 0) {
+    const diff = netSavings - prevNetSavings;
+    savePctVsLastMonth = Math.abs(Math.round((diff / prevNetSavings) * 1000) / 10);
+    saveIsUp = diff >= 0;
+  } else if (netSavings !== 0) {
+    savePctVsLastMonth = 100;
+    saveIsUp = netSavings > 0;
   }
 
   // Cycle-aware month label: "Aug" for calendar month, "Aug–Sep" for custom cycle
@@ -388,45 +401,55 @@ export function BudgetLimitHeroCard({
             </View>
 
             {/* ── 3. REMAINING TARGET & PROGRESS BAR (If Budget is Set) ── */}
+            {/* Tapping the bar opens the budget editor (Profit & Loss modal). */}
             {isBudgetSet && (
-              <View style={{ gap: 6 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                    <Clock size={12} color={isOverBudget ? theme.colors.danger : '#F59E0B'} />
-                    <Text
+              <Link href="/profit-loss" asChild>
+                <Pressable
+                  hitSlop={6}
+                  accessibilityRole="button"
+                  accessibilityLabel={t('home_edit_budget')}
+                  style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
+                >
+                  <View style={{ gap: 6 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                        <Clock size={12} color={isOverBudget ? theme.colors.danger : '#F59E0B'} />
+                        <Text
+                          style={{
+                            fontSize: 11.5,
+                            fontWeight: '700',
+                            color: isOverBudget ? theme.colors.danger : '#F59E0B',
+                          }}
+                        >
+                          {isPrivacyMode ? '••••' : formatMoney(Math.abs(remaining), preferredCurrency)} {isOverBudget ? 'over budget' : 'remaining'}
+                        </Text>
+                      </View>
+
+                      <Text variant="caption" muted style={{ fontSize: 11, fontWeight: '600' }}>
+                        Target: {isPrivacyMode ? '••••' : formatMoney(monthlyBudget, preferredCurrency)} ({usedPercent})
+                      </Text>
+                    </View>
+
+                    <View
                       style={{
-                        fontSize: 11.5,
-                        fontWeight: '700',
-                        color: isOverBudget ? theme.colors.danger : '#F59E0B',
+                        height: 7,
+                        borderRadius: 4,
+                        backgroundColor: theme.colors.surfaceElevated,
+                        overflow: 'hidden',
                       }}
                     >
-                      {isPrivacyMode ? '••••' : formatMoney(Math.abs(remaining), preferredCurrency)} {isOverBudget ? 'over budget' : 'remaining'}
-                    </Text>
+                      <View
+                        style={{
+                          height: '100%',
+                          width: `${Math.min(ratio * 100, 100)}%`,
+                          backgroundColor: progressColor,
+                          borderRadius: 4,
+                        }}
+                      />
+                    </View>
                   </View>
-
-                  <Text variant="caption" muted style={{ fontSize: 11, fontWeight: '600' }}>
-                    Target: {isPrivacyMode ? '••••' : formatMoney(monthlyBudget, preferredCurrency)} ({usedPercent})
-                  </Text>
-                </View>
-
-                <View
-                  style={{
-                    height: 7,
-                    borderRadius: 4,
-                    backgroundColor: theme.colors.surfaceElevated,
-                    overflow: 'hidden',
-                  }}
-                >
-                  <View
-                    style={{
-                      height: '100%',
-                      width: `${Math.min(ratio * 100, 100)}%`,
-                      backgroundColor: progressColor,
-                      borderRadius: 4,
-                    }}
-                  />
-                </View>
-              </View>
+                </Pressable>
+              </Link>
             )}
 
             {/* ── 4. THREE INFO METRIC TILES ── */}
@@ -711,7 +734,7 @@ export function BudgetLimitHeroCard({
                 </Text>
               </View>
 
-              {/* Box 2: Net Savings */}
+              {/* Box 2: Net Savings (green/red + ▲/▼ vs last month) */}
               <View style={metricTile}>
                 <Text variant="caption" muted style={{ fontSize: 10, fontWeight: '600', letterSpacing: 0.2 }}>
                   Net Savings
@@ -729,6 +752,19 @@ export function BudgetLimitHeroCard({
                   }}
                 >
                   {isPrivacyMode ? '••••' : formatMoney(netSavings, preferredCurrency)}
+                </Text>
+                <Text
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.7}
+                  style={{
+                    fontSize: 10,
+                    fontWeight: '800',
+                    color: saveIsUp ? savingsAccent : theme.colors.danger,
+                    textAlign: 'center',
+                  }}
+                >
+                  {saveIsUp ? '▲' : '▼'} {savePctVsLastMonth}% vs last mon
                 </Text>
               </View>
 

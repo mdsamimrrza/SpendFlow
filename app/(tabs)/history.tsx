@@ -287,11 +287,38 @@ export default function HistoryScreen() {
     [expenses.remove, t],
   );
 
+  // Duplicate a row as a fresh today-dated entry (no receipt, no recurring link).
+  const handleDuplicateExpense = useCallback(
+    (expense: Expense) => {
+      expenses
+        .save({
+          amount: Number(expense.amount) || 0,
+          category_id: expense.category_id,
+          currency: expense.currency,
+          description: expense.description,
+          date: format(new Date(), 'yyyy-MM-dd'),
+          time: null,
+          payment_method: expense.payment_method,
+          bank_account_id: expense.bank_account_id ?? null,
+          notes: expense.notes ?? null,
+          type: expense.type ?? 'expense',
+        })
+        .then(() => showToast({ type: 'success', message: t('expense_duplicated') }))
+        .catch(() => showToast({ type: 'error', message: t('common_error') }));
+    },
+    [expenses.save, t],
+  );
+
   const renderExpenseItem = useCallback(
     ({ item }: { item: Expense }) => (
-      <ExpenseItem expense={item} displayAmount={displayAmounts.get(item.id)} onDelete={handleDeleteExpense} />
+      <ExpenseItem
+        expense={item}
+        displayAmount={displayAmounts.get(item.id)}
+        onDelete={handleDeleteExpense}
+        onDuplicate={handleDuplicateExpense}
+      />
     ),
-    [displayAmounts, handleDeleteExpense],
+    [displayAmounts, handleDeleteExpense, handleDuplicateExpense],
   );
 
   // Headline summary of all matching rows. "Cash Flow" (all-flow mode) is a

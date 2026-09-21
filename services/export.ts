@@ -6,7 +6,7 @@ import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system/legacy';
 import { buildRateResolver, type ActiveRateWindow } from '@/services/exchange';
 import { Expense, UserProfile } from '@/types';
-import { formatMoney, groupByCategory } from '@/utils/format';
+import { formatMoney, getCycleMeta, groupByCategory } from '@/utils/format';
 
 function generateExportFileName(expenses: Expense[], ext: 'pdf' | 'xlsx' | 'csv'): string {
   const now = new Date();
@@ -406,6 +406,11 @@ export async function exportPdf(
   profile?: UserProfile | null,
   currency = 'NPR',
   activeWindow?: ActiveRateWindow | null,
+  // Month-to-date actual (same display currency). When provided — e.g. the
+  // weekly report — the budget verdict judges month-to-date vs the FULL
+  // monthly budget, exactly like the Home hero card. Otherwise the verdict
+  // pro-rates the budget to the exported span.
+  mtdActual?: number,
 ) {
   const fileName = generateExportFileName(expenses, 'pdf');
   const now = new Date();
@@ -454,11 +459,43 @@ export async function exportPdf(
     monthlyBudget > 0
       ? Math.round(resolver.convert(monthlyBudget, budgetCurrency, currency, now.toISOString().slice(0, 10)))
       : 0;
-  const budgetRemaining = budgetConverted - totalSpent;
+  // ── Pro-rate the monthly budget to the exported period ──
+  // Comparing a 7-day export against the FULL monthly budget always reads
+  // "under budget" (a week is ~¼ of a month). Measure the exported span and
+  // scale the budget by span/cycle so weekly reports judge fairly. A
+  // full-cycle export keeps span ≈ cycle, i.e. byte-identical behavior.
+  const spanDates = outflowRows
+    .map((r) => r.record.date)
+    .filter((d): d is string => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d))
+    .sort();
+  let spanDays = 1;
+  if (spanDates.length >= 2) {
+    const first = spanDates[0];
+    const last = spanDates[spanDates.length - 1];
+    if (first && last) {
+      spanDays = Math.max(
+        1,
+        Math.round(
+          (new Date(`${last}T00:00:00`).getTime() - new Date(`${first}T00:00:00`).getTime()) / 86400000,
+        ) + 1,
+      );
+    }
+  }
+  const { daysInCycle } = getCycleMeta(profile?.cycle_start_day ?? 1, profile?.cycle_end_day ?? null);
+  const isFullCycle = spanDays >= daysInCycle;
+  const periodBudget =
+    budgetConverted > 0 ? Math.round((budgetConverted * Math.min(spanDays, daysInCycle)) / Math.max(daysInCycle, 1)) : 0;
+  // Month-to-date basis (weekly report): judge the SAME numbers the Home
+  // hero card judges — month actual vs full monthly budget — so the PDF can
+  // never contradict the app. Falls back to span pro-rata when absent.
+  const useMonthlyBasis = typeof mtdActual === 'number' && Number.isFinite(mtdActual);
+  const basisSpent = useMonthlyBasis ? (mtdActual as number) : totalSpent;
+  const basisBudget = useMonthlyBasis ? budgetConverted : periodBudget;
+  const budgetRemaining = basisBudget - basisSpent;
   // Real usage percentage (no 100 cap) so an over-budget report says 155%,
   // not a misleading 100%. The progress bar width caps separately below.
   const budgetPctUsed =
-    budgetConverted > 0 ? Math.round((totalSpent / budgetConverted) * 100) : 0;
+    basisBudget > 0 ? Math.round((basisSpent / basisBudget) * 100) : 0;
 
   // ── Payment method breakdown (outflow records, converted base) ──
   const KNOWN_METHODS = ['Cash', 'Card', 'UPI', 'Other'];
@@ -728,17 +765,17 @@ export async function exportPdf(
       </div>
 
       <!-- Budget vs Actual -->
-      ${monthlyBudget > 0 && budgetConverted > 0 ? `
-      <div class="section-title">🎯 Budget vs Actual (Monthly)</div>
+      ${monthlyBudget > 0 && basisBudget > 0 ? `
+      <div class="section-title">🎯 Budget vs Actual ${useMonthlyBasis || isFullCycle ? '(Monthly)' : `(${spanDays}-day pro-rata)`}</div>
       <div class="summary-cards">
         <div class="card">
-          <div class="card-label">Monthly Budget</div>
-          <div class="card-value" style="color: #0F172A;">${formatMoney(budgetConverted, currency)}</div>
-          <div class="card-subtext">Set in ${escapeHtml(budgetCurrency)}</div>
+          <div class="card-label">${useMonthlyBasis || isFullCycle ? 'Monthly Budget' : 'Period Budget'}</div>
+          <div class="card-value" style="color: #0F172A;">${formatMoney(basisBudget, currency)}</div>
+          <div class="card-subtext">Set in ${escapeHtml(budgetCurrency)}${useMonthlyBasis || isFullCycle ? '' : ` · ${spanDays}/${daysInCycle} days`}</div>
         </div>
         <div class="card">
-          <div class="card-label">Exported Spending</div>
-          <div class="card-value">${formatMoney(totalSpent, currency)}</div>
+          <div class="card-label">${useMonthlyBasis ? 'Month-to-date' : 'Exported Spending'}</div>
+          <div class="card-value">${formatMoney(basisSpent, currency)}</div>
           <div class="card-subtext">${budgetPctUsed}% of budget used</div>
         </div>
         <div class="card">
