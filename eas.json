@@ -8,8 +8,7 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
-      "node": "22.23.1",
-      "corepack": true
+      "node": "22.23.1"
     },
 
     "preview": {
@@ -17,8 +16,7 @@
       "android": {
         "buildType": "apk"
       },
-      "node": "22.23.1",
-      "corepack": true
+      "node": "22.23.1"
     },
 
     "ios-simulator": {
@@ -26,8 +24,7 @@
       "ios": {
         "simulator": true
       },
-      "node": "22.23.1",
-      "corepack": true
+      "node": "22.23.1"
     },
 
     "production": {
@@ -35,8 +32,7 @@
       "android": {
         "buildType": "apk"
       },
-      "node": "22.23.1",
-      "corepack": true
+      "node": "22.23.1"
     }
   },
 
