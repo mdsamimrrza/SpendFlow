@@ -571,6 +571,19 @@ onboarding_country_title: 'आपका देश',
   recurring_bills_due: 'देय बिल',
   recurring_more_due: 'और देय',
 
+  // ── Settings row subtexts ──
+  settings_sub_currency: 'सभी राशियों की प्रदर्शन मुद्रा',
+  settings_sub_pl: 'बजट, लाभ-हानि और रिपोर्ट',
+  settings_sub_categories: 'सीमा सहित खर्च व्यवस्थित करें',
+  settings_sub_accounts: 'नकद, बैंक, कार्ड और वॉलेट',
+  settings_sub_bullion: 'सोने-चाँदी के दैनिक भाव',
+  settings_sub_bin: '60 दिनों के भीतर हटाए आइटम वापस लाएं',
+  settings_sub_security: 'बायोमेट्रिक लॉक और प्राइवेसी स्क्रीन',
+  settings_sub_notifications: 'बजट अलर्ट और बिल रिमाइंडर',
+  settings_sub_theme: 'लाइट, डार्क या सिस्टम',
+  settings_sub_language: 'अंग्रेज़ी, हिंदी और नेपाली',
+  settings_sub_export: 'अपना डेटा CSV या PDF में डाउनलोड करें',
+
   // ── Bin (60-day restore window) ──
   settings_bin: 'रिसाइकल बिन',
   bin_item_count: '{count} वस्तुएँ',

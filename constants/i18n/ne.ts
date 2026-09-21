@@ -571,6 +571,19 @@ onboarding_country_title: 'तपाईंको देश',
   recurring_bills_due: 'बक्यो बिलहरू',
   recurring_more_due: 'थप बक्यो',
 
+  // ── Settings row subtexts ──
+  settings_sub_currency: 'सबै रकमको प्रदर्शन मुद्रा',
+  settings_sub_pl: 'बजेट, नाफा-नोक्सान र रिपोर्ट',
+  settings_sub_categories: 'सीमासहित खर्च मिलाउनुहोस्',
+  settings_sub_accounts: 'नगद, बैंक, कार्ड र वालेट',
+  settings_sub_bullion: 'सुन-चाँदीको दैनिक भाउ',
+  settings_sub_bin: '60 दिनभित्र मेटिएका आइटम फर्काउनुहोस्',
+  settings_sub_security: 'बायोमेट्रिक लक र प्राइवेसी स्क्रिन',
+  settings_sub_notifications: 'बजेट अलर्ट र बिल सम्झना',
+  settings_sub_theme: 'लाइट, डार्क वा सिस्टम',
+  settings_sub_language: 'अंग्रेजी, हिन्दी र नेपाली',
+  settings_sub_export: 'आफ्नो डेटा CSV वा PDF मा डाउनलोड गर्नुहोस्',
+
   // ── Bin (60-day restore window) ──
   settings_bin: 'रद्तारी',
   bin_item_count: '{count} वस्तु',

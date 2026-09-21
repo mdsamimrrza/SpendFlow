@@ -56,30 +56,30 @@ export const lightColors = {
 };
 
 export const darkColors = {
-  primary: '#818CF8',
-  primaryStrong: '#A5B4FC',
-  primaryLight: 'rgba(129, 140, 248, 0.18)',
-  accent: '#8B5CF6',
+  primary: '#7D8DFF',         // Vivid indigo — glows on deep slate
+  primaryStrong: '#B3BEFF',
+  primaryLight: 'rgba(125, 141, 255, 0.24)',
+  accent: '#9D7BFF',
   success: '#10B981',
   income: '#10B981',          // Income amounts (bright emerald reads well on dark)
-  warning: '#F59E0B',
-  danger: '#EF4444',
-  info: '#0EA5E9',
-  background: '#0B0F19',
-  surface: '#151D2A',
-  surfaceElevated: '#1E293B',
-  text: '#F8FAFC',
-  textMuted: '#94A3B8',
-  faint: '#64748B',
-  border: '#273549',
-  input: '#151D2A',
-  tab: '#151D2A',
-  accentBg: 'rgba(129, 140, 248, 0.18)',
-  cardHighlight: '#1E293B',
-  brass: '#F59E0B',
-  brassTint: 'rgba(245, 158, 11, 0.15)',
-  rust: '#EF4444',
-  rustTint: 'rgba(239, 68, 68, 0.15)',
+  warning: '#FBBF24',
+  danger: '#F87171',
+  info: '#38BDF8',
+  background: '#070B16',      // Richer, deeper slate-black
+  surface: '#101827',
+  surfaceElevated: '#1B2542',
+  text: '#F4F7FC',
+  textMuted: '#9DACC6',
+  faint: '#6B7C99',
+  border: '#2A3A57',
+  input: '#101827',
+  tab: '#0D1424',
+  accentBg: 'rgba(125, 141, 255, 0.24)',
+  cardHighlight: '#1B2542',
+  brass: '#FBBF24',
+  brassTint: 'rgba(251, 191, 36, 0.16)',
+  rust: '#F87171',
+  rustTint: 'rgba(248, 113, 113, 0.16)',
 };
 
 export type ThemeColors = typeof lightColors;

@@ -632,19 +632,18 @@ export function CategoryBreakdown({
         </Text>
       ) : (
         <>
-          {/* ── FULL-WIDTH COMPACT CATEGORY PROGRESS BARS LIST ── */}
-          <View style={{ gap: 8 }}>
+          {/* ── CONCISE CATEGORY LIST ── */}
+          <View style={{ gap: 3 }}>
             {data.map((item) => {
               const isSelected = selectedCategory === item.label;
               const pct = Math.round((item.total / total) * 100);
-
               return (
                 <Pressable
                   key={item.label}
                   onPress={() => setSelectedCategory((cur) => (cur === item.label ? null : item.label))}
                   style={{
-                    gap: 4,
-                    paddingVertical: 3,
+                    gap: 2,
+                    paddingVertical: 1,
                     paddingHorizontal: 6,
                     borderRadius: theme.radius.sm,
                     backgroundColor: isSelected
@@ -652,51 +651,47 @@ export function CategoryBreakdown({
                       : 'transparent',
                   }}
                 >
-                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
-                      <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: item.color }} />
-                      <CategoryIcon name={item.icon} size={14} color={item.color} />
-                      <Text style={{ fontSize: 12.5, fontWeight: isSelected ? '800' : '600', color: theme.colors.text }} numberOfLines={1}>
-                        {item.label}
-                      </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <View
+                      style={{
+                        width: 26,
+                        height: 26,
+                        borderRadius: 8,
+                        borderWidth: 1,
+                        borderColor: theme.colors.border,
+                        backgroundColor: theme.colors.surfaceElevated,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      <CategoryIcon name={item.icon} size={13} color={item.color} />
                     </View>
-                    
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      <Text style={{ fontSize: 12.5, fontWeight: '700', color: theme.colors.text }}>
-                        {formatMoney(item.total, currency)}
-                      </Text>
-                      <View
-                        style={{
-                          paddingHorizontal: 5,
-                          paddingVertical: 1,
-                          borderRadius: 4,
-                          backgroundColor: isSelected ? theme.colors.primary : (theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'),
-                        }}
-                      >
-                        <Text style={{ fontSize: 10, fontWeight: '800', color: isSelected ? '#FFFFFF' : theme.colors.textMuted }}>
+                    <View style={{ flex: 1, gap: 2, minWidth: 0 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+                        <Text style={{ flex: 1, fontSize: 11.5, fontWeight: isSelected ? '800' : '700', color: theme.colors.text }} numberOfLines={1}>
+                          {item.label}
+                        </Text>
+                        <Text style={{ fontSize: 11.5, fontWeight: '800', color: theme.colors.text, fontVariant: ['tabular-nums'] }}>
+                          {formatMoney(item.total, currency)}
+                        </Text>
+                      </View>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <View
+                          style={{
+                            flex: 1,
+                            height: 3,
+                            borderRadius: 2,
+                            backgroundColor: 'rgba(127, 140, 160, 0.25)',
+                            overflow: 'hidden',
+                          }}
+                        >
+                          <View style={{ width: `${pct}%`, height: '100%', borderRadius: 2, backgroundColor: item.color }} />
+                        </View>
+                        <Text style={{ fontSize: 10, fontWeight: '800', fontVariant: ['tabular-nums'], color: item.color }}>
                           {pct}%
                         </Text>
                       </View>
                     </View>
-                  </View>
-
-                  {/* Sleek compact progress bar */}
-                  <View
-                    style={{
-                      height: 4,
-                      borderRadius: 2,
-                      overflow: 'hidden',
-                      backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
-                    }}
-                  >
-                    <View
-                      style={{
-                        width: `${pct}%`,
-                        height: '100%',
-                        backgroundColor: item.color,
-                        borderRadius: 2,
-                      }}
-                    />
                   </View>
                 </Pressable>
               );

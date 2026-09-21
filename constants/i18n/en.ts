@@ -569,6 +569,19 @@ onboarding_country_title: 'Your Country',
   recurring_bills_due: 'Bills due',
   recurring_more_due: 'more due',
 
+  // ── Settings row subtexts ──
+  settings_sub_currency: 'Display currency for all amounts',
+  settings_sub_pl: 'Budget, profit-loss and reports',
+  settings_sub_categories: 'Organize spending with limits',
+  settings_sub_accounts: 'Cash, banks, cards and wallets',
+  settings_sub_bullion: 'Daily gold and silver rates',
+  settings_sub_bin: 'Restore deleted items within 60 days',
+  settings_sub_security: 'Biometric lock and privacy screen',
+  settings_sub_notifications: 'Budget alerts and bill reminders',
+  settings_sub_theme: 'Light, dark or system',
+  settings_sub_language: 'English, Hindi and Nepali',
+  settings_sub_export: 'Download your data as CSV or PDF',
+
   // ── Bin (60-day restore window) ──
   settings_bin: 'Bin',
   bin_item_count: '{count} items',

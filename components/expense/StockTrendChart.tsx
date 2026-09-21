@@ -137,7 +137,9 @@ export function StockTrendChart({
 
   const chartWidth = Math.max(Math.min(width - 64, 720), 280);
   const chartHeight = 180;
-  const chartPadLeft = 6;
+  // Left gutter reserves room for y-axis labels so they never clip or
+  // overlap the plot area (previously drawn past the right edge).
+  const chartPadLeft = 46;
   const chartPadRight = 6;
   const drawWidth = chartWidth - chartPadLeft - chartPadRight;
 
@@ -212,8 +214,8 @@ export function StockTrendChart({
       }
     } else if (filter === 'weekly') {
       if (isCalendarCycle) {
-        // Calendar cycle → original behavior: current calendar month split into
-        // 4 week-buckets (days 1–7, 8–14, 15–21, 22–end)
+        // Calendar cycle → current calendar month split into 4 week-buckets
+        // (days 1–7, 8–14, 15–21, 22–end), labeled by date range.
         const year = now.getFullYear();
         const month = now.getMonth();
         const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -648,21 +650,31 @@ export function StockTrendChart({
           {viewMode === 'both' ? (
             <View style={{ gap: 2 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-                  <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: expenseColor }} />
-                  <Text style={{ fontSize: 13, fontWeight: '800', color: theme.colors.text }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: expenseColor }} />
+                  <Text
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.7}
+                    style={{ fontSize: 17, fontWeight: '900', fontVariant: ['tabular-nums'], color: theme.colors.text }}
+                  >
                     {formatMoney(currentExpenseTotal, targetCurrency)}
                   </Text>
                 </View>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-                  <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: theme.colors.income }} />
-                  <Text style={{ fontSize: 13, fontWeight: '800', color: theme.colors.income }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: theme.colors.income }} />
+                  <Text
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.7}
+                    style={{ fontSize: 17, fontWeight: '900', fontVariant: ['tabular-nums'], color: theme.colors.income }}
+                  >
                     +{formatMoney(currentIncomeTotal, targetCurrency)}
                   </Text>
                 </View>
               </View>
               <Text variant="caption" muted style={{ fontSize: 10.5 }}>
-                {theme.isDark ? '🟣' : '🔴'} Expenses vs 🟢 Inflow ({periodName(filter)})
+                Expenses vs Inflow ({periodName(filter)})
               </Text>
             </View>
           ) : viewMode === 'income' ? (
@@ -867,11 +879,12 @@ export function StockTrendChart({
                 strokeDasharray="4,4"
               />
               <SvgText
-                x={chartPadLeft + drawWidth + 2}
+                x={chartPadLeft - 5}
                 y={gl.y + 3}
-                fontSize={9}
-                fill={theme.isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.25)'}
-                textAnchor="start"
+                fontSize={8.5}
+                fontWeight={i === gridLines.length - 1 ? 'bold' : 'normal'}
+                fill={theme.isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.45)'}
+                textAnchor="end"
               >
                 {gl.label}
               </SvgText>
@@ -931,18 +944,22 @@ export function StockTrendChart({
           {showExpenseLine &&
             expenseCoords.map((c) => {
               const isSelected = selectedIndex === c.index;
+              const isPeak =
+                selectedIndex === null &&
+                c.amount === Math.max(...expenseCoords.map((p) => p.amount)) &&
+                c.amount > 0;
               return (
                 <React.Fragment key={`exp_${c.index}`}>
-                  {isSelected ? (
-                    <Circle cx={c.x} cy={c.y} r={10} fill={expenseColor} opacity={0.15} />
+                  {isSelected || isPeak ? (
+                    <Circle cx={c.x} cy={c.y} r={isPeak && !isSelected ? 8 : 10} fill={expenseColor} opacity={0.15} />
                   ) : null}
                   <Circle
                     cx={c.x}
                     cy={c.y}
-                    r={isSelected ? 5 : 2.8}
-                    fill={isSelected ? '#FFFFFF' : expenseColor}
+                    r={isSelected ? 5 : isPeak ? 4.5 : 2.8}
+                    fill={isSelected || isPeak ? '#FFFFFF' : expenseColor}
                     stroke={expenseColor}
-                    strokeWidth={isSelected ? 2 : 1}
+                    strokeWidth={isSelected || isPeak ? 2 : 1}
                   />
                 </React.Fragment>
               );
@@ -995,7 +1012,7 @@ export function StockTrendChart({
                       fill={expenseColor}
                       textAnchor="start"
                     >
-                      {theme.isDark ? '🟣' : '🔴'} Exp: {shortMoney(expC.amount, targetCurrency)}
+                      Exp: {shortMoney(expC.amount, targetCurrency)}
                     </SvgText>
                     <SvgText
                       x={tx + 10}
@@ -1005,7 +1022,7 @@ export function StockTrendChart({
                       fill={theme.colors.income}
                       textAnchor="start"
                     >
-                      🟢 Inc: +{shortMoney(incC.amount, targetCurrency)}
+                      Inc: +{shortMoney(incC.amount, targetCurrency)}
                     </SvgText>
                     <SvgText
                       x={tx + tooltipWidth / 2}
@@ -1059,14 +1076,15 @@ export function StockTrendChart({
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 4, marginTop: -2 }}>
         {points.map((p, i) => {
           const isSelected = selectedIndex === i;
+          const isLatest = i === points.length - 1;
           return (
             <Pressable key={i} onPress={() => handleSelectPoint(i)} hitSlop={6}>
               <Text
                 variant="caption"
                 style={{
                   fontSize: 10,
-                  fontWeight: isSelected ? '800' : '600',
-                  color: isSelected ? theme.colors.primary : theme.colors.textMuted,
+                  fontWeight: isSelected || isLatest ? '800' : '600',
+                  color: isSelected ? theme.colors.primary : isLatest ? theme.colors.text : theme.colors.textMuted,
                 }}
               >
                 {p.label}

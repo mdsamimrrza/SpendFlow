@@ -329,9 +329,14 @@ export default function SettingsScreen() {
               >
                 <DollarSign size={19} color={theme.colors.primary} />
               </View>
-              <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
-                Currency
-              </Text>
+              <View style={{ gap: 2 }}>
+                <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
+                  Currency
+                </Text>
+                <Text variant="caption" muted style={{ fontSize: 11 }}>
+                  {t('settings_sub_currency')}
+                </Text>
+              </View>
             </View>
 
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -373,9 +378,12 @@ export default function SettingsScreen() {
               >
                 <TrendingUp size={19} color={theme.colors.primary} />
               </View>
-              <View style={{ flex: 1, paddingRight: 8 }}>
+              <View style={{ flex: 1, paddingRight: 8, gap: 2 }}>
                 <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
                   {t('pl_title') || 'Budget & Reports'}
+                </Text>
+                <Text variant="caption" muted style={{ fontSize: 11 }}>
+                  {t('settings_sub_pl')}
                 </Text>
               </View>
             </View>
@@ -413,9 +421,14 @@ export default function SettingsScreen() {
               >
                 <Tag size={19} color={theme.colors.primary} />
               </View>
-              <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
-                Categories & Budgets
-              </Text>
+              <View style={{ gap: 2 }}>
+                <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
+                  Categories & Budgets
+                </Text>
+                <Text variant="caption" muted style={{ fontSize: 11 }}>
+                  {t('settings_sub_categories')}
+                </Text>
+              </View>
             </View>
 
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -456,9 +469,14 @@ export default function SettingsScreen() {
               >
                 <Landmark size={19} color="#3B82F6" />
               </View>
-              <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
-                Bank Accounts & Wallets
-              </Text>
+              <View style={{ gap: 2 }}>
+                <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
+                  Bank Accounts & Wallets
+                </Text>
+                <Text variant="caption" muted style={{ fontSize: 11 }}>
+                  {t('settings_sub_accounts')}
+                </Text>
+              </View>
             </View>
 
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -498,9 +516,14 @@ export default function SettingsScreen() {
               >
                 <Coins size={19} color="#F59E0B" />
               </View>
-              <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
-                Gold & Silver Rates
-              </Text>
+              <View style={{ gap: 2 }}>
+                <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
+                  Gold & Silver Rates
+                </Text>
+                <Text variant="caption" muted style={{ fontSize: 11 }}>
+                  {t('settings_sub_bullion')}
+                </Text>
+              </View>
             </View>
 
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -554,9 +577,14 @@ export default function SettingsScreen() {
               >
                 <Trash2 size={19} color={theme.isDark ? '#94A3B8' : '#475569'} />
               </View>
-              <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
-                {t('settings_bin')}
-              </Text>
+              <View style={{ gap: 2 }}>
+                <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
+                  {t('settings_bin')}
+                </Text>
+                <Text variant="caption" muted style={{ fontSize: 11 }}>
+                  {t('settings_sub_bin')}
+                </Text>
+              </View>
             </View>
 
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -594,9 +622,14 @@ export default function SettingsScreen() {
               >
                 <Fingerprint size={19} color={theme.colors.primary} />
               </View>
-              <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
-                App Lock & Security
-              </Text>
+              <View style={{ gap: 2 }}>
+                <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
+                  App Lock & Security
+                </Text>
+                <Text variant="caption" muted style={{ fontSize: 11 }}>
+                  {t('settings_sub_security')}
+                </Text>
+              </View>
             </View>
 
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -643,9 +676,14 @@ export default function SettingsScreen() {
               >
                 <Bell size={19} color={theme.colors.primary} />
               </View>
-              <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
-                Notifications
-              </Text>
+              <View style={{ gap: 2 }}>
+                <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
+                  Notifications
+                </Text>
+                <Text variant="caption" muted style={{ fontSize: 11 }}>
+                  {t('settings_sub_notifications')}
+                </Text>
+              </View>
             </View>
 
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -686,9 +724,14 @@ export default function SettingsScreen() {
               >
                 {theme.isDark ? <Moon size={19} color={theme.colors.primary} /> : <Sun size={19} color={theme.colors.primary} />}
               </View>
-              <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
-                Theme
-              </Text>
+              <View style={{ gap: 2 }}>
+                <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
+                  Theme
+                </Text>
+                <Text variant="caption" muted style={{ fontSize: 11 }}>
+                  {t('settings_sub_theme')}
+                </Text>
+              </View>
             </View>
 
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -736,9 +779,14 @@ export default function SettingsScreen() {
               >
                 <Globe size={19} color={theme.colors.primary} />
               </View>
-              <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
-                Language
-              </Text>
+              <View style={{ gap: 2 }}>
+                <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
+                  Language
+                </Text>
+                <Text variant="caption" muted style={{ fontSize: 11 }}>
+                  {t('settings_sub_language')}
+                </Text>
+              </View>
             </View>
 
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -785,9 +833,14 @@ export default function SettingsScreen() {
               >
                 <Upload size={19} color={theme.colors.primary} />
               </View>
-              <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
-                Export data
-              </Text>
+              <View style={{ gap: 2 }}>
+                <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text }}>
+                  Export data
+                </Text>
+                <Text variant="caption" muted style={{ fontSize: 11 }}>
+                  {t('settings_sub_export')}
+                </Text>
+              </View>
             </View>
 
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
