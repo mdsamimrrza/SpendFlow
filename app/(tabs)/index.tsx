@@ -418,9 +418,11 @@ export default function HomeScreen() {
               cycleEndDay={cycleEndDay}
             />
 
-            {/* 4. INTERACTIVE CATEGORY BREAKDOWN */}
+            {/* 4. INTERACTIVE CATEGORY BREAKDOWN — scoped to the ACTIVE cycle
+                (matches Analytics' month view; unscoped all-time totals read as
+                "last month's data" once a new cycle starts) */}
             <CategoryBreakdown
-              expenses={expenses.items}
+              expenses={currentMonthItems}
               targetCurrency={preferredCurrency}
             />
 
