@@ -27,8 +27,6 @@ import { UserSettingsPeriod } from '@/types';
 interface MonthRow {
   key: string;
   label: string;
-  /** Internal key using full unclipped cycle dates — used for cross-segment merge only, not displayed. */
-  cycleKey?: string;
   from: string;
   to: string;
   income: number;
@@ -502,6 +500,14 @@ export default function ProfitLossScreen() {
   );
 
   // ── Paycheck cycle rows (for Month by Month) ────────────────────────────
+  // Buckets tile the selected range with the CURRENT cycle config (web port,
+  // 2026-09-30: "mon by mon not flowing custom cycle"). The settings trail is
+  // deliberately NOT used for bucketing any more: an abandoned config in
+  // user_settings_history (e.g. an accidental 13-to-14 "Pick on Calendar"
+  // tap) used to carve a bogus 2-day cycle out of the range and left the days
+  // no period covered out of the register entirely, so rows like
+  // "13 Sept - 14 Sept" never reconciled with the period summary. Budget per
+  // row stays the live figure converted at the bucket end, as on the web.
   const buildPaycheckCycleRows = useCallback(
     (rangeStartISO: string, rangeEndISO: string): MonthRow[] => {
       if (!rangeStartISO || !rangeEndISO || rangeStartISO > rangeEndISO) return [];
@@ -514,132 +520,62 @@ export default function ProfitLossScreen() {
 
       const rows: MonthRow[] = [];
 
-      function getCycleStartForDate(date: Date, period: UserSettingsPeriod): Date {
-        const { cycle_start_day } = period;
-        const year = date.getFullYear();
-        const month = date.getMonth();
-        const day = date.getDate();
-        const startDay = cycle_start_day;
-        if (day >= startDay) {
-          return getSafeMonthDate(year, month, startDay);
+      // Cycle window over an arbitrary reference date: same clamp + anchor
+      // rules as currentMonthRange, but walkable across any past range
+      // (currentMonthRange anchors to today, so it cannot tile old ranges).
+      const anchorOnOrBefore = (ref: Date): Date => {
+        const thisMonthStart = getSafeMonthDate(ref.getFullYear(), ref.getMonth(), cycleStartDay);
+        return ref >= thisMonthStart
+          ? thisMonthStart
+          : getSafeMonthDate(ref.getFullYear(), ref.getMonth() - 1, cycleStartDay);
+      };
+      const cycleEndFor = (anchor: Date): Date => {
+        if (cycleEndDay !== null && cycleEndDay >= 1 && cycleEndDay <= 31) {
+          return cycleEndDay < cycleStartDay
+            ? getSafeMonthDate(anchor.getFullYear(), anchor.getMonth() + 1, cycleEndDay)
+            : getSafeMonthDate(anchor.getFullYear(), anchor.getMonth(), cycleEndDay);
         }
-        return getSafeMonthDate(year, month - 1, startDay);
-      }
-
-      function getCycleEndForDate(cycleStart: Date, period: UserSettingsPeriod): Date {
-        const { cycle_start_day, cycle_end_day } = period;
-        if (cycle_end_day !== null && cycle_end_day >= 1 && cycle_end_day <= 31) {
-          const endDay = cycle_end_day;
-          const nextMonth = endDay < cycle_start_day;
-          const year = nextMonth ? (cycleStart.getMonth() + 1 === 12 ? cycleStart.getFullYear() + 1 : cycleStart.getFullYear()) : cycleStart.getFullYear();
-          const month = nextMonth ? (cycleStart.getMonth() + 1) % 12 : cycleStart.getMonth();
-          return getSafeMonthDate(year, month, endDay);
-        }
-        const nextStart = getNextCycleStart(cycleStart, period);
+        const nextStart = getSafeMonthDate(anchor.getFullYear(), anchor.getMonth() + 1, cycleStartDay);
         return new Date(nextStart.getFullYear(), nextStart.getMonth(), nextStart.getDate() - 1);
-      }
+      };
 
-      function getNextCycleStart(cycleStart: Date, period: UserSettingsPeriod): Date {
-        // Cycles are MONTHLY: the next one always starts on the same
-        // day-of-month of the FOLLOWING month. The old fixed-end branch
-        // advanced only when endDay < startDay, so any end day >= start day
-        // (e.g. 1st→25th saved from "Pick on Calendar") returned the SAME
-        // date and the buildPaycheckCycleRows while-loop spun forever —
-        // freezing this screen. Same bug fixed in the web client 2026-09-15.
-        return getSafeMonthDate(cycleStart.getFullYear(), cycleStart.getMonth() + 1, period.cycle_start_day);
-      }
+      const rawBudget = profile?.monthly_budget ?? 0;
+      const budgetCurrency = (profile?.budget_currency || profile?.preferred_currency || 'NPR').toUpperCase();
 
-      function addRow(bucketFrom: Date, bucketTo: Date, period: UserSettingsPeriod, cycleStart: Date, cycleEnd: Date) {
-        const bucketFromISO = toISO(bucketFrom);
-        const bucketToISO = toISO(bucketTo);
-        const items = expenses.items.filter((e) => e.date >= bucketFromISO && e.date <= bucketToISO);
-        const income = sumIncome(items, currency, rateResolver);
-        const expense = sumExpenses(items, currency, rateResolver);
-
-        // Convert budget using the same rate source as expenses for consistency
-        const rawBudget = period.monthly_budget ?? 0;
-        const budgetCurrency = (period.budget_currency || profile?.budget_currency || currency).toUpperCase();
-        const convertedPeriodBudget = (rawBudget > 0 && rateResolver && budgetCurrency !== currency)
-          ? rateResolver.convert(rawBudget, budgetCurrency, currency, bucketToISO)
-          : rawBudget;
-
-        // Label: for custom cycles show full unclipped cycle name; for calendar months use MMM yyyy
-        const label = `${format(cycleStart, 'd MMM')} – ${format(cycleEnd, 'd MMM')}`;
-        const cycleKey = `${toISO(cycleStart)}__${toISO(cycleEnd)}`;
-
-        rows.push({
-          key: bucketToISO,
-          label,
-          cycleKey,
-          from: bucketFromISO,
-          to: bucketToISO,
-          income,
-          expense,
-          net: income - expense,
-          budget: convertedPeriodBudget > 0 ? convertedPeriodBudget : null,
-        });
-      }
-
-      settingsPeriods.forEach((period, idx) => {
-        const periodStart = parseISO(period.effective_from);
-        const nextPeriodStart =
-          idx + 1 < settingsPeriods.length
-            ? parseISO(settingsPeriods[idx + 1].effective_from)
-            : null;
-        const periodEnd = nextPeriodStart
-          ? new Date(
-            nextPeriodStart.getFullYear(),
-            nextPeriodStart.getMonth(),
-            nextPeriodStart.getDate() - 1,
-          )
-          : rangeEnd;
-        if (periodStart > rangeEnd) return;
-
-        const segStart = periodStart > rangeStart ? periodStart : rangeStart;
-        const segEnd = periodEnd < rangeEnd ? periodEnd : rangeEnd;
-        if (segStart > segEnd) return;
-
-        let cycleStart = getCycleStartForDate(segStart, period);
-        if (cycleStart < periodStart) {
-          cycleStart = getCycleStartForDate(periodStart, period);
+      let anchor = anchorOnOrBefore(rangeStart);
+      while (anchor <= rangeEnd) {
+        const cycleEnd = cycleEndFor(anchor);
+        const bucketFrom = anchor > rangeStart ? anchor : rangeStart;
+        const bucketTo = cycleEnd < rangeEnd ? cycleEnd : rangeEnd;
+        if (bucketFrom <= bucketTo) {
+          const bucketFromISO = toISO(bucketFrom);
+          const bucketToISO = toISO(bucketTo);
+          const items = expenses.items.filter((e) => e.date >= bucketFromISO && e.date <= bucketToISO);
+          const income = sumIncome(items, currency, rateResolver);
+          const expense = sumExpenses(items, currency, rateResolver);
+          const convertedPeriodBudget = (rawBudget > 0 && rateResolver && budgetCurrency !== currency)
+            ? rateResolver.convert(rawBudget, budgetCurrency, currency, bucketToISO)
+            : rawBudget;
+          rows.push({
+            key: bucketToISO,
+            label: `${format(anchor, 'd MMM')} – ${format(cycleEnd, 'd MMM')}`,
+            from: bucketFromISO,
+            to: bucketToISO,
+            income,
+            expense,
+            net: income - expense,
+            budget: convertedPeriodBudget > 0 ? convertedPeriodBudget : null,
+          });
         }
-        while (cycleStart <= segEnd) {
-          const cycleEnd = getCycleEndForDate(cycleStart, period);
-          if (cycleStart > segEnd) break;
-          const bucketFrom = cycleStart > segStart ? cycleStart : segStart;
-          const bucketTo = cycleEnd < segEnd ? cycleEnd : segEnd;
-          if (bucketFrom <= bucketTo) {
-            addRow(bucketFrom, bucketTo, period, cycleStart, cycleEnd);
-          }
-          const prevStart = new Date(cycleStart);
-          cycleStart = getNextCycleStart(cycleStart, period);
-          // Non-advancing guard: a cycle must always move forward, whatever
-          // the stored days say — without this a corrupt config could spin.
-          if (cycleStart <= prevStart) break;
-        }
-      });
-
-      // Merge rows that belong to the same custom cycle using the unclipped cycleKey
-      const merged: MonthRow[] = [];
-      for (const row of rows) {
-        const last = merged[merged.length - 1];
-        const sameCycle = last && (row as any).cycleKey && (row as any).cycleKey === (last as any).cycleKey;
-        if (sameCycle) {
-          last.income += row.income;
-          last.expense += row.expense;
-          last.net += row.net;
-          last.to = row.to;
-          last.key = row.key;
-          // Update display label to reflect the merged full range
-          last.label = `${last.from.slice(8, 10)} ${format(new Date(last.from), 'MMM')} – ${row.to.slice(8, 10)} ${format(new Date(row.to), 'MMM')}`;
-        } else {
-          merged.push(row);
-        }
+        const prevAnchor = new Date(anchor);
+        anchor = getSafeMonthDate(anchor.getFullYear(), anchor.getMonth() + 1, cycleStartDay);
+        // Non-advancing guard: a corrupt config must not spin the loop.
+        if (anchor <= prevAnchor) break;
       }
 
-      return merged.reverse();
+      return rows.reverse();
     },
-    [settingsPeriods, expenses.items, currency, rates, todayISO],
+    [cycleStartDay, cycleEndDay, expenses.items, currency, rateResolver, profile?.monthly_budget, profile?.budget_currency],
   );
 
   // ── Month-by-month breakdown: cycles within the calendar range picker ──
