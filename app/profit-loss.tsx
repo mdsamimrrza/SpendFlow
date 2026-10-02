@@ -310,266 +310,42 @@ export default function ProfitLossScreen() {
         );
 
       const rangeStart = parseISO(rangeStartISO);
-      // IMPORTANT: The chart must respect the user's selected calendar range
-      // exactly, including future months. Future months simply contain zero data.
-      // Do NOT clamp the chart to today; doing that hides selected months such as
-      // Oct/Nov and makes the custom-cycle exception look like it removed them.
+      // The chart plots DAILY points across the user's chosen calendar range —
+      // stock-style: the line spikes on every day with an entry and returns to
+      // baseline on days without, instead of holding one flat aggregate across
+      // a whole month/cycle. Future days inside the range render empty. The
+      // chosen calendar range decides exactly where the line starts and ends.
       const rangeEnd = parseISO(rangeEndISO);
       if (rangeStart > rangeEnd) return [];
 
-      // ── Custom cycle active → the graph tiles the ENTIRE selected range with
-      // the user's cycle windows (same rules as the Month-by-Month list), so
-      // every bucket follows the custom month. The final cycle always runs to
-      // its natural end: after the last completed cycle the next one still
-      // appears, filled with whatever data exists or empty. The chosen calendar
-      // range still decides where tiling starts and stops. ──
-      if (cycleStartDay !== 1 || cycleEndDay !== null) {
-        const anchorOnOrBefore = (ref: Date): Date => {
-          const thisMonthStart = getSafeMonthDate(ref.getFullYear(), ref.getMonth(), cycleStartDay);
-          return ref >= thisMonthStart
-            ? thisMonthStart
-            : getSafeMonthDate(ref.getFullYear(), ref.getMonth() - 1, cycleStartDay);
-        };
-        const cycleEndFor = (anchorDate: Date): Date => {
-          if (cycleEndDay !== null && cycleEndDay >= 1 && cycleEndDay <= 31) {
-            return cycleEndDay < cycleStartDay
-              ? getSafeMonthDate(anchorDate.getFullYear(), anchorDate.getMonth() + 1, cycleEndDay)
-              : getSafeMonthDate(anchorDate.getFullYear(), anchorDate.getMonth(), cycleEndDay);
-          }
-          const nextStart = getSafeMonthDate(anchorDate.getFullYear(), anchorDate.getMonth() + 1, cycleStartDay);
-          return new Date(nextStart.getFullYear(), nextStart.getMonth(), nextStart.getDate() - 1);
-        };
-
-        const cycleRows: MonthRow[] = [];
-        let anchor = anchorOnOrBefore(rangeStart);
-        while (anchor <= rangeEnd) {
-          const cycleEnd = cycleEndFor(anchor);
-          // First bucket clips at the chosen range start; every cycle else is
-          // shown complete — including the last one, even past the range end.
-          const bucketFrom = cycleRows.length === 0 && anchor < rangeStart ? rangeStart : anchor;
-          if (bucketFrom <= cycleEnd) {
-            const fromISO = toISO(bucketFrom);
-            const toISODate = toISO(cycleEnd);
-            const items = expenses.items.filter((e) => e.date >= fromISO && e.date <= toISODate);
-            const income = sumIncome(items, currency, rateResolver);
-            const expense = sumExpenses(items, currency, rateResolver);
-
-            // Budget in force at the cycle end (settings trail, audit parity
-            // with the Month-by-Month list), converted to display currency.
-            let inForce: UserSettingsPeriod | undefined;
-            for (const p of settingsPeriods) {
-              if (p.effective_from <= toISODate) inForce = p;
-            }
-            const rawAmount = inForce ? inForce.monthly_budget : (profile?.monthly_budget ?? null);
-            const inCur = (inForce?.budget_currency || profile?.budget_currency || 'NPR').toUpperCase();
-            const convertedBudget =
-              rawAmount != null && rawAmount > 0
-                ? (rateResolver && inCur !== currency
-                    ? rateResolver.convert(rawAmount, inCur, currency, toISODate)
-                    : rawAmount)
-                : null;
-
-            cycleRows.push({
-              key: `${toISO(anchor)}__${toISODate}`,
-              label: `${format(anchor, 'd MMM')} – ${format(cycleEnd, 'd MMM')}`,
-              from: fromISO,
-              to: toISODate,
-              income,
-              expense,
-              net: income - expense,
-              budget: convertedBudget != null && convertedBudget > 0 ? convertedBudget : null,
-              isCustom: true,
-              customCycleKey: `${toISO(anchor)}__${toISODate}`,
-            });
-          }
-          const prevAnchor = anchor;
-          anchor = getSafeMonthDate(anchor.getFullYear(), anchor.getMonth() + 1, cycleStartDay);
-          if (anchor <= prevAnchor) break; // non-advancing guard
-        }
-        return cycleRows;
+      const itemsByDay = new Map<string, typeof expenses.items>();
+      for (const e of expenses.items) {
+        const list = itemsByDay.get(e.date);
+        if (list) list.push(e);
+        else itemsByDay.set(e.date, [e]);
       }
 
-      // 1) Always start with normal calendar months.
-      const normalMonths: MonthRow[] = [];
-      let cursor = new Date(rangeStart.getFullYear(), rangeStart.getMonth(), 1);
-
-      while (cursor <= rangeEnd) {
-        const monthStart = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
-        const monthEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
-        const bucketFrom = monthStart > rangeStart ? monthStart : rangeStart;
-        const bucketTo = monthEnd < rangeEnd ? monthEnd : rangeEnd;
-
-        if (bucketFrom <= bucketTo) {
-          const bucketFromISO = toISO(bucketFrom);
-          const bucketToISO = toISO(bucketTo);
-          const items = expenses.items.filter(
-            (e) => e.date >= bucketFromISO && e.date <= bucketToISO,
-          );
-          const income = sumIncome(items, currency, rateResolver);
-          const expense = sumExpenses(items, currency, rateResolver);
-          
-          // Convert budget using the same rate source as expenses for consistency
-          const rawBudget = profile?.monthly_budget ?? 0;
-          const budgetCurrency = (profile?.budget_currency || profile?.preferred_currency || 'NPR').toUpperCase();
-          const convertedPeriodBudget = (rawBudget > 0 && rateResolver && budgetCurrency !== currency)
-            ? rateResolver.convert(rawBudget, budgetCurrency, currency, bucketToISO)
-            : rawBudget;
-
-          normalMonths.push({
-            key: bucketToISO,
-            label: format(monthStart, 'MMM'),
-            from: bucketFromISO,
-            to: bucketToISO,
-            income,
-            expense,
-            net: income - expense,
-            budget: convertedPeriodBudget > 0 ? convertedPeriodBudget : null,
-            isCustom: false,
-          });
-        }
-
-        cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
-      }
-
-      // Helper: the custom cycle that CONTAINS the anchor date.
-      // Example: anchor 1 Sep + cycle 31 -> 29 = 31 Aug -> 29 Sep.
-      const getCycleStartContaining = (anchor: Date, startDay: number) => {
-        if (anchor.getDate() >= startDay) {
-          return getSafeMonthDate(anchor.getFullYear(), anchor.getMonth(), startDay);
-        }
-        return getSafeMonthDate(anchor.getFullYear(), anchor.getMonth() - 1, startDay);
-      };
-
-      const getCycleEnd = (cycleStart: Date, startDay: number, endDay: number | null) => {
-        if (endDay !== null && endDay >= 1 && endDay <= 31) {
-          const nextMonth = endDay < startDay;
-          return getSafeMonthDate(
-            cycleStart.getFullYear(),
-            cycleStart.getMonth() + (nextMonth ? 1 : 0),
-            endDay,
-          );
-        }
-        const nextStart = getSafeMonthDate(
-          cycleStart.getFullYear(),
-          cycleStart.getMonth() + 1,
-          startDay,
-        );
-        return new Date(nextStart.getFullYear(), nextStart.getMonth(), nextStart.getDate() - 1);
-      };
-
-      type ExplicitCustom = {
-        period: UserSettingsPeriod;
-        cycleStart: Date;
-        cycleEnd: Date;
-      };
-
-      const explicitCustoms: ExplicitCustom[] = [];
-
-      // Real history entries only. The 1900 entry is an internal fallback and is
-      // NOT a real customisation date.
-      const realCustomSettings = settingsPeriods.filter((period) => {
-        const isCustom = period.cycle_start_day !== 1 || period.cycle_end_day !== null;
-        return isCustom && period.effective_from !== '1900-01-01';
-      });
-
-      if (realCustomSettings.length > 0) {
-        // Each explicitly saved custom setting contributes exactly one cycle:
-        // the cycle containing its effective_from date. Never extrapolate it.
-        realCustomSettings.forEach((period) => {
-          const anchor = parseISO(period.effective_from);
-          const cycleStart = getCycleStartContaining(anchor, period.cycle_start_day);
-          const cycleEnd = getCycleEnd(cycleStart, period.cycle_start_day, period.cycle_end_day);
-
-          if (cycleEnd >= rangeStart && cycleStart <= rangeEnd) {
-            explicitCustoms.push({ period, cycleStart, cycleEnd });
-          }
-        });
-      } else if (cycleStartDay !== 1 || cycleEndDay !== null) {
-        // No real settings-history row exists yet.
-        // IMPORTANT: the selected chart range must NEVER decide which month is
-        // custom. rangeEnd may be months in the future, so anchoring to rangeEnd
-        // would incorrectly create a future cycle (for example 31 Oct – 29 Nov).
-        //
-        // In this fallback case, the only reliable active custom cycle is the one
-        // containing TODAY. Future customisations are handled by real
-        // settingsHistory rows above via their own effective_from dates.
-        const activeAnchor = parseISO(todayISO);
-        const fallbackPeriod: UserSettingsPeriod = {
-          effective_from: todayISO,
-          monthly_budget: profile?.monthly_budget ?? null,
-          budget_currency: profile?.budget_currency,
-          cycle_start_day: cycleStartDay,
-          cycle_end_day: cycleEndDay,
-        };
-        const cycleStart = getCycleStartContaining(activeAnchor, cycleStartDay);
-        const cycleEnd = getCycleEnd(cycleStart, cycleStartDay, cycleEndDay);
-
-        // Only insert the current custom cycle when it actually intersects the
-        // selected chart range. Otherwise leave the selected range as normal
-        // calendar months.
-        if (cycleEnd >= rangeStart && cycleStart <= rangeEnd) {
-          explicitCustoms.push({ period: fallbackPeriod, cycleStart, cycleEnd });
-        }
-      }
-
-      // 2) Replace only the normal calendar rows occupied by each ONE explicit
-      // custom cycle. No recurring custom timeline is generated.
-      const finalRows = normalMonths.filter((month) => {
-        return !explicitCustoms.some((custom) => {
-          const customFrom = toISO(custom.cycleStart);
-          const customTo = toISO(custom.cycleEnd);
-          return !(month.to < customFrom || month.from > customTo);
-        });
-      });
-
-      explicitCustoms.forEach((custom) => {
-        const dataFrom = custom.cycleStart > rangeStart ? custom.cycleStart : rangeStart;
-        const dataTo = custom.cycleEnd < rangeEnd ? custom.cycleEnd : rangeEnd;
-        if (dataFrom > dataTo) return;
-
-        const fromISO = toISO(dataFrom);
-        const toISODate = toISO(dataTo);
-        const items = expenses.items.filter(
-          (e) => e.date >= fromISO && e.date <= toISODate,
-        );
+      const dayRows: MonthRow[] = [];
+      for (let d = new Date(rangeStart); d <= rangeEnd; d.setDate(d.getDate() + 1)) {
+        const iso = toISO(d);
+        const items = itemsByDay.get(iso) ?? [];
         const income = sumIncome(items, currency, rateResolver);
         const expense = sumExpenses(items, currency, rateResolver);
-        
-        // Convert budget using the same rate source as expenses for consistency
-        const rawBudget = custom.period.monthly_budget ?? profile?.monthly_budget ?? 0;
-        const budgetCurrency = (custom.period.budget_currency ?? profile?.budget_currency ?? 'NPR').toUpperCase();
-        const convertedPeriodBudget = (rawBudget > 0 && rateResolver && budgetCurrency !== currency)
-          ? rateResolver.convert(rawBudget, budgetCurrency, currency, toISODate)
-          : rawBudget;
-
-        finalRows.push({
-          key: `${toISO(custom.cycleStart)}__${toISO(custom.cycleEnd)}`,
-          label: `${format(custom.cycleStart, 'd MMM')} – ${format(custom.cycleEnd, 'd MMM')}`,
-          from: fromISO,
-          to: toISODate,
+        dayRows.push({
+          key: iso,
+          label: format(d, 'd MMM'),
+          from: iso,
+          to: iso,
           income,
           expense,
           net: income - expense,
-          budget: convertedPeriodBudget > 0 ? convertedPeriodBudget : null,
-          isCustom: true,
-          customCycleKey: `${toISO(custom.cycleStart)}__${toISO(custom.cycleEnd)}`,
+          budget: null,
+          isCustom: false,
         });
-      });
-
-      return finalRows.sort((a, b) => a.from.localeCompare(b.from));
+      }
+      return dayRows;
     },
-    [
-      settingsPeriods,
-      expenses.items,
-      currency,
-      rateResolver,
-      rates,
-      profile?.monthly_budget,
-      profile?.budget_currency,
-      cycleStartDay,
-      cycleEndDay,
-      todayISO,
-    ],
+    [expenses.items, currency, rateResolver],
   );
 
   // ── Paycheck cycle rows (for Month by Month) ────────────────────────────
