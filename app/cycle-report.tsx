@@ -166,6 +166,8 @@ export default function CycleReportScreen() {
   }
 
   const money = (n: number) => formatMoney(n, currency, isPrivacyMode);
+  const flowTotal = totalIncome + totalExpense;
+  const overBudget = budget !== null && totalExpense > budget;
 
   return (
     <ScrollView
@@ -195,9 +197,9 @@ export default function CycleReportScreen() {
       </View>
 
       {/* ── SUMMARY HERO ── */}
-      <View style={{ borderRadius: 16, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, padding: 16, gap: 12 }}>
+      <View style={{ borderRadius: 20, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, padding: 16, gap: 14, overflow: 'hidden' }}>
         {/* Cycle stepper — jump between cycles */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
           <Pressable
             onPress={() => goCycle(prevCycle)}
             disabled={prevDisabled}
@@ -210,9 +212,14 @@ export default function CycleReportScreen() {
           >
             <ChevronLeft size={17} color={theme.colors.text} />
           </Pressable>
-          <RNText style={{ fontSize: 14, fontWeight: '800', color: theme.colors.text, flexShrink: 1, textAlign: 'center' }} numberOfLines={1} adjustsFontSizeToFit>
-            {rangeLabel}
-          </RNText>
+          <View style={{ flex: 1, alignItems: 'center', gap: 1 }}>
+            <RNText style={{ fontSize: 9.5, fontWeight: '800', letterSpacing: 1.4, textTransform: 'uppercase', color: theme.colors.textMuted }}>
+              Financial cycle
+            </RNText>
+            <RNText style={{ fontSize: 14.5, fontWeight: '800', color: theme.colors.text, includeFontPadding: false }} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+              {rangeLabel}
+            </RNText>
+          </View>
           <Pressable
             onPress={() => goCycle(nextCycle)}
             disabled={nextDisabled}
@@ -226,62 +233,147 @@ export default function CycleReportScreen() {
             <ChevronRight size={17} color={theme.colors.text} />
           </Pressable>
         </View>
-        <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
-          <View style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, backgroundColor: savingsRate >= 0 ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.12)' }}>
+
+        {/* NET hero + savings chip */}
+        <View style={{ flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', gap: 10 }}>
+          <View style={{ flexShrink: 1 }}>
+            <RNText style={{ fontSize: 10.5, fontWeight: '800', letterSpacing: 1.2, textTransform: 'uppercase', color: theme.colors.textMuted }}>
+              {net >= 0 ? 'Net profit' : 'Net loss'}
+            </RNText>
+            <RNText
+              style={{
+                fontSize: 34,
+                lineHeight: 40,
+                fontWeight: '900',
+                color: net >= 0 ? theme.colors.income : theme.colors.danger,
+                includeFontPadding: false,
+              }}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.7}
+            >
+              {net >= 0 ? '+' : '−'}{money(Math.abs(net))}
+            </RNText>
+          </View>
+          <View
+            style={{
+              paddingHorizontal: 10,
+              paddingVertical: 5,
+              borderRadius: 999,
+              backgroundColor: savingsRate >= 0 ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.12)',
+              marginBottom: 4,
+            }}
+          >
             <RNText style={{ fontSize: 11, fontWeight: '800', color: savingsRate >= 0 ? theme.colors.income : theme.colors.danger }}>
-              Savings rate: {savingsRate}%
+              {savingsRate}% saved
             </RNText>
           </View>
         </View>
-        <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8 }}>
-          <RNText style={{ fontSize: 11, fontWeight: '700', textTransform: 'uppercase', color: theme.colors.textMuted }}>Net</RNText>
-          <RNText style={{ fontSize: 28, fontWeight: '900', color: net >= 0 ? theme.colors.income : theme.colors.danger }} numberOfLines={1} adjustsFontSizeToFit>
-            {net >= 0 ? '+' : '−'}{money(Math.abs(net))}
-          </RNText>
-        </View>
-        <View style={{ flexDirection: 'row', gap: 8 }}>
-          <View style={{ flex: 1, borderRadius: 10, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceElevated, padding: 12 }}>
+
+        {/* Income vs Expense split */}
+        <View style={{ flexDirection: 'row', gap: 10 }}>
+          <View
+            style={{
+              flex: 1,
+              borderRadius: 14,
+              borderWidth: 1,
+              borderColor: theme.colors.border,
+              backgroundColor: theme.isDark ? 'rgba(16,185,129,0.10)' : 'rgba(4,120,87,0.07)',
+              padding: 12,
+              gap: 6,
+            }}
+          >
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               <TrendingUp size={13} color={theme.colors.income} />
-              <RNText style={{ fontSize: 11, fontWeight: '700', color: theme.colors.textMuted }}>Income</RNText>
+              <RNText style={{ fontSize: 11.5, fontWeight: '700', color: theme.colors.textMuted }}>Income</RNText>
             </View>
-            <RNText style={{ marginTop: 4, fontSize: 15, fontWeight: '800', color: theme.colors.income }}>
+            <RNText
+              style={{ fontSize: 16.5, fontWeight: '900', color: theme.colors.income, includeFontPadding: false }}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.75}
+            >
               {money(totalIncome)}
             </RNText>
+            {flowTotal > 0 && (
+              <RNText style={{ fontSize: 10.5, fontWeight: '700', color: theme.colors.textMuted }}>
+                {Math.round((totalIncome / flowTotal) * 100)}% of flow
+              </RNText>
+            )}
           </View>
-          <View style={{ flex: 1, borderRadius: 10, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceElevated, padding: 12 }}>
+          <View
+            style={{
+              flex: 1,
+              borderRadius: 14,
+              borderWidth: 1,
+              borderColor: theme.colors.border,
+              backgroundColor: theme.isDark ? 'rgba(239,68,68,0.10)' : 'rgba(165,68,43,0.07)',
+              padding: 12,
+              gap: 6,
+            }}
+          >
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               <TrendingDown size={13} color={theme.colors.danger} />
-              <RNText style={{ fontSize: 11, fontWeight: '700', color: theme.colors.textMuted }}>Expense</RNText>
+              <RNText style={{ fontSize: 11.5, fontWeight: '700', color: theme.colors.textMuted }}>Expense</RNText>
             </View>
-            <RNText style={{ marginTop: 4, fontSize: 15, fontWeight: '800', color: theme.colors.danger }}>
+            <RNText
+              style={{ fontSize: 16.5, fontWeight: '900', color: theme.colors.danger, includeFontPadding: false }}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.75}
+            >
               {money(totalExpense)}
             </RNText>
+            {flowTotal > 0 && (
+              <RNText style={{ fontSize: 10.5, fontWeight: '700', color: theme.colors.textMuted }}>
+                {Math.round((totalExpense / flowTotal) * 100)}% of flow
+              </RNText>
+            )}
           </View>
         </View>
+
+        {/* Budget — spent vs limit with a marked bar */}
         {budget !== null && budget > 0 && (
-          <View style={{ gap: 6 }}>
+          <View style={{ gap: 8, borderTopWidth: 1, borderTopColor: theme.colors.border, paddingTop: 12 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                 <Wallet size={13} color={theme.colors.primary} />
-                <RNText style={{ fontSize: 11.5, fontWeight: '600', color: theme.colors.textMuted }}>
+                <RNText style={{ fontSize: 11.5, fontWeight: '700', color: theme.colors.textMuted }}>
                   Budget
                 </RNText>
               </View>
-              <RNText style={{ fontSize: 11.5, fontWeight: '700', color: totalExpense > budget ? theme.colors.danger : theme.colors.text }}>
-                {money(totalExpense)} / {money(budget)} ({Math.min(Math.round((totalExpense / budget) * 100), 999)}%)
+              <RNText style={{ fontSize: 11.5, fontWeight: '800', color: overBudget ? theme.colors.danger : theme.colors.text }}>
+                {Math.min(Math.round((totalExpense / budget) * 100), 999)}% used
               </RNText>
             </View>
-            <View style={{ height: 6, borderRadius: 3, backgroundColor: theme.colors.surfaceElevated, overflow: 'hidden' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+              <RNText
+                style={{ fontSize: 15, fontWeight: '900', color: overBudget ? theme.colors.danger : theme.colors.text, includeFontPadding: false }}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.8}
+              >
+                {money(totalExpense)}
+              </RNText>
+              <RNText style={{ fontSize: 11.5, fontWeight: '600', color: theme.colors.textMuted }}>
+                of {money(budget)}
+              </RNText>
+            </View>
+            <View style={{ height: 8, borderRadius: 4, backgroundColor: theme.colors.surfaceElevated, overflow: 'hidden' }}>
               <View
                 style={{
                   width: `${Math.min((totalExpense / budget) * 100, 100)}%`,
                   height: '100%',
-                  borderRadius: 3,
-                  backgroundColor: totalExpense > budget ? theme.colors.danger : theme.colors.primary,
+                  borderRadius: 4,
+                  backgroundColor: overBudget ? theme.colors.danger : theme.colors.primary,
                 }}
               />
             </View>
+            {overBudget && (
+              <RNText style={{ fontSize: 11, fontWeight: '700', color: theme.colors.danger }}>
+                Over by {money(totalExpense - budget)}
+              </RNText>
+            )}
           </View>
         )}
       </View>
