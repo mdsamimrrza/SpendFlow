@@ -1,11 +1,15 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Pressable, useWindowDimensions, View } from 'react-native';
 import { useRouter } from 'expo-router';
+import * as Haptics from 'expo-haptics';
+import { format, parseISO } from 'date-fns';
 import {
   ArrowDownRight,
   ArrowUpRight,
   BarChart3,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   PieChart,
   Target,
   TrendingDown,
@@ -35,27 +39,59 @@ export function IncomeExpenseBudgetCard({
   const theme = useTheme();
   const router = useRouter();
   const { profile } = useAuth();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const { width } = useWindowDimensions();
   const isCompact = width < 390;
+
+  // ── Month-to-month navigation: bucket the provided scope by calendar month.
+  // Offset 0 = latest month in the data; < walks back, > walks forward. ──
+  const [monthOffset, setMonthOffset] = useState(0);
+  const monthKeys = useMemo(() => {
+    const set = new Set<string>();
+    for (const e of expenses) set.add(e.date.slice(0, 7));
+    return Array.from(set).sort().reverse();
+  }, [expenses]);
+  const safeOffset = Math.min(monthOffset, Math.max(monthKeys.length - 1, 0));
+  const activeMonthKey = monthKeys[safeOffset] ?? '';
+  const monthItems = useMemo(
+    () => (activeMonthKey ? expenses.filter((e) => e.date.slice(0, 7) === activeMonthKey) : expenses),
+    [expenses, activeMonthKey],
+  );
+  const monthLabel = useMemo(() => {
+    if (!activeMonthKey) return '';
+    const locale = language === 'ne' ? 'ne-NP' : language === 'hi' ? 'hi-IN' : 'en-US';
+    try {
+      return parseISO(`${activeMonthKey}-01`).toLocaleDateString(locale, { month: 'long', year: 'numeric' });
+    } catch {
+      return activeMonthKey;
+    }
+  }, [activeMonthKey, language]);
+  const goPrevMonth = () => {
+    void Haptics.selectionAsync().catch(() => undefined);
+    setMonthOffset((o) => Math.min(o + 1, Math.max(monthKeys.length - 1, 0)));
+  };
+  const goNextMonth = () => {
+    void Haptics.selectionAsync().catch(() => undefined);
+    setMonthOffset((o) => Math.max(o - 1, 0));
+  };
 
   const currency = targetCurrency ?? profile?.preferred_currency ?? 'NPR';
   const { resolver: rateResolver } = useRateResolver(expenses, currency);
   const effectiveBudget = monthlyBudget > 0 ? monthlyBudget : getMonthlyBudget(profile, rateResolver, currency);
 
-  const totalIncome = useMemo(() => rateResolver ? sumIncome(expenses, currency, rateResolver) : 0, [expenses, currency, rateResolver]);
-  const totalExpense = useMemo(() => rateResolver ? sumExpenses(expenses, currency, rateResolver, 'expense') : 0, [expenses, currency, rateResolver]);
+  const totalIncome = useMemo(() => rateResolver ? sumIncome(monthItems, currency, rateResolver) : 0, [monthItems, currency, rateResolver]);
+  const totalExpense = useMemo(() => rateResolver ? sumExpenses(monthItems, currency, rateResolver, 'expense') : 0, [monthItems, currency, rateResolver]);
   const netSavings = totalIncome - totalExpense;
 
-  const incomeItemsCount = expenses.filter((e) => e.type === 'income').length;
-  const expenseItemsCount = expenses.filter((e) => e.type !== 'income').length;
+  const incomeItemsCount = monthItems.filter((e) => e.type === 'income').length;
+  const expenseItemsCount = monthItems.filter((e) => e.type !== 'income').length;
 
   // Budget percentage calculation: convert both expenses and budget to the budget's currency
   // using the SAME RateResolver (historical rates) for consistency
   const budgetCurrency = (profile?.budget_currency || profile?.preferred_currency || 'NPR').toUpperCase();
-  const expenseInBudgetCurrency = useMemo(() => 
-    rateResolver ? sumExpenses(expenses, budgetCurrency, rateResolver, 'expense') : 0, 
-    [expenses, budgetCurrency, rateResolver]
+  const expenseInBudgetCurrency = useMemo(() =>
+    rateResolver ? sumExpenses(monthItems, budgetCurrency, rateResolver, 'expense') : 0,
+    [monthItems, budgetCurrency, rateResolver]
   );
   const budgetInBudgetCurrency = useMemo(() => 
     getMonthlyBudget(profile, rateResolver, budgetCurrency), 
@@ -125,6 +161,53 @@ export function IncomeExpenseBudgetCard({
             </Text>
           </View>
         )}
+      </View>
+
+      {/* ── MONTH STEPPER — browse the scope month to month ── */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12 }}>
+        <Pressable
+          onPress={goPrevMonth}
+          disabled={safeOffset >= monthKeys.length - 1}
+          accessibilityLabel="Previous month"
+          style={({ pressed }) => ({
+            width: 30,
+            height: 30,
+            borderRadius: 15,
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderWidth: 1,
+            borderColor: theme.colors.border,
+            backgroundColor: theme.colors.surfaceElevated,
+            opacity: safeOffset >= monthKeys.length - 1 ? 0.35 : pressed ? 0.7 : 1,
+          })}
+        >
+          <ChevronLeft size={15} color={theme.colors.text} />
+        </Pressable>
+        <Text
+          variant="caption"
+          numberOfLines={1}
+          style={{ fontSize: 12, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.6, color: theme.colors.textMuted, minWidth: 130, textAlign: 'center' }}
+        >
+          {monthLabel}
+        </Text>
+        <Pressable
+          onPress={goNextMonth}
+          disabled={safeOffset <= 0}
+          accessibilityLabel="Next month"
+          style={({ pressed }) => ({
+            width: 30,
+            height: 30,
+            borderRadius: 15,
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderWidth: 1,
+            borderColor: theme.colors.border,
+            backgroundColor: theme.colors.surfaceElevated,
+            opacity: safeOffset <= 0 ? 0.35 : pressed ? 0.7 : 1,
+          })}
+        >
+          <ChevronRight size={15} color={theme.colors.text} />
+        </Pressable>
       </View>
 
       {/* ── 3 TELEMETRY TILES GRID (INCOME | EXPENSE | BUDGET) ── */}
@@ -224,6 +307,36 @@ export function IncomeExpenseBudgetCard({
             {effectiveBudget > 0 ? `${budgetUtilizationRatio}% used` : 'Tap settings to set'}
           </Text>
         </View>
+      </View>
+
+      {/* ── NET PROFIT — the selected month's bottom line ── */}
+      <View
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          paddingTop: 10,
+          borderTopWidth: 1,
+          borderTopColor: theme.colors.border,
+        }}
+      >
+        <Text variant="caption" style={{ fontSize: 12, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.6, color: theme.colors.textMuted }}>
+          {netSavings >= 0 ? 'Net Profit' : 'Net Loss'}
+        </Text>
+        <Text
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          minimumFontScale={0.7}
+          style={{
+            fontSize: 17,
+            fontWeight: '900',
+            fontVariant: ['tabular-nums'],
+            color: netSavings >= 0 ? theme.colors.income : theme.colors.danger,
+            flexShrink: 1,
+          }}
+        >
+          {netSavings >= 0 ? '+' : '−'}{formatMoney(Math.abs(netSavings), currency)}
+        </Text>
       </View>
 
       {/* ── COMPARATIVE PROGRESS BARS SECTION ── */}
