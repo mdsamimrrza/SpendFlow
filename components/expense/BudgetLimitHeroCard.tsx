@@ -380,17 +380,21 @@ export function BudgetLimitHeroCard({
                     paddingHorizontal: 8,
                     paddingVertical: 4,
                     borderRadius: theme.radius.full,
-                    flexShrink: 0,
+                    flexShrink: 1,
                     backgroundColor: isUp
                       ? (theme.isDark ? 'rgba(239, 68, 68, 0.18)' : '#F1DCD3')
                       : (theme.isDark ? 'rgba(52, 211, 153, 0.18)' : '#DCE9E3'),
                   }}
                 >
                   <Text
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.7}
                     style={{
                       fontSize: 11,
                       fontWeight: '800',
                       color: isUp ? (theme.isDark ? '#F87171' : '#A5442B') : (theme.isDark ? '#34D399' : '#0F5C4D'),
+                      flexShrink: 1,
                     }}
                   >
                     {isUp ? '▲' : '▼'} {fmtVsLastMonth(pctVsLastMonth)} vs last mon
@@ -653,17 +657,21 @@ export function BudgetLimitHeroCard({
                     paddingHorizontal: 8,
                     paddingVertical: 4,
                     borderRadius: theme.radius.full,
-                    flexShrink: 0,
+                    flexShrink: 1,
                     backgroundColor: incIsUp
                       ? (theme.isDark ? 'rgba(52, 211, 153, 0.18)' : '#DCE9E3')
                       : (theme.isDark ? 'rgba(239, 68, 68, 0.18)' : '#F1DCD3'),
                   }}
                 >
                   <Text
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.7}
                     style={{
                       fontSize: 11,
                       fontWeight: '800',
                       color: incIsUp ? incomeHeaderColor : (theme.isDark ? '#F87171' : '#A5442B'),
+                      flexShrink: 1,
                     }}
                   >
                     {incIsUp ? '▲' : '▼'} {fmtVsLastMonth(incPctVsLastMonth)} vs last mon

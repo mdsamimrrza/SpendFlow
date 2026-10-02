@@ -196,6 +196,7 @@ export function ExpenseDetailModal({
                       backgroundColor: theme.colors.surfaceElevated,
                       borderWidth: 1,
                       borderColor: theme.colors.border,
+                      flexShrink: 1,
                     }}
                   >
                     <View
@@ -214,7 +215,7 @@ export function ExpenseDetailModal({
                         color={isIncome ? theme.colors.income : theme.colors.primary}
                       />
                     </View>
-                    <Text style={{ fontWeight: '800', fontSize: 13, color: theme.colors.text }}>
+                    <Text numberOfLines={1} style={{ fontWeight: '800', fontSize: 13, color: theme.colors.text, flexShrink: 1 }}>
                       {categoryName}
                     </Text>
                   </View>
@@ -339,9 +340,16 @@ export function ExpenseDetailModal({
                       backgroundColor: theme.colors.surfaceElevated,
                       borderWidth: 1,
                       borderColor: theme.colors.border,
+                      flexShrink: 1,
+                      maxWidth: '100%',
                     }}
                   >
-                    <Text style={{ fontSize: 11.5, fontWeight: '700', color: theme.colors.textMuted }}>
+                    <Text
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.7}
+                      style={{ fontSize: 11.5, fontWeight: '700', color: theme.colors.textMuted, flexShrink: 1 }}
+                    >
                       Original: {isIncome ? '+' : '-'}{formatMoney(Number(expense.amount), expense.currency)}
                     </Text>
                   </View>

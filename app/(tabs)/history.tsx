@@ -674,10 +674,17 @@ export default function HistoryScreen() {
                   backgroundColor: theme.isDark ? 'rgba(245, 158, 11, 0.12)' : '#FEF3C7',
                   borderWidth: 1,
                   borderColor: theme.isDark ? 'rgba(245, 158, 11, 0.3)' : 'rgba(245, 158, 11, 0.25)',
+                  flexShrink: 1,
+                  maxWidth: '100%',
                 }}
               >
                 <Sparkles size={11} color="#F59E0B" />
-                <Text style={{ fontSize: 10.5, fontWeight: '600', color: theme.colors.textMuted }}>
+                <Text
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.7}
+                  style={{ fontSize: 10.5, fontWeight: '600', color: theme.colors.textMuted, flexShrink: 1 }}
+                >
                   Peak:{' '}
                   <Text style={{ fontWeight: '800', color: theme.isDark ? '#FCD34D' : '#D97706' }}>
                     {formatMoney(highestSingleSpend, preferredCurrency)}

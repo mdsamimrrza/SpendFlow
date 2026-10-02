@@ -461,6 +461,8 @@ export default function BullionScreen() {
             borderWidth: 1,
             borderColor: theme.colors.border,
             alignSelf: 'center',
+            flexShrink: 1,
+            maxWidth: '100%',
           }}
         >
           {loading ? (
@@ -468,7 +470,14 @@ export default function BullionScreen() {
           ) : (
             <Clock size={13} color={theme.colors.textMuted} />
           )}
-          <Text variant="caption" muted style={{ fontSize: 11, fontWeight: '600' }}>
+          <Text
+            variant="caption"
+            muted
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.7}
+            style={{ fontSize: 11, fontWeight: '600', flexShrink: 1 }}
+          >
             {loading ? (t('bullion_updating') || 'Updating prices…') : updatedReadable}
           </Text>
         </View>

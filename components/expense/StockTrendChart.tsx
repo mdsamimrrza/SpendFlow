@@ -737,14 +737,20 @@ export function StockTrendChart({
                 backgroundColor: currentIncomeTotal >= currentExpenseTotal
                   ? (theme.isDark ? 'rgba(16, 185, 129, 0.18)' : 'rgba(15, 92, 77, 0.12)')
                   : (theme.isDark ? 'rgba(239, 68, 68, 0.18)' : 'rgba(239, 68, 68, 0.1)'),
+                flexShrink: 1,
+                maxWidth: '100%',
               }}
             >
               <Sparkles size={12} color={currentIncomeTotal >= currentExpenseTotal ? (theme.isDark ? theme.colors.income : '#0F5C4D') : '#EF4444'} />
               <Text
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.7}
                 style={{
                   fontSize: 11.5,
                   fontWeight: '800',
                   color: currentIncomeTotal >= currentExpenseTotal ? (theme.isDark ? theme.colors.income : '#0F5C4D') : '#EF4444',
+                  flexShrink: 1,
                 }}
               >
                 Net: {currentIncomeTotal >= currentExpenseTotal ? '+' : ''}{formatMoney(currentIncomeTotal - currentExpenseTotal, targetCurrency)}

@@ -48,10 +48,15 @@ export function BudgetPaceRow({ actual, expected, currency, onTrack, budgetCurre
         <View
           style={[
             styles.statusPill,
-            { backgroundColor: onTrack ? (isDark ? 'rgba(52, 211, 153, 0.18)' : '#DCE9E3') : (isDark ? 'rgba(239, 68, 68, 0.18)' : '#F1DCD3') },
+            { backgroundColor: onTrack ? (isDark ? 'rgba(52, 211, 153, 0.18)' : '#DCE9E3') : (isDark ? 'rgba(239, 68, 68, 0.18)' : '#F1DCD3'), flexShrink: 1, maxWidth: '100%' },
           ]}
         >
-          <Text style={[styles.statusText, { color: statusColor }]}>
+          <Text
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.7}
+            style={[styles.statusText, { color: statusColor, flexShrink: 1 }]}
+          >
             {onTrack ? t('digest_on_track') : t('digest_off_track')}
           </Text>
         </View>

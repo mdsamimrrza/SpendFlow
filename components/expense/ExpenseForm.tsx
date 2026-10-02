@@ -3162,7 +3162,12 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
                                     : 'transparent',
                                 }}
                               >
-                                <Text style={{ fontSize: 10, fontWeight: '800', color: chipColor }}>
+                                <Text
+                                  numberOfLines={1}
+                                  adjustsFontSizeToFit
+                                  minimumFontScale={0.7}
+                                  style={{ fontSize: 10, fontWeight: '800', color: chipColor, flexShrink: 1 }}
+                                >
                                   {chip.label}
                                 </Text>
                               </View>

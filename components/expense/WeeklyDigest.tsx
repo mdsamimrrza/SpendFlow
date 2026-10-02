@@ -312,13 +312,17 @@ export function WeeklyDigest({
             >
               {t('digest_this_week')}: {formatMoney(weekSpent, preferredCurrency)} {t('digest_spent')}
             </Text>
-            <View style={[styles.savedPill, { backgroundColor: savedPositive ? (isDark ? 'rgba(52, 211, 153, 0.16)' : '#DCE9E3') : (isDark ? 'rgba(239, 68, 68, 0.16)' : '#F1DCD3') }]}>
+            <View style={[styles.savedPill, { backgroundColor: savedPositive ? (isDark ? 'rgba(52, 211, 153, 0.16)' : '#DCE9E3') : (isDark ? 'rgba(239, 68, 68, 0.16)' : '#F1DCD3'), flexShrink: 1, maxWidth: '100%' }]}>
               <Text
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.7}
                 style={{
                   fontSize: compact ? 14 : 15,
                   fontWeight: '800',
                   color: savedPositive ? savedColor : theme.colors.danger,
                   fontVariant: ['tabular-nums'],
+                  flexShrink: 1,
                 }}
               >
                 → {formatMoney(Math.abs(saved), preferredCurrency)} {savedPositive ? t('digest_saved') : t('digest_over')}

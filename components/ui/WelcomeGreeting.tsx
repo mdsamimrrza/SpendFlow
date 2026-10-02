@@ -290,9 +290,9 @@ export function WelcomeGreeting({ onClose }: WelcomeGreetingProps) {
           </View>
 
           <View style={styles.topRow}>
-            <View style={[styles.datePill, { backgroundColor: accentSoft }]}>
+            <View style={[styles.datePill, { backgroundColor: accentSoft, flexShrink: 1 }]}>
               <SlotIcon size={12} color={accent} strokeWidth={2.5} />
-              <Text style={[styles.datePillText, { color: accent }]}>{dateLabel}</Text>
+              <Text numberOfLines={1} style={[styles.datePillText, { color: accent, flexShrink: 1 }]}>{dateLabel}</Text>
             </View>
             <Pressable
               onPress={() => close(true)}

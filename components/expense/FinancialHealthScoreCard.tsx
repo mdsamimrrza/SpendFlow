@@ -358,7 +358,13 @@ export function FinancialHealthScoreCard({
           })}
         >
           <ShieldCheck size={12} color={healthData.color} />
-          <Text variant="caption" style={{ fontWeight: '600', color: healthData.color, fontSize: 11 }}>
+          <Text
+            variant="caption"
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.7}
+            style={{ fontWeight: '600', color: healthData.color, fontSize: 11, flexShrink: 1 }}
+          >
             {healthData.status}
           </Text>
         </Pressable>

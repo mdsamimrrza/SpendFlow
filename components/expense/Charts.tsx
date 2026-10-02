@@ -586,11 +586,17 @@ export function CategoryBreakdown({
               backgroundColor: theme.colors.surfaceElevated,
               borderWidth: 1,
               borderColor: theme.colors.border,
+              flexShrink: 1,
+              maxWidth: '100%',
             }}
           >
-            <Text variant="caption" style={{ fontWeight: '700', color: theme.colors.primary, fontSize: 10.5 }}>
-              {selectedCategory} ✕
+            <Text
+              numberOfLines={1}
+              style={{ fontWeight: '700', color: theme.colors.primary, fontSize: 10.5, flexShrink: 1 }}
+            >
+              {selectedCategory}
             </Text>
+            <Text style={{ color: theme.colors.primary, fontSize: 10.5, fontWeight: '700' }}>✕</Text>
           </Pressable>
         )}
       </View>
