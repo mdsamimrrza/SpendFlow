@@ -1319,41 +1319,43 @@ export default function ProfitLossScreen() {
             )}
 
             {/* Bottom Summary Metrics Row */}
-            <View style={{ height: 1, backgroundColor: theme.colors.border }} />
+            <View style={{ gap: 7 }}>
+              <View style={{ height: 1, backgroundColor: theme.colors.border }} />
 
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <TrendingUp size={15} color={theme.colors.income} />
-                <Text style={{ fontSize: 13, fontWeight: '600', color: theme.colors.textMuted }}>
-                  {t('pl_income') || 'Total Income'}
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <TrendingUp size={15} color={theme.colors.income} />
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: theme.colors.textMuted }}>
+                    {t('pl_income') || 'Total Income'}
+                  </Text>
+                </View>
+                <Text style={{ fontSize: 14, fontWeight: '800', color: theme.colors.income }}>
+                  {formatMoney(totalIncome, currency, isPrivacyMode)}
                 </Text>
               </View>
-              <Text style={{ fontSize: 14, fontWeight: '800', color: theme.colors.income }}>
-                {formatMoney(totalIncome, currency, isPrivacyMode)}
-              </Text>
-            </View>
 
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <TrendingDown size={15} color={theme.colors.danger} />
-                <Text style={{ fontSize: 13, fontWeight: '600', color: theme.colors.textMuted }}>
-                  {t('pl_expense') || 'Total Expense'}
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <TrendingDown size={15} color={theme.colors.danger} />
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: theme.colors.textMuted }}>
+                    {t('pl_expense') || 'Total Expense'}
+                  </Text>
+                </View>
+                <Text style={{ fontSize: 14, fontWeight: '800', color: theme.colors.danger }}>
+                  {formatMoney(totalExpense, currency, isPrivacyMode)}
                 </Text>
               </View>
-              <Text style={{ fontSize: 14, fontWeight: '800', color: theme.colors.danger }}>
-                {formatMoney(totalExpense, currency, isPrivacyMode)}
-              </Text>
-            </View>
 
-            <View style={{ height: 1, backgroundColor: theme.colors.border }} />
+              <View style={{ height: 1, backgroundColor: theme.colors.border }} />
 
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-              <Text style={{ fontSize: 13.5, fontWeight: '800', color: theme.colors.text }}>
-                {isProfit ? t('pl_profit') || 'Net Profit' : t('pl_loss') || 'Net Loss'}
-              </Text>
-              <Text style={{ fontSize: 17, fontWeight: '900', color: isProfit ? theme.colors.income : theme.colors.danger }}>
-                {isProfit ? '+' : '−'}{formatMoney(Math.abs(netResult), currency, isPrivacyMode)}
-              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Text style={{ fontSize: 13.5, fontWeight: '800', color: theme.colors.text }}>
+                  {isProfit ? t('pl_profit') || 'Net Profit' : t('pl_loss') || 'Net Loss'}
+                </Text>
+                <Text style={{ fontSize: 17, fontWeight: '900', color: isProfit ? theme.colors.income : theme.colors.danger }}>
+                  {isProfit ? '+' : '−'}{formatMoney(Math.abs(netResult), currency, isPrivacyMode)}
+                </Text>
+              </View>
             </View>
           </Card>
         );
