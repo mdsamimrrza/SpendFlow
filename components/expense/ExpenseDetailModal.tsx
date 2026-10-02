@@ -40,6 +40,8 @@ export interface ExpenseDetailModalProps {
   visible: boolean;
   onClose: () => void;
   onDelete?: (expense: Expense) => void;
+  /** Read-only contexts (e.g. cycle report) hide the edit action. */
+  hideEdit?: boolean;
 }
 
 export function ExpenseDetailModal({
@@ -47,6 +49,7 @@ export function ExpenseDetailModal({
   visible,
   onClose,
   onDelete,
+  hideEdit = false,
 }: ExpenseDetailModalProps) {
   const theme = useTheme();
   const { profile } = useAuth();
@@ -528,30 +531,32 @@ export function ExpenseDetailModal({
                 </Pressable>
 
                 {/* Edit Button with dynamic Income/Expense text & styling */}
-                <Pressable
-                  onPress={handleEdit}
-                  style={({ pressed }) => ({
-                    flex: 1.4,
-                    height: 48,
-                    borderRadius: theme.radius.md,
-                    backgroundColor: isIncome ? theme.colors.income : theme.colors.primary,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    flexDirection: 'row',
-                    gap: 8,
-                    opacity: pressed ? 0.8 : 1,
-                    shadowColor: isIncome ? theme.colors.income : theme.colors.primary,
-                    shadowOffset: { width: 0, height: 4 },
-                    shadowOpacity: 0.3,
-                    shadowRadius: 8,
-                    elevation: 4,
-                  })}
-                >
-                  <Edit3 size={17} color="#FFFFFF" />
-                  <Text style={{ fontWeight: '800', fontSize: 14, color: '#FFFFFF' }}>
-                    {isIncome ? 'Edit Income' : 'Edit Expense'}
-                  </Text>
-                </Pressable>
+                {!hideEdit && (
+                  <Pressable
+                    onPress={handleEdit}
+                    style={({ pressed }) => ({
+                      flex: 1.4,
+                      height: 48,
+                      borderRadius: theme.radius.md,
+                      backgroundColor: isIncome ? theme.colors.income : theme.colors.primary,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      flexDirection: 'row',
+                      gap: 8,
+                      opacity: pressed ? 0.8 : 1,
+                      shadowColor: isIncome ? theme.colors.income : theme.colors.primary,
+                      shadowOffset: { width: 0, height: 4 },
+                      shadowOpacity: 0.3,
+                      shadowRadius: 8,
+                      elevation: 4,
+                    })}
+                  >
+                    <Edit3 size={17} color="#FFFFFF" />
+                    <Text style={{ fontWeight: '800', fontSize: 14, color: '#FFFFFF' }}>
+                      {isIncome ? 'Edit Income' : 'Edit Expense'}
+                    </Text>
+                  </Pressable>
+                )}
               </View>
             </ScrollView>
           </Pressable>

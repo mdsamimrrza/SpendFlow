@@ -15,7 +15,8 @@ import { useTheme } from '@/hooks/useTheme';
 import { CategoryBreakdown } from '@/components/expense/Charts';
 import { StockTrendChart } from '@/components/expense/StockTrendChart';
 import { fetchUserSettingsHistory } from '@/services/settingsHistory';
-import type { UserSettingsPeriod } from '@/types';
+import type { Expense, UserSettingsPeriod } from '@/types';
+import { ExpenseDetailModal } from '@/components/expense/ExpenseDetailModal';
 import { formatMoney, sumExpenses } from '@/utils/format';
 
 const PAGE_SIZE = 6;
@@ -107,6 +108,7 @@ export default function CycleReportScreen() {
     () => sortedDesc.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE),
     [sortedDesc, safePage],
   );
+  const [selectedTx, setSelectedTx] = useState<Expense | null>(null);
   const dayGroups = useMemo(() => {
     const groups: { date: string; rows: typeof pageRows }[] = [];
     for (const r of pageRows) {
@@ -276,7 +278,20 @@ export default function CycleReportScreen() {
                       ? rateResolver.convert(Number(r.amount) || 0, r.currency || 'NPR', currency, r.date)
                       : 0;
                     return (
-                      <View key={r.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 4 }}>
+                      <Pressable
+                        key={r.id}
+                        onPress={() => setSelectedTx(r)}
+                        accessibilityRole="button"
+                        accessibilityLabel={r.description || r.categories?.name || 'Transaction'}
+                        style={({ pressed }) => ({
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: 10,
+                          paddingVertical: 4,
+                          borderRadius: 8,
+                          opacity: pressed ? 0.7 : 1,
+                        })}
+                      >
                         <View
                           style={{
                             width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center',
@@ -296,7 +311,7 @@ export default function CycleReportScreen() {
                         <RNText style={{ fontSize: 13, fontWeight: '800', color: isIn ? theme.colors.income : theme.colors.danger }}>
                           {isIn ? '+' : '−'}{money(amount)}
                         </RNText>
-                      </View>
+                      </Pressable>
                     );
                   })}
                 </View>
@@ -336,6 +351,13 @@ export default function CycleReportScreen() {
           </View>
         )}
       </View>
+      {/* ── EXPENSE DETAIL — read-only, no edit action ── */}
+      <ExpenseDetailModal
+        expense={selectedTx}
+        visible={selectedTx !== null}
+        onClose={() => setSelectedTx(null)}
+        hideEdit
+      />
     </ScrollView>
   );
 }
