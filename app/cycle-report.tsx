@@ -60,7 +60,7 @@ export default function CycleReportScreen() {
     [itemsInRange, currency, rateResolver],
   );
   const net = totalIncome - totalExpense;
-  const savingsRate = totalIncome > 0 ? Math.round((net / totalIncome) * 100) : 0;
+  const savingsRate = totalIncome > 0 ? ((net / totalIncome) * 100) : 0;
 
   // Budget IN FORCE for this cycle (newest settings-trail row effective
   // on/before the cycle end), converted at the end date — never today's
@@ -265,7 +265,7 @@ export default function CycleReportScreen() {
             }}
           >
             <RNText style={{ fontSize: 11, fontWeight: '800', color: savingsRate >= 0 ? theme.colors.income : theme.colors.danger }}>
-              {savingsRate}% saved
+              {savingsRate.toFixed(2)}% saved
             </RNText>
           </View>
         </View>
