@@ -73,6 +73,22 @@ export default function ProfitLossScreen() {
   const [budgetInput, setBudgetInput] = useState('');
   const [savingBudget, setSavingBudget] = useState(false);
   const [selectedChartIdx, setSelectedChartIdx] = useState<number | null>(null);
+  // Tapped-point HUD auto-dismisses after 5s (same pattern as StockTrendChart).
+  const hudDismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const selectChartPoint = useCallback((index: number | null) => {
+    if (hudDismissTimerRef.current) clearTimeout(hudDismissTimerRef.current);
+    setSelectedChartIdx(index);
+    if (index !== null) {
+      hudDismissTimerRef.current = setTimeout(() => {
+        setSelectedChartIdx(null);
+      }, 5000);
+    }
+  }, []);
+  useEffect(() => {
+    return () => {
+      if (hudDismissTimerRef.current) clearTimeout(hudDismissTimerRef.current);
+    };
+  }, []);
   const [chartViewMode, setChartViewMode] = useState<'all' | 'income' | 'expense' | 'net'>('all');
 
   // Cycle window state & editor
@@ -710,8 +726,8 @@ export default function ProfitLossScreen() {
 
   // Drop any selected chart point when the calendar range changes
   useEffect(() => {
-    setSelectedChartIdx(null);
-  }, [from, to]);
+    selectChartPoint(null);
+  }, [from, to, selectChartPoint]);
 
   // Stock-graph series: normal calendar months by default; ONLY explicitly configured
   // custom periods (from settings history) use custom cycle logic.
@@ -1330,7 +1346,7 @@ export default function ProfitLossScreen() {
                       style={{ flex: 1, height: '100%' }}
                       onPress={() => {
                         void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
-                        setSelectedChartIdx((prev) => (prev === i ? null : i));
+                        selectChartPoint(selectedChartIdx === i ? null : i);
                       }}
                     />
                   ))}
