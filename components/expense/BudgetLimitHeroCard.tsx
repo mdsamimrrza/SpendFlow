@@ -187,6 +187,10 @@ export function BudgetLimitHeroCard({
     saveIsUp = netSavings > 0;
   }
 
+  // Deltas above 999% read better as a multiplier ("100x") — and stay short
+  // so the comparison badges never blow up the tile layout.
+  const fmtVsLastMonth = (pct: number) => (pct >= 1000 ? `${Math.round(pct / 100)}x` : `${pct}%`);
+
   // Cycle-aware month label: "Aug" for calendar month, "Aug–Sep" for custom cycle
   const locale = language === 'ne' ? 'ne-NP' : language === 'hi' ? 'hi-IN' : 'en-US';
   const currentMonthName = getCycleLabel(cycleStartDay, cycleEndDay, locale);
@@ -389,7 +393,7 @@ export function BudgetLimitHeroCard({
                       color: isUp ? (theme.isDark ? '#F87171' : '#A5442B') : (theme.isDark ? '#34D399' : '#0F5C4D'),
                     }}
                   >
-                    {isUp ? '▲' : '▼'} {pctVsLastMonth}% vs last mon
+                    {isUp ? '▲' : '▼'} {fmtVsLastMonth(pctVsLastMonth)} vs last mon
                   </Text>
                 </View>
               </View>
@@ -662,7 +666,7 @@ export function BudgetLimitHeroCard({
                       color: incIsUp ? incomeHeaderColor : (theme.isDark ? '#F87171' : '#A5442B'),
                     }}
                   >
-                    {incIsUp ? '▲' : '▼'} {incPctVsLastMonth}% vs last mon
+                    {incIsUp ? '▲' : '▼'} {fmtVsLastMonth(incPctVsLastMonth)} vs last mon
                   </Text>
                 </View>
               </View>
@@ -768,7 +772,7 @@ export function BudgetLimitHeroCard({
                     textAlign: 'center',
                   }}
                 >
-                  {saveIsUp ? '▲' : '▼'} {savePctVsLastMonth}% vs last mon
+                  {saveIsUp ? '▲' : '▼'} {fmtVsLastMonth(savePctVsLastMonth)} vs last mon
                 </Text>
               </View>
 
