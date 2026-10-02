@@ -17,7 +17,7 @@ import { StockTrendChart } from '@/components/expense/StockTrendChart';
 import { fetchUserSettingsHistory } from '@/services/settingsHistory';
 import type { Expense, UserSettingsPeriod } from '@/types';
 import { ExpenseDetailModal } from '@/components/expense/ExpenseDetailModal';
-import { formatMoney, sumExpenses } from '@/utils/format';
+import { formatMoney, getSafeMonthDate, sumExpenses } from '@/utils/format';
 
 const PAGE_SIZE = 6;
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
@@ -124,6 +124,31 @@ export default function CycleReportScreen() {
     return `${format(parseISODate(from), 'd MMM')} – ${format(parseISODate(to), 'd MMM yyyy')}`;
   }, [from, to, valid]);
 
+  // ── Cycle stepper: prev/next financial-cycle windows. Same anchor + clamp
+  // rules as the Month-by-Month builder; Next stops at the current cycle. ──
+  const cycleStartDay = profile?.cycle_start_day ?? 1;
+  const cycleEndDay = profile?.cycle_end_day ?? null;
+  const cycleEndFor = (anchor: Date): Date => {
+    if (cycleEndDay !== null && cycleEndDay >= 1 && cycleEndDay <= 31) {
+      return cycleEndDay < cycleStartDay
+        ? getSafeMonthDate(anchor.getFullYear(), anchor.getMonth() + 1, cycleEndDay)
+        : getSafeMonthDate(anchor.getFullYear(), anchor.getMonth(), cycleEndDay);
+    }
+    const nextStart = getSafeMonthDate(anchor.getFullYear(), anchor.getMonth() + 1, cycleStartDay);
+    return new Date(nextStart.getFullYear(), nextStart.getMonth(), nextStart.getDate() - 1);
+  };
+  const shiftedCycle = (deltaMonths: number) => {
+    const anchor = parseISODate(from);
+    const a = getSafeMonthDate(anchor.getFullYear(), anchor.getMonth() + deltaMonths, cycleStartDay);
+    return { from: format(a, 'yyyy-MM-dd'), to: format(cycleEndFor(a), 'yyyy-MM-dd') };
+  };
+  const prevCycle = shiftedCycle(-1);
+  const nextCycle = shiftedCycle(1);
+  const nextDisabled = nextCycle.from > format(new Date(), 'yyyy-MM-dd');
+  const goCycle = (c: { from: string; to: string }) => {
+    router.setParams({ from: c.from, to: c.to });
+  };
+
   if (!valid) {
     return (
       <View style={{ flex: 1, backgroundColor: theme.colors.background, justifyContent: 'center' }}>
@@ -163,8 +188,36 @@ export default function CycleReportScreen() {
 
       {/* ── SUMMARY HERO ── */}
       <View style={{ borderRadius: 16, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, padding: 16, gap: 12 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <RNText style={{ fontSize: 14, fontWeight: '800', color: theme.colors.text }}>{rangeLabel}</RNText>
+        {/* Cycle stepper — jump between cycles */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+          <Pressable
+            onPress={() => goCycle(prevCycle)}
+            accessibilityLabel="Previous cycle"
+            style={({ pressed }) => ({
+              width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center',
+              borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceElevated,
+              opacity: pressed ? 0.7 : 1,
+            })}
+          >
+            <ChevronLeft size={17} color={theme.colors.text} />
+          </Pressable>
+          <RNText style={{ fontSize: 14, fontWeight: '800', color: theme.colors.text, flexShrink: 1, textAlign: 'center' }} numberOfLines={1} adjustsFontSizeToFit>
+            {rangeLabel}
+          </RNText>
+          <Pressable
+            onPress={() => goCycle(nextCycle)}
+            disabled={nextDisabled}
+            accessibilityLabel="Next cycle"
+            style={({ pressed }) => ({
+              width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center',
+              borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceElevated,
+              opacity: nextDisabled ? 0.35 : pressed ? 0.7 : 1,
+            })}
+          >
+            <ChevronRight size={17} color={theme.colors.text} />
+          </Pressable>
+        </View>
+        <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
           <View style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, backgroundColor: savingsRate >= 0 ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.12)' }}>
             <RNText style={{ fontSize: 11, fontWeight: '800', color: savingsRate >= 0 ? theme.colors.income : theme.colors.danger }}>
               Savings rate: {savingsRate}%
