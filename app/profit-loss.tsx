@@ -1046,13 +1046,25 @@ export default function ProfitLossScreen() {
           return padTop + ((maxVal - val) / valRange) * drawH;
         };
 
+        // Month-hill path: each bucket rises from the baseline at its start,
+        // peaks at its value, and returns to the baseline at its end — so the
+        // line visibly comes back down at every month/cycle boundary before
+        // the next one rises.
         const buildPath = (vals: number[]) => {
           if (vals.length === 0) return '';
           if (vals.length === 1) return `M ${padL},${toY(vals[0])} L ${padL + drawW},${toY(vals[0])}`;
-          let d = `M ${toX(0)},${toY(vals[0])}`;
-          for (let i = 0; i < vals.length - 1; i++) {
-            const cpx = (toX(i) + toX(i + 1)) / 2;
-            d += ` C ${cpx},${toY(vals[i])} ${cpx},${toY(vals[i + 1])} ${toX(i + 1)},${toY(vals[i + 1])}`;
+          const colW = drawW / (n - 1);
+          const baseY = toY(0);
+          let d = `M ${padL},${baseY}`;
+          for (let i = 0; i < n; i++) {
+            const cx = toX(i);
+            const left = Math.max(cx - colW / 2, padL);
+            const right = Math.min(cx + colW / 2, padL + drawW);
+            const topY = toY(vals[i]);
+            const riseMid = (left + cx) / 2;
+            const fallMid = (cx + right) / 2;
+            d += ` C ${riseMid},${baseY} ${riseMid},${topY} ${cx},${topY}`;
+            d += ` C ${fallMid},${topY} ${fallMid},${baseY} ${right},${baseY}`;
           }
           return d;
         };
