@@ -3,7 +3,6 @@ import { Pressable, ScrollView, Text as RNText, View } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { format } from 'date-fns';
 import { ChevronLeft, ChevronRight, Scale, TrendingDown, TrendingUp, Wallet } from 'lucide-react-native';
-import Svg, { Circle } from 'react-native-svg';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { CategoryIcon } from '@/components/ui/CategoryIcon';
 import { Text } from '@/components/ui/Text';
@@ -13,7 +12,7 @@ import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
 import { useRateResolver } from '@/hooks/useRateResolver';
 import { useTheme } from '@/hooks/useTheme';
-import { VIBRANT_PALETTE } from '@/components/expense/Charts';
+import { CategoryBreakdown } from '@/components/expense/Charts';
 import { StockTrendChart } from '@/components/expense/StockTrendChart';
 import { fetchUserSettingsHistory } from '@/services/settingsHistory';
 import type { UserSettingsPeriod } from '@/types';
@@ -28,8 +27,8 @@ const parseISODate = (iso: string) =>
 /**
  * Cycle report — opened by tapping a Month-by-Month card on the Budget &
  * Reports screen (params from/to, inclusive both ends). One financial cycle
- * at a glance: summary hero, the main-page stock trend graph, the category mix
- * donut, and the cycle's transactions paginated 10 per page. Web mirror:
+ * at a glance: summary hero, the main-page stock trend graph, the main-page
+ * category breakdown, and the cycle's transactions paginated 10 per page. Web mirror:
  * app/(dashboard)/profit-loss/cycle/page.tsx.
  */
 export default function CycleReportScreen() {
@@ -61,23 +60,6 @@ export default function CycleReportScreen() {
   );
   const net = totalIncome - totalExpense;
   const savingsRate = totalIncome > 0 ? Math.round((net / totalIncome) * 100) : 0;
-
-  const slices = useMemo(() => {
-    const byCat = new Map<string, number>();
-    for (const e of itemsInRange) {
-      if ((e.type || 'expense') === 'income') continue;
-      const name = e.categories?.name ?? 'Other';
-      const amount = rateResolver
-        ? rateResolver.convert(Number(e.amount) || 0, e.currency || 'NPR', currency, e.date)
-        : 0;
-      byCat.set(name, (byCat.get(name) ?? 0) + amount);
-    }
-    const sorted = Array.from(byCat.entries()).sort((a, b) => b[1] - a[1]);
-    const top = sorted.slice(0, 6);
-    const rest = sorted.slice(6).reduce((s, [, v]) => s + v, 0);
-    const all = rest > 0 ? ([...top, ['Other', rest] as [string, number]] as [string, number][]) : top;
-    return all.map(([label, value], i) => ({ label, value, color: VIBRANT_PALETTE[i % VIBRANT_PALETTE.length] }));
-  }, [itemsInRange, currency, rateResolver]);
 
   // Budget IN FORCE for this cycle (newest settings-trail row effective
   // on/before the cycle end), converted at the end date — never today's
@@ -249,86 +231,12 @@ export default function CycleReportScreen() {
         resolver={rateResolver}
       />
 
-      {/* ── CATEGORY MIX DONUT ── */}
-      <View style={{ borderRadius: 16, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, padding: 16 }}>
-        <RNText style={{ fontSize: 14, fontWeight: '800', color: theme.colors.text, marginBottom: 12 }}>
-          {t('pl_cycle_category_mix') || 'Category mix'}
-        </RNText>
-        {slices.length === 0 ? (
-          <RNText style={{ paddingVertical: 20, textAlign: 'center', fontSize: 12.5, fontWeight: '600', color: theme.colors.textMuted }}>
-            {t('pl_cycle_empty_tx') || 'No transactions in this cycle'}
-          </RNText>
-        ) : (
-          <View style={{ alignItems: 'center', gap: 14 }}>
-            <View style={{ alignItems: 'center', justifyContent: 'center' }}>
-              <Svg width={132} height={132}>
-                {(() => {
-                  const total = slices.reduce((s, x) => s + x.value, 0);
-                  const R = 52;
-                  const C = 2 * Math.PI * R;
-                  let offset = 0;
-                  return (
-                    <>
-                      <Circle cx={66} cy={66} r={R} stroke={theme.colors.surfaceElevated} strokeWidth={16} fill="none" />
-                      {slices.map((s) => {
-                        const frac = total > 0 ? s.value / total : 0;
-                        const seg = { dash: frac * C, offset };
-                        offset += frac * C;
-                        return (
-                          <Circle
-                            key={s.label}
-                            cx={66}
-                            cy={66}
-                            r={R}
-                            stroke={s.color}
-                            strokeWidth={16}
-                            fill="none"
-                            strokeDasharray={`${seg.dash} ${C - seg.dash}`}
-                            strokeDashoffset={-seg.offset}
-                            transform={`rotate(-90 66 66)`}
-                            strokeLinecap="butt"
-                          />
-                        );
-                      })}
-                    </>
-                  );
-                })()}
-              </Svg>
-              <View style={{ position: 'absolute', alignItems: 'center', maxWidth: 120 }} pointerEvents="none">
-                <RNText style={{ fontSize: 10, fontWeight: '700', color: theme.colors.textMuted }}>
-                  Expense
-                </RNText>
-                <RNText style={{ fontSize: 13, fontWeight: '800', color: theme.colors.text }} numberOfLines={1} adjustsFontSizeToFit>
-                  {money(totalExpense)}
-                </RNText>
-              </View>
-            </View>
-            <View style={{ width: '100%', gap: 8 }}>
-              {slices.map((s) => {
-                const pct = totalExpense > 0 ? Math.round((s.value / totalExpense) * 100) : 0;
-                return (
-                  <View key={s.label} style={{ gap: 3 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, marginRight: 8, minWidth: 0 }}>
-                        <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: s.color }} />
-                        <RNText style={{ fontSize: 12, fontWeight: '600', color: theme.colors.text, flexShrink: 1 }} numberOfLines={1}>
-                          {s.label}
-                        </RNText>
-                      </View>
-                      <RNText style={{ fontSize: 12, fontWeight: '700', color: theme.colors.text, flexShrink: 1, textAlign: 'right' }} numberOfLines={1}>
-                        {money(s.value)} <RNText style={{ fontWeight: '600', color: theme.colors.textMuted }}>{pct}%</RNText>
-                      </RNText>
-                    </View>
-                    <View style={{ height: 4, borderRadius: 2, backgroundColor: theme.colors.surfaceElevated, overflow: 'hidden' }}>
-                      <View style={{ width: `${pct}%`, height: '100%', borderRadius: 2, backgroundColor: s.color }} />
-                    </View>
-                  </View>
-                );
-              })}
-            </View>
-          </View>
-        )}
-      </View>
+      {/* ── CATEGORY MIX — exact main-page interactive breakdown ── */}
+      <CategoryBreakdown
+        expenses={itemsInRange}
+        targetCurrency={currency}
+        resolver={rateResolver}
+      />
 
       {/* ── TRANSACTION REGISTER ── */}
       <View style={{ borderRadius: 16, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, padding: 16 }}>
