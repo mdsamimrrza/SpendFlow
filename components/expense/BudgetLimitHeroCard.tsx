@@ -459,7 +459,7 @@ export function BudgetLimitHeroCard({
             )}
 
             {/* ── 4. THREE INFO METRIC TILES ── */}
-            <View style={{ flexDirection: 'row', gap: 8, marginTop: 2, alignItems: 'flex-start' }}>
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 2 }}>
               <View style={metricTile}>
                 <Text variant="caption" muted style={{ fontSize: 10, fontWeight: '600', letterSpacing: 0.2 }}>
                   Spent Today
@@ -720,7 +720,7 @@ export function BudgetLimitHeroCard({
             </View>
 
             {/* ── 4. THREE INFO METRIC TILES (INCOME SIDE) ── */}
-            <View style={{ flexDirection: 'row', gap: 8, marginTop: 2, alignItems: 'flex-start' }}>
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 2 }}>
               {/* Box 1: Income This Month */}
               <View style={metricTile}>
                 <Text variant="caption" muted style={{ fontSize: 10, fontWeight: '600', letterSpacing: 0.2 }}>
@@ -761,20 +761,6 @@ export function BudgetLimitHeroCard({
                 >
                   {isPrivacyMode ? '••••' : formatMoney(netSavings, preferredCurrency)}
                 </Text>
-                <Text
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                  minimumFontScale={0.7}
-                  style={{
-                    fontSize: 10,
-                    fontWeight: '800',
-                    color: saveIsUp ? savingsAccent : theme.colors.danger,
-                    textAlign: 'center',
-                    flexShrink: 1,
-                  }}
-                >
-                  {saveIsUp ? '▲' : '▼'} {fmtVsLastMonth(savePctVsLastMonth)} vs last mon
-                </Text>
               </View>
 
               {/* Box 3: Savings Rate */}
@@ -798,6 +784,23 @@ export function BudgetLimitHeroCard({
                 </Text>
               </View>
             </View>
+
+            {/* Net-savings delta — one full-width line BELOW the tiles so
+                badge length can never change any tile's size */}
+            <Text
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.7}
+              style={{
+                fontSize: 10,
+                fontWeight: '800',
+                color: saveIsUp ? savingsAccent : theme.colors.danger,
+                textAlign: 'center',
+                marginTop: 1,
+              }}
+            >
+              {saveIsUp ? '▲' : '▼'} {fmtVsLastMonth(savePctVsLastMonth)} net savings vs last mon
+            </Text>
           </Card>
         </Animated.View>
       </View>
