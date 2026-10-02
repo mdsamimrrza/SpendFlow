@@ -317,6 +317,78 @@ export default function ProfitLossScreen() {
       const rangeEnd = parseISO(rangeEndISO);
       if (rangeStart > rangeEnd) return [];
 
+      // ── Custom cycle active → the graph tiles the ENTIRE selected range with
+      // the user's cycle windows (same rules as the Month-by-Month list), so
+      // every bucket follows the custom month. The final cycle always runs to
+      // its natural end: after the last completed cycle the next one still
+      // appears, filled with whatever data exists or empty. The chosen calendar
+      // range still decides where tiling starts and stops. ──
+      if (cycleStartDay !== 1 || cycleEndDay !== null) {
+        const anchorOnOrBefore = (ref: Date): Date => {
+          const thisMonthStart = getSafeMonthDate(ref.getFullYear(), ref.getMonth(), cycleStartDay);
+          return ref >= thisMonthStart
+            ? thisMonthStart
+            : getSafeMonthDate(ref.getFullYear(), ref.getMonth() - 1, cycleStartDay);
+        };
+        const cycleEndFor = (anchorDate: Date): Date => {
+          if (cycleEndDay !== null && cycleEndDay >= 1 && cycleEndDay <= 31) {
+            return cycleEndDay < cycleStartDay
+              ? getSafeMonthDate(anchorDate.getFullYear(), anchorDate.getMonth() + 1, cycleEndDay)
+              : getSafeMonthDate(anchorDate.getFullYear(), anchorDate.getMonth(), cycleEndDay);
+          }
+          const nextStart = getSafeMonthDate(anchorDate.getFullYear(), anchorDate.getMonth() + 1, cycleStartDay);
+          return new Date(nextStart.getFullYear(), nextStart.getMonth(), nextStart.getDate() - 1);
+        };
+
+        const cycleRows: MonthRow[] = [];
+        let anchor = anchorOnOrBefore(rangeStart);
+        while (anchor <= rangeEnd) {
+          const cycleEnd = cycleEndFor(anchor);
+          // First bucket clips at the chosen range start; every cycle else is
+          // shown complete — including the last one, even past the range end.
+          const bucketFrom = cycleRows.length === 0 && anchor < rangeStart ? rangeStart : anchor;
+          if (bucketFrom <= cycleEnd) {
+            const fromISO = toISO(bucketFrom);
+            const toISODate = toISO(cycleEnd);
+            const items = expenses.items.filter((e) => e.date >= fromISO && e.date <= toISODate);
+            const income = sumIncome(items, currency, rateResolver);
+            const expense = sumExpenses(items, currency, rateResolver);
+
+            // Budget in force at the cycle end (settings trail, audit parity
+            // with the Month-by-Month list), converted to display currency.
+            let inForce: UserSettingsPeriod | undefined;
+            for (const p of settingsPeriods) {
+              if (p.effective_from <= toISODate) inForce = p;
+            }
+            const rawAmount = inForce ? inForce.monthly_budget : (profile?.monthly_budget ?? null);
+            const inCur = (inForce?.budget_currency || profile?.budget_currency || 'NPR').toUpperCase();
+            const convertedBudget =
+              rawAmount != null && rawAmount > 0
+                ? (rateResolver && inCur !== currency
+                    ? rateResolver.convert(rawAmount, inCur, currency, toISODate)
+                    : rawAmount)
+                : null;
+
+            cycleRows.push({
+              key: `${toISO(anchor)}__${toISODate}`,
+              label: `${format(anchor, 'd MMM')} – ${format(cycleEnd, 'd MMM')}`,
+              from: fromISO,
+              to: toISODate,
+              income,
+              expense,
+              net: income - expense,
+              budget: convertedBudget != null && convertedBudget > 0 ? convertedBudget : null,
+              isCustom: true,
+              customCycleKey: `${toISO(anchor)}__${toISODate}`,
+            });
+          }
+          const prevAnchor = anchor;
+          anchor = getSafeMonthDate(anchor.getFullYear(), anchor.getMonth() + 1, cycleStartDay);
+          if (anchor <= prevAnchor) break; // non-advancing guard
+        }
+        return cycleRows;
+      }
+
       // 1) Always start with normal calendar months.
       const normalMonths: MonthRow[] = [];
       let cursor = new Date(rangeStart.getFullYear(), rangeStart.getMonth(), 1);
@@ -490,6 +562,7 @@ export default function ProfitLossScreen() {
       settingsPeriods,
       expenses.items,
       currency,
+      rateResolver,
       rates,
       profile?.monthly_budget,
       profile?.budget_currency,
@@ -1211,7 +1284,7 @@ export default function ProfitLossScreen() {
                         textAnchor="middle"
                         fontWeight={selectedChartIdx === i ? '800' : '600'}
                       >
-                        {row.label}
+                        {row.label.includes('–') ? (row.label.split('–')[1] ?? row.label).trim() : row.label}
                       </SvgText>
                     );
                   })}
