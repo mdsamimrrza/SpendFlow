@@ -233,11 +233,12 @@ export default function CycleReportScreen() {
         resolver={rateResolver}
       />
 
-      {/* ── CATEGORY MIX — exact main-page interactive breakdown ── */}
+      {/* ── CATEGORY MIX — exact main-page interactive breakdown (read-only) ── */}
       <CategoryBreakdown
         expenses={itemsInRange}
         targetCurrency={currency}
         resolver={rateResolver}
+        hideEdit
       />
 
       {/* ── TRANSACTION REGISTER ── */}

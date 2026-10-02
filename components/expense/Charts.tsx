@@ -25,10 +25,13 @@ function ExpenseDetailModal({
   expense,
   currency,
   onClose,
+  hideEdit = false,
 }: {
   expense: Expense | null;
   currency: string;
   onClose: () => void;
+  /** Read-only contexts (e.g. cycle report) hide the edit action. */
+  hideEdit?: boolean;
 }) {
   const theme = useTheme();
   const router = useRouter();
@@ -358,19 +361,21 @@ function ExpenseDetailModal({
                     borderColor: theme.colors.border,
                   }}
                 />
-                <Button
-                  title={isIncome ? '✏️ Edit Income' : `✏️ ${t('expense_edit_btn')}`}
-                  onPress={() => {
-                    const id = expense.id;
-                    onClose();
-                    router.push(`/expense/${id}`);
-                  }}
-                  style={{
-                    flex: 1,
-                    height: 48,
-                    borderRadius: theme.radius.md,
-                  }}
-                />
+                {!hideEdit && (
+                  <Button
+                    title={isIncome ? '✏️ Edit Income' : `✏️ ${t('expense_edit_btn')}`}
+                    onPress={() => {
+                      const id = expense.id;
+                      onClose();
+                      router.push(`/expense/${id}`);
+                    }}
+                    style={{
+                      flex: 1,
+                      height: 48,
+                      borderRadius: theme.radius.md,
+                    }}
+                  />
+                )}
               </View>
             </ScrollView>
           </View>
@@ -387,7 +392,7 @@ function ExpenseDetailModal({
   );
 }
 
-const VIBRANT_PALETTE = [
+export const VIBRANT_PALETTE = [
   '#4F46E5', // 1. Indigo
   '#10B981', // 2. Emerald
   '#F59E0B', // 3. Amber
@@ -411,12 +416,15 @@ export function CategoryBreakdown({
   targetCurrency,
   paymentMethods,
   resolver = null,
+  hideEdit = false,
 }: {
   expenses: Expense[];
   targetCurrency?: string;
   paymentMethods?: { method: string; total: number; count: number; pct: number }[];
   /** Snapshot-aware resolver — each row converts at its own date. */
   resolver?: RateResolver | null;
+  /** Read-only contexts (e.g. cycle report) hide the inspect-modal edit action. */
+  hideEdit?: boolean;
 }) {
   const theme = useTheme();
   const { profile } = useAuth();
@@ -841,6 +849,7 @@ export function CategoryBreakdown({
         expense={inspectingExpense}
         currency={currency}
         onClose={() => setInspectingExpense(null)}
+        hideEdit={hideEdit}
       />
     </View>
   );
