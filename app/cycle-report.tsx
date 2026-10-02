@@ -249,8 +249,8 @@ export default function CycleReportScreen() {
             </RNText>
             <RNText
               style={{
-                fontSize: 34,
-                lineHeight: 40,
+                fontSize: 28,
+                lineHeight: 34,
                 fontWeight: '900',
                 color: net >= 0 ? theme.colors.income : theme.colors.danger,
                 includeFontPadding: false,
