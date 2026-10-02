@@ -679,7 +679,7 @@ export function CategoryBreakdown({
                         <Text style={{ flex: 1, fontSize: 11.5, fontWeight: isSelected ? '800' : '700', color: theme.colors.text }} numberOfLines={1}>
                           {item.label}
                         </Text>
-                        <Text style={{ fontSize: 11.5, fontWeight: '800', color: theme.colors.text, fontVariant: ['tabular-nums'] }}>
+                        <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75} style={{ fontSize: 11.5, fontWeight: '800', color: theme.colors.text, fontVariant: ['tabular-nums'] }}>
                           {formatMoney(item.total, currency)}
                         </Text>
                       </View>
@@ -731,7 +731,7 @@ export function CategoryBreakdown({
                   </Text>
                 </View>
 
-                <Text variant="h3" style={{ color: theme.colors.primary, fontWeight: '800', fontSize: 16 }}>
+                <Text variant="h3" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75} style={{ color: theme.colors.primary, fontWeight: '800', fontSize: 16 }}>
                   {formatMoney(selectedCategoryItem.total, currency)}
                 </Text>
               </View>
@@ -770,11 +770,14 @@ export function CategoryBreakdown({
                       </View>
 
                       <View style={{ alignItems: 'flex-end', gap: 2 }}>
-                        <Text variant="label" style={{ fontWeight: '800', color: theme.colors.text, fontSize: 14 }}>
+                        <Text variant="label" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75} style={{ fontWeight: '800', color: theme.colors.text, fontSize: 14 }}>
                           {formatMoney(converted, currency)}
                         </Text>
                         {isDifferent ? (
                           <Text
+                            numberOfLines={1}
+                            adjustsFontSizeToFit
+                            minimumFontScale={0.75}
                             style={{
                               fontSize: 10,
                               fontWeight: '600',

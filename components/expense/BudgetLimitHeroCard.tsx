@@ -415,9 +415,11 @@ export function BudgetLimitHeroCard({
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                         <Clock size={12} color={isOverBudget ? theme.colors.danger : '#F59E0B'} />
                         <Text
+                          numberOfLines={1}
                           style={{
                             fontSize: 11.5,
                             fontWeight: '700',
+                            flexShrink: 1,
                             color: isOverBudget ? theme.colors.danger : '#F59E0B',
                           }}
                         >
@@ -425,7 +427,7 @@ export function BudgetLimitHeroCard({
                         </Text>
                       </View>
 
-                      <Text variant="caption" muted style={{ fontSize: 11, fontWeight: '600' }}>
+                      <Text variant="caption" muted numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7} style={{ fontSize: 11, fontWeight: '600', flexShrink: 1 }}>
                         Target: {isPrivacyMode ? '••••' : formatMoney(monthlyBudget, preferredCurrency)} ({usedPercent})
                       </Text>
                     </View>
@@ -677,9 +679,11 @@ export function BudgetLimitHeroCard({
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                   <TrendingUp size={12} color={isPositiveSavings ? savingsAccent : theme.colors.danger} />
                   <Text
+                    numberOfLines={1}
                     style={{
                       fontSize: 11.5,
                       fontWeight: '700',
+                      flexShrink: 1,
                       color: isPositiveSavings ? savingsAccent : theme.colors.danger,
                     }}
                   >
@@ -687,7 +691,7 @@ export function BudgetLimitHeroCard({
                   </Text>
                 </View>
 
-                <Text variant="caption" muted style={{ fontSize: 11, fontWeight: '600' }}>
+                <Text variant="caption" muted numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7} style={{ fontSize: 11, fontWeight: '600', flexShrink: 1 }}>
                   Savings Rate: {savingsRate}%
                 </Text>
               </View>

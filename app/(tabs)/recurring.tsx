@@ -61,7 +61,8 @@ import {
 } from '@/services/recurring';
 import { notifyRecurringBillDue } from '@/services/notifications';
 import { Category, PaymentMethod, RecurringFrequency, RecurringMode, RecurringRule } from '@/types';
-import { formatMoney, isoDate } from '@/utils/format';
+import { convertCurrency, formatMoney, isoDate } from '@/utils/format';
+import { useExchangeRates } from '@/hooks/useExchangeRates';
 
 export default function RecurringScreen() {
   const { profile } = useAuth();
@@ -149,19 +150,21 @@ export default function RecurringScreen() {
   );
 
   const preferredCurrency = profile?.preferred_currency ?? 'NPR';
+  const { rates } = useExchangeRates();
 
-  // Total monthly commitment for active rules
+  // Total monthly commitment for active rules — each rule stores its own
+  // currency, so normalize every amount into the display currency first.
   const monthlyTotal = useMemo(() => {
     return rules
       .filter((r) => r.is_active)
       .reduce((acc, rule) => {
-        const amt = Number(rule.amount) || 0;
+        const amt = convertCurrency(Number(rule.amount) || 0, rule.currency || preferredCurrency, preferredCurrency, rates);
         if (rule.frequency === 'daily') return acc + amt * 30;
         if (rule.frequency === 'weekly') return acc + amt * 4.33;
         if (rule.frequency === 'custom') return acc + (amt * 30) / Math.max(1, rule.interval_days ?? 30);
         return acc + amt;
       }, 0);
-  }, [rules]);
+  }, [rules, preferredCurrency, rates]);
 
   function openCreateModal() {
     setSelectedRule(null);

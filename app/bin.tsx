@@ -185,7 +185,9 @@ export default function BinScreen() {
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Text
               numberOfLines={1}
-              style={{ fontSize: 12.5, fontWeight: '700', color: theme.colors.textMuted, fontVariant: ['tabular-nums'] }}
+              adjustsFontSizeToFit
+              minimumFontScale={0.7}
+              style={{ fontSize: 12.5, fontWeight: '700', color: theme.colors.textMuted, fontVariant: ['tabular-nums'], flexShrink: 1 }}
             >
               {formatMoney(Number(entity.amount), entity.currency)}
               {item.kind === 'expense' && item.expense.type === 'income' ? ` · ${t('bin_type_income')}` : ''}

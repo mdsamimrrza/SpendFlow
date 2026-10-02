@@ -13,7 +13,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 import {
   ArrowDownRight,
   ArrowUpDown,
@@ -73,25 +73,36 @@ import { calculateCashFlow, currentMonthRange, getCycleLabel, formatMoney } from
 
 type HistoryPeriod = 'all' | 'today' | 'week' | 'month' | 'custom';
 
+/** Both ends must be real ISO dates with from <= to for a deep-link to apply. */
+function isValidCycleLink(from?: string | string[], to?: string | string[]): boolean {
+  if (typeof from !== 'string' || typeof to !== 'string') return false;
+  const iso = /^\d{4}-\d{2}-\d{2}$/;
+  return iso.test(from) && iso.test(to) && from <= to;
+}
+
 export default function HistoryScreen() {
   const { profile, session, refreshProfile } = useAuth();
   const { t, language } = useLanguage();
   const { isPrivacyMode } = usePrivacy();
   const theme = useTheme();
+  const localParams = useLocalSearchParams();
   // Financial data screen: block screenshots / screen recording while mounted.
   usePrivacyScreen();
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [sort, setSort] = useState<SortKey>('date_desc');
-  const [period, setPeriod] = useState<HistoryPeriod>('month');
+  const [period, setPeriod] = useState<HistoryPeriod>(() =>
+    isValidCycleLink(localParams.from, localParams.to) ? 'custom' : 'month',
+  );
   const [typeFilter, setTypeFilter] = useState<'all' | 'expense' | 'income'>('all');
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [categoryModalOpen, setCategoryModalOpen] = useState(false);
-  const [customRange, setCustomRange] = useState<DateRange>({
-    startDate: null,
-    endDate: null,
-  });
+  const [customRange, setCustomRange] = useState<DateRange>(() =>
+    isValidCycleLink(localParams.from, localParams.to)
+      ? { startDate: localParams.from as string, endDate: localParams.to as string }
+      : { startDate: null, endDate: null },
+  );
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [periodModalOpen, setPeriodModalOpen] = useState(false);
   const [calendarOpen, setCalendarOpen] = useState(false);
@@ -101,7 +112,7 @@ export default function HistoryScreen() {
 
   // Pagination state (1-indexed for user display)
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(15);
+  const [pageSize, setPageSize] = useState(10);
   const listRef = useRef<SectionList>(null);
   const timeframeBtnRef = useRef<View>(null);
   const categoryBtnRef = useRef<View>(null);
@@ -643,6 +654,7 @@ export default function HistoryScreen() {
                     : theme.colors.text,
                 fontVariant: ['tabular-nums'],
                 letterSpacing: -0.5,
+                flexShrink: 1,
               }}
               numberOfLines={1}
               adjustsFontSizeToFit
@@ -1324,23 +1336,29 @@ export default function HistoryScreen() {
           >
             <Text
               variant="caption"
+              numberOfLines={1}
               style={{
                 fontWeight: '800',
                 textTransform: 'uppercase',
                 letterSpacing: 0.8,
                 color: theme.colors.textMuted,
                 fontSize: 11,
+                flexShrink: 1,
               }}
             >
               {title}
             </Text>
             <Text
               variant="caption"
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.7}
               style={{
                 fontWeight: '800',
                 color: theme.colors.primary,
                 fontSize: 12,
                 fontVariant: ['tabular-nums'],
+                flexShrink: 1,
               }}
             >
               {formatMoney(total, preferredCurrency)}

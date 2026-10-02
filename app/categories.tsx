@@ -32,7 +32,8 @@ import { useAuth } from '@/hooks/useAuth';
 import { useTheme } from '@/hooks/useTheme';
 import { listCategories } from '@/services/categories';
 import { Category, TransactionType } from '@/types';
-import { formatMoney } from '@/utils/format';
+import { convertCurrency, formatMoney } from '@/utils/format';
+import { useExchangeRates } from '@/hooks/useExchangeRates';
 
 export default function CategoriesScreen() {
   const router = useRouter();
@@ -51,6 +52,10 @@ export default function CategoriesScreen() {
   const [budgetModalOpen, setBudgetModalOpen] = useState(false);
 
   const currency = profile?.preferred_currency ?? 'NPR';
+  const { rates } = useExchangeRates();
+  // Category caps are stored in the budget's own currency (budget_currency,
+  // null = display currency) — convert at the live rate for display only.
+  const budgetCurrency = (profile?.budget_currency || currency).toUpperCase();
 
   async function loadData() {
     if (!userId) {
@@ -98,8 +103,11 @@ export default function CategoriesScreen() {
 
   // Total allocated target budget
   const totalAllocatedBudget = useMemo(() => {
-    return expenseCategories.reduce((acc, cat) => acc + (Number(cat.budget_monthly) || 0), 0);
-  }, [expenseCategories]);
+    return expenseCategories.reduce(
+      (acc, cat) => acc + convertCurrency(Number(cat.budget_monthly) || 0, budgetCurrency, currency, rates),
+      0,
+    );
+  }, [expenseCategories, budgetCurrency, currency, rates]);
 
   const budgetedExpenseCount = useMemo(() => {
     return expenseCategories.filter((c) => (Number(c.budget_monthly) || 0) > 0).length;
@@ -389,7 +397,7 @@ export default function CategoriesScreen() {
           />
         }
         renderItem={({ item }) => {
-          const budget = Number(item.budget_monthly) || 0;
+          const budget = convertCurrency(Number(item.budget_monthly) || 0, budgetCurrency, currency, rates);
           return (
             <Pressable
               onPress={() => handleOpenEdit(item)}

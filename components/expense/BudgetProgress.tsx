@@ -302,19 +302,23 @@ export function BudgetProgress({
                 {/* 2. Amount Figures Row */}
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' }}>
                   <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 4 }}>
-                    <Text style={{ fontSize: 16, fontWeight: '900', color: isOver ? theme.colors.danger : theme.colors.text, fontVariant: ['tabular-nums'] }}>
+                    <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7} style={{ fontSize: 16, fontWeight: '900', color: isOver ? theme.colors.danger : theme.colors.text, fontVariant: ['tabular-nums'], flexShrink: 1 }}>
                       {formatMoney(spent, currency)}
                     </Text>
-                    <Text variant="caption" muted style={{ fontSize: 11 }}>
+                    <Text variant="caption" muted numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7} style={{ fontSize: 11, flexShrink: 1 }}>
                       spent of {formatMoney(budget, currency)}
                     </Text>
                   </View>
 
                   <Text
                     variant="caption"
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.7}
                     style={{
                       fontSize: 11,
                       fontWeight: '800',
+                      flexShrink: 1,
                       color: isOver ? theme.colors.danger : theme.colors.primary,
                     }}
                   >
@@ -402,7 +406,7 @@ export function BudgetProgress({
                               </Text>
                             </View>
 
-                            <Text style={{ fontSize: 12, fontWeight: '800', color: theme.colors.text }}>
+                            <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75} style={{ fontSize: 12, fontWeight: '800', color: theme.colors.text }}>
                               {formatMoney(Number(item.amount), item.currency || currency)}
                             </Text>
                           </View>

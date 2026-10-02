@@ -93,7 +93,7 @@ export function QuickAddSheet({ visible, onClose, templates, onPick }: QuickAddS
                     ×{tpl.count}
                   </Text>
                 </View>
-                <Text variant="body" style={{ fontWeight: '800', fontVariant: ['tabular-nums'] }}>
+                <Text variant="body" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75} style={{ fontWeight: '800', fontVariant: ['tabular-nums'] }}>
                   {formatMoney(tpl.amount, tpl.currency)}
                 </Text>
               </PressableScale>

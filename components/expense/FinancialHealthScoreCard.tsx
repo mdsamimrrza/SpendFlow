@@ -300,7 +300,7 @@ export function FinancialHealthScoreCard({
       savingsRate: computedSavingsRate,
       insights: insights.slice(0, 3),
     };
-  }, [expenses, monthlyBudget, currency, rateResolver, usdResolver, rawBudget, budgetCurrency]);
+  }, [expenses, monthlyBudget, currency, rateResolver, usdResolver, rawBudget, budgetCurrency, isPrivacyMode]);
 
   // Radial dial geometry
   const radius = 40;

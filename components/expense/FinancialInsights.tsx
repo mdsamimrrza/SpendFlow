@@ -349,7 +349,7 @@ export function FinancialInsights({ expenses, targetCurrency, flowType, onFlipFl
 
         {/* Peak day indicator and weekly total */}
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: -2 }}>
-          <Text variant="caption" style={{ fontWeight: '700', color: theme.colors.text }}>
+          <Text variant="caption" numberOfLines={1} style={{ fontWeight: '700', flexShrink: 1, color: theme.colors.text }}>
             {flowType === 'income' ? 'Weekly Inflow: ' : 'Weekly Total: '}
             <Text style={{ fontWeight: '800', color: chartColor }}>
               {isPrivacyMode ? '••••' : `${flowType === 'income' ? '+' : ''}${formatMoney(activeTotal, targetCurrency)}`}
@@ -373,6 +373,7 @@ export function FinancialInsights({ expenses, targetCurrency, flowType, onFlipFl
               <Flame size={11} color={flowType === 'income' ? theme.colors.income : '#F59E0B'} />
               <Text
                 variant="caption"
+                numberOfLines={1}
                 style={{
                   fontWeight: '800',
                   color: flowType === 'income' ? theme.colors.income : '#F59E0B',
@@ -601,7 +602,7 @@ export function FinancialInsights({ expenses, targetCurrency, flowType, onFlipFl
                       ({q.hours})
                     </Text>
                   </View>
-                  <Text variant="caption" style={{ fontWeight: '700', color: chartColor }}>
+                  <Text variant="caption" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7} style={{ fontWeight: '700', flexShrink: 1, color: chartColor }}>
                     {formatMoney(q.total, targetCurrency)} ({q.pct}%)
                   </Text>
                 </View>

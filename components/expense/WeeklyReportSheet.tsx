@@ -390,7 +390,7 @@ export function WeeklyReportSheet({
                           <Text variant="body" style={{ flex: 1, fontWeight: '700' }} numberOfLines={1}>
                             {g.label}
                           </Text>
-                          <Text variant="body" style={{ fontWeight: '800', fontVariant: ['tabular-nums'] }}>
+                          <Text variant="body" numberOfLines={1} style={{ fontWeight: '800', fontVariant: ['tabular-nums'] }}>
                             {formatMoney(g.total, preferredCurrency)}
                           </Text>
                         </View>
@@ -448,7 +448,7 @@ export function WeeklyReportSheet({
                       {data.biggest.date}
                     </Text>
                   </View>
-                  <Text variant="body" style={{ fontWeight: '800', color: theme.colors.danger, fontVariant: ['tabular-nums'] }}>
+                  <Text variant="body" numberOfLines={1} style={{ fontWeight: '800', color: theme.colors.danger, fontVariant: ['tabular-nums'] }}>
                     {formatMoney(Number(data.biggest.amount) || 0, data.biggest.currency || preferredCurrency)}
                   </Text>
                 </View>

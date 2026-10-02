@@ -542,6 +542,20 @@ export default function ProfitLossScreen() {
       const rawBudget = profile?.monthly_budget ?? 0;
       const budgetCurrency = (profile?.budget_currency || profile?.preferred_currency || 'NPR').toUpperCase();
 
+      // Budget IN FORCE per bucket: the newest settings-trail row effective
+      // on/before the bucket end — past cycles keep the figure active at the
+      // time (audit parity), never today's budget retro-projected.
+      const budgetForBucket = (bucketToISO: string): { amount: number | null; currency: string } => {
+        let inForce: UserSettingsPeriod | undefined;
+        for (const p of settingsPeriods) {
+          if (p.effective_from <= bucketToISO) inForce = p;
+        }
+        return {
+          amount: inForce ? inForce.monthly_budget : rawBudget,
+          currency: (inForce?.budget_currency || budgetCurrency).toUpperCase(),
+        };
+      };
+
       let anchor = anchorOnOrBefore(rangeStart);
       while (anchor <= rangeEnd) {
         const cycleEnd = cycleEndFor(anchor);
@@ -553,9 +567,14 @@ export default function ProfitLossScreen() {
           const items = expenses.items.filter((e) => e.date >= bucketFromISO && e.date <= bucketToISO);
           const income = sumIncome(items, currency, rateResolver);
           const expense = sumExpenses(items, currency, rateResolver);
-          const convertedPeriodBudget = (rawBudget > 0 && rateResolver && budgetCurrency !== currency)
-            ? rateResolver.convert(rawBudget, budgetCurrency, currency, bucketToISO)
-            : rawBudget;
+          const inForceBudget = budgetForBucket(bucketToISO);
+          const convertedPeriodBudget =
+            inForceBudget.amount != null &&
+            inForceBudget.amount > 0 &&
+            rateResolver &&
+            inForceBudget.currency !== currency
+              ? rateResolver.convert(inForceBudget.amount, inForceBudget.currency, currency, bucketToISO)
+              : inForceBudget.amount;
           rows.push({
             key: bucketToISO,
             label: `${format(anchor, 'd MMM')} – ${format(cycleEnd, 'd MMM')}`,
@@ -564,7 +583,7 @@ export default function ProfitLossScreen() {
             income,
             expense,
             net: income - expense,
-            budget: convertedPeriodBudget > 0 ? convertedPeriodBudget : null,
+            budget: convertedPeriodBudget != null && convertedPeriodBudget > 0 ? convertedPeriodBudget : null,
           });
         }
         const prevAnchor = new Date(anchor);
@@ -575,7 +594,7 @@ export default function ProfitLossScreen() {
 
       return rows.reverse();
     },
-    [cycleStartDay, cycleEndDay, expenses.items, currency, rateResolver, profile?.monthly_budget, profile?.budget_currency],
+    [cycleStartDay, cycleEndDay, settingsPeriods, expenses.items, currency, rateResolver, profile?.monthly_budget, profile?.budget_currency],
   );
 
   // ── Month-by-month breakdown: cycles within the calendar range picker ──
@@ -729,25 +748,32 @@ export default function ProfitLossScreen() {
     const savingsRate = row.income > 0 ? Math.round((row.net / row.income) * 100) : 0;
 
     return (
-      <View
+      <Pressable
         key={row.key}
-        style={{
+        accessibilityRole="button"
+        accessibilityLabel={t('pl_open_cycle_history') || 'View this cycle\'s history'}
+        onPress={() => router.push({ pathname: '/cycle-report' as any, params: { from: row.from, to: row.to } })}
+        style={({ pressed }) => ({
           borderRadius: theme.radius.md,
           backgroundColor: theme.colors.surface,
           borderWidth: 1,
           borderColor: theme.colors.border,
           padding: 16,
           gap: 12,
-        }}
+          opacity: pressed ? 0.85 : 1,
+        })}
       >
-        {/* Header row — month + net */}
+        {/* Header row — month + net + drill-in chevron */}
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
           <Text style={{ fontSize: 14, fontWeight: '700', color: theme.colors.text }}>
             {row.label}
           </Text>
-          <Text style={{ fontSize: 14, fontWeight: '800', color: rowIsProfit ? theme.colors.income : theme.colors.danger }}>
-            {rowIsProfit ? '+' : '−'}{formatMoney(Math.abs(row.net), currency, isPrivacyMode)}
-          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <Text style={{ fontSize: 14, fontWeight: '800', color: rowIsProfit ? theme.colors.income : theme.colors.danger }}>
+              {rowIsProfit ? '+' : '−'}{formatMoney(Math.abs(row.net), currency, isPrivacyMode)}
+            </Text>
+            <ChevronRight size={15} color={theme.colors.textMuted} />
+          </View>
         </View>
 
         {/* Divider */}
@@ -763,7 +789,7 @@ export default function ProfitLossScreen() {
             <View style={{ width: 80, height: 4, borderRadius: 2, backgroundColor: theme.colors.surfaceElevated, overflow: 'hidden' }}>
               <View style={{ width: `${incomeWidth}%`, height: '100%', backgroundColor: theme.colors.income, borderRadius: 2 }} />
             </View>
-            <Text style={{ fontSize: 12.5, fontWeight: '700', color: theme.colors.income, minWidth: 90, textAlign: 'right' }}>
+            <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6} style={{ fontSize: 12.5, fontWeight: '700', color: theme.colors.income, width: 110, textAlign: 'right' }}>
               {formatMoney(row.income, currency, isPrivacyMode)}
             </Text>
           </View>
@@ -779,7 +805,7 @@ export default function ProfitLossScreen() {
             <View style={{ width: 80, height: 4, borderRadius: 2, backgroundColor: theme.colors.surfaceElevated, overflow: 'hidden' }}>
               <View style={{ width: `${expenseWidth}%`, height: '100%', backgroundColor: theme.colors.danger, borderRadius: 2 }} />
             </View>
-            <Text style={{ fontSize: 12.5, fontWeight: '700', color: theme.colors.danger, minWidth: 90, textAlign: 'right' }}>
+            <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6} style={{ fontSize: 12.5, fontWeight: '700', color: theme.colors.danger, width: 110, textAlign: 'right' }}>
               {formatMoney(row.expense, currency, isPrivacyMode)}
             </Text>
           </View>
@@ -793,9 +819,13 @@ export default function ProfitLossScreen() {
               <Text style={{ fontSize: 12.5, fontWeight: '600', color: theme.colors.textMuted }}>Budget</Text>
             </View>
             <Text
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.7}
               style={{
                 fontSize: 12.5,
                 fontWeight: '700',
+                flexShrink: 1,
                 color: row.expense > row.budget ? theme.colors.danger : theme.colors.text,
               }}
             >
@@ -825,7 +855,7 @@ export default function ProfitLossScreen() {
             </Text>
           </View>
         )}
-      </View>
+      </Pressable>
     );
   }
 
@@ -1049,20 +1079,20 @@ export default function ProfitLossScreen() {
                   </Text>
                 </View>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 1 }}>
                     <TrendingUp size={12} color={theme.colors.income} />
-                    <Text style={{ fontSize: 12, fontWeight: '700', color: theme.colors.income }}>
+                    <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7} style={{ fontSize: 12, fontWeight: '700', color: theme.colors.income }}>
                       +{formatMoney(sel.income, currency, isPrivacyMode)}
                     </Text>
                   </View>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 1 }}>
                     <TrendingDown size={12} color={theme.colors.danger} />
-                    <Text style={{ fontSize: 12, fontWeight: '700', color: theme.colors.danger }}>
+                    <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7} style={{ fontSize: 12, fontWeight: '700', color: theme.colors.danger }}>
                       −{formatMoney(sel.expense, currency, isPrivacyMode)}
                     </Text>
                   </View>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                    <Text style={{ fontSize: 12.5, fontWeight: '900', color: sel.net >= 0 ? theme.colors.income : theme.colors.danger }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 1 }}>
+                    <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7} style={{ fontSize: 12.5, fontWeight: '900', color: sel.net >= 0 ? theme.colors.income : theme.colors.danger }}>
                       Net: {sel.net >= 0 ? '+' : '−'}{formatMoney(Math.abs(sel.net), currency, isPrivacyMode)}
                     </Text>
                   </View>

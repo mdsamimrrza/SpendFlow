@@ -90,7 +90,7 @@ export function StockTrendChart({
   const { t, language } = useLanguage();
   const { resolver: builtResolver } = useRateResolver(expenses, targetCurrency);
   const activeResolver = resolver ?? builtResolver;
-  usePrivacy();
+  const { isPrivacyMode } = usePrivacy();
   const { width } = useWindowDimensions();
   const [viewMode, setViewMode] = useState<FlowViewMode>('both');
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -451,12 +451,25 @@ export function StockTrendChart({
       const val = minAmount + (range * i) / steps;
       const normalizedY = (val - minAmount) / range;
       const y = chartHeight - paddingBottom - normalizedY * usableHeight;
-      // Use formatMoney for proper currency formatting on the y-axis label
-      const label = formatMoney(val, targetCurrency);
+      // Privacy mode masks exact axis figures; compact labels keep the
+      // narrow left gutter from clipping.
+      const label = isPrivacyMode ? '•••' : formatCurrency(val, targetCurrency);
       lines.push({ y, label });
     }
     return lines;
-  }, [maxAmount, minAmount, chartHeight, usableHeight, targetCurrency]);
+  }, [maxAmount, minAmount, chartHeight, usableHeight, targetCurrency, isPrivacyMode]);
+
+  // Per-day pill width locked to the UNMASKED label length so toggling
+  // privacy never shifts the adjacent "% vs prev" badge (zero-shift rule).
+  const dayDivisor = filter === 'today' ? 1 : filter === 'daily' ? 7 : filter === 'weekly' ? 28 : filter === 'monthly' ? 180 : 365;
+  const expensePillWidth = useMemo(() => {
+    const s = `~${formatMoney(currentExpenseTotal / dayDivisor, targetCurrency, false)}/day`;
+    return Math.max(72, s.length * 6.4 + 16);
+  }, [currentExpenseTotal, dayDivisor, targetCurrency]);
+  const incomePillWidth = useMemo(() => {
+    const s = `~${formatMoney(currentIncomeTotal / dayDivisor, targetCurrency, false)}/day`;
+    return Math.max(72, s.length * 6.4 + 16);
+  }, [currentIncomeTotal, dayDivisor, targetCurrency]);
 
   // Days in current month — used for per-day average when filter === 'weekly' (1M)
 
@@ -650,7 +663,7 @@ export function StockTrendChart({
           {viewMode === 'both' ? (
             <View style={{ gap: 2 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1 }}>
                   <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: expenseColor }} />
                   <Text
                     numberOfLines={1}
@@ -661,7 +674,7 @@ export function StockTrendChart({
                     {formatMoney(currentExpenseTotal, targetCurrency)}
                   </Text>
                 </View>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1 }}>
                   <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: theme.colors.income }} />
                   <Text
                     numberOfLines={1}
@@ -740,6 +753,8 @@ export function StockTrendChart({
           ) : (
             <View
               style={{
+                width: expensePillWidth,
+                alignItems: 'center',
                 paddingHorizontal: 8,
                 paddingVertical: 3,
                 borderRadius: theme.radius.full,
@@ -748,8 +763,8 @@ export function StockTrendChart({
                 borderColor: theme.colors.border,
               }}
             >
-              <Text variant="caption" muted style={{ fontSize: 10.5, fontWeight: '700' }}>
-                ~{formatMoney(currentExpenseTotal / (filter === 'today' ? 1 : filter === 'daily' ? 7 : filter === 'weekly' ? 28 : filter === 'monthly' ? 180 : 365), targetCurrency)}/day
+              <Text variant="caption" muted numberOfLines={1} style={{ fontSize: 10.5, fontWeight: '700' }}>
+                ~{formatMoney(currentExpenseTotal / dayDivisor, targetCurrency)}/day
               </Text>
             </View>
           )
@@ -789,6 +804,8 @@ export function StockTrendChart({
             ) : null}
             <View
               style={{
+                width: expensePillWidth,
+                alignItems: 'center',
                 paddingHorizontal: 8,
                 paddingVertical: 3,
                 borderRadius: theme.radius.full,
@@ -797,8 +814,8 @@ export function StockTrendChart({
                 borderColor: theme.colors.border,
               }}
             >
-              <Text variant="caption" muted style={{ fontSize: 10.5, fontWeight: '700' }}>
-                ~{formatMoney(currentExpenseTotal / (filter === 'today' ? 1 : filter === 'daily' ? 7 : filter === 'weekly' ? 28 : filter === 'monthly' ? 180 : 365), targetCurrency)}/day
+              <Text variant="caption" muted numberOfLines={1} style={{ fontSize: 10.5, fontWeight: '700' }}>
+                ~{formatMoney(currentExpenseTotal / dayDivisor, targetCurrency)}/day
               </Text>
             </View>
           </View>
@@ -838,6 +855,8 @@ export function StockTrendChart({
             ) : null}
             <View
               style={{
+                width: incomePillWidth,
+                alignItems: 'center',
                 paddingHorizontal: 8,
                 paddingVertical: 3,
                 borderRadius: theme.radius.full,
@@ -846,8 +865,8 @@ export function StockTrendChart({
                 borderColor: theme.colors.border,
               }}
             >
-              <Text variant="caption" style={{ fontSize: 10.5, fontWeight: '700', color: theme.colors.income }}>
-                ~{formatMoney(currentIncomeTotal / (filter === 'today' ? 1 : filter === 'daily' ? 7 : filter === 'weekly' ? 28 : filter === 'monthly' ? 180 : 365), targetCurrency)}/day
+              <Text variant="caption" numberOfLines={1} style={{ fontSize: 10.5, fontWeight: '700', color: theme.colors.income }}>
+                ~{formatMoney(currentIncomeTotal / dayDivisor, targetCurrency)}/day
               </Text>
             </View>
           </View>

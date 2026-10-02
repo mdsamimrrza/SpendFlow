@@ -235,7 +235,7 @@ export function IncomeExpenseBudgetCard({
               <Text variant="caption" style={{ fontSize: 12, fontWeight: '700', color: theme.colors.text }}>
                 Income Consumption Rate
               </Text>
-              <Text variant="caption" style={{ fontSize: 12, fontWeight: '800', color: expenseToIncomeRatio > 100 ? theme.colors.danger : theme.colors.primary }}>
+              <Text variant="caption" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7} style={{ fontSize: 12, fontWeight: '800', flexShrink: 1, color: expenseToIncomeRatio > 100 ? theme.colors.danger : theme.colors.primary }}>
                 {expenseToIncomeRatio}% spent ({formatMoney(totalExpense, currency)})
               </Text>
             </View>
@@ -269,9 +269,13 @@ export function IncomeExpenseBudgetCard({
               </Text>
               <Text
                 variant="caption"
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.7}
                 style={{
                   fontSize: 12,
                   fontWeight: '800',
+                  flexShrink: 1,
                   color: isOverBudget ? theme.colors.danger : isNearBudget ? theme.colors.warning : theme.colors.primary,
                 }}
               >
