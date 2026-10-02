@@ -145,6 +145,14 @@ export default function CycleReportScreen() {
   const prevCycle = shiftedCycle(-1);
   const nextCycle = shiftedCycle(1);
   const nextDisabled = nextCycle.from > format(new Date(), 'yyyy-MM-dd');
+  // Past navigation stops at the cycle holding the user's FIRST entry —
+  // stepping earlier would only page through empty cycles. Intermediate
+  // empty cycles between the first entry and today stay reachable.
+  const earliestEntry = useMemo(
+    () => expenses.items.reduce<string | null>((min, e) => (!min || e.date < min ? e.date : min), null),
+    [expenses.items],
+  );
+  const prevDisabled = !earliestEntry || prevCycle.to < earliestEntry;
   const goCycle = (c: { from: string; to: string }) => {
     router.setParams({ from: c.from, to: c.to });
   };
@@ -192,11 +200,12 @@ export default function CycleReportScreen() {
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
           <Pressable
             onPress={() => goCycle(prevCycle)}
+            disabled={prevDisabled}
             accessibilityLabel="Previous cycle"
             style={({ pressed }) => ({
               width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center',
               borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceElevated,
-              opacity: pressed ? 0.7 : 1,
+              opacity: prevDisabled ? 0.35 : pressed ? 0.7 : 1,
             })}
           >
             <ChevronLeft size={17} color={theme.colors.text} />
