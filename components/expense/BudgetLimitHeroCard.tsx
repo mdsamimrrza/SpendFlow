@@ -459,7 +459,7 @@ export function BudgetLimitHeroCard({
             )}
 
             {/* ── 4. THREE INFO METRIC TILES ── */}
-            <View style={{ flexDirection: 'row', gap: 8, marginTop: 2 }}>
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 2, alignItems: 'flex-start' }}>
               <View style={metricTile}>
                 <Text variant="caption" muted style={{ fontSize: 10, fontWeight: '600', letterSpacing: 0.2 }}>
                   Spent Today
@@ -720,7 +720,7 @@ export function BudgetLimitHeroCard({
             </View>
 
             {/* ── 4. THREE INFO METRIC TILES (INCOME SIDE) ── */}
-            <View style={{ flexDirection: 'row', gap: 8, marginTop: 2 }}>
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 2, alignItems: 'flex-start' }}>
               {/* Box 1: Income This Month */}
               <View style={metricTile}>
                 <Text variant="caption" muted style={{ fontSize: 10, fontWeight: '600', letterSpacing: 0.2 }}>
@@ -770,6 +770,7 @@ export function BudgetLimitHeroCard({
                     fontWeight: '800',
                     color: saveIsUp ? savingsAccent : theme.colors.danger,
                     textAlign: 'center',
+                    flexShrink: 1,
                   }}
                 >
                   {saveIsUp ? '▲' : '▼'} {fmtVsLastMonth(savePctVsLastMonth)} vs last mon
