@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Modal, Pressable, RefreshControl, ScrollView, TextInput, View, useWindowDimensions } from 'react-native';
 import { useRouter } from 'expo-router';
 import { format } from 'date-fns';
@@ -57,7 +57,8 @@ export default function ProfitLossScreen() {
   const expenses = useExpenses(profile?.id, { fetchAll: true });
   const currency = profile?.preferred_currency ?? 'NPR';
 
-  // Default reporting range: Jan 1 of the current year → today
+  // Placeholder reporting range until data loads — then replaced once by the
+  // effect below (first entry's previous month → current cycle end).
   const now = new Date();
   const [range, setRange] = useState<DateRange>({
     startDate: toISO(new Date(now.getFullYear(), 0, 1)),
@@ -94,6 +95,25 @@ export default function ProfitLossScreen() {
   const [modalEndDay, setModalEndDay] = useState(cycleEndDay !== null ? String(cycleEndDay) : '');
 
   const activeCycle = useMemo(() => currentMonthRange(cycleStartDay, cycleEndDay), [cycleStartDay, cycleEndDay]);
+
+  // Default reporting window, applied once on first data load: start on the
+  // 1st of the month BEFORE the user's first entry, end at the current
+  // cycle's end date. Never overrides a range the user already changed.
+  const rangeAutoSetRef = useRef(false);
+  useEffect(() => {
+    if (rangeAutoSetRef.current || expenses.items.length === 0) return;
+    rangeAutoSetRef.current = true;
+    let earliest = expenses.items[0].date;
+    for (const e of expenses.items) {
+      if (e.date < earliest) earliest = e.date;
+    }
+    const autoStart = toISO(new Date(
+      Number(earliest.slice(0, 4)),
+      Number(earliest.slice(5, 7)) - 2,
+      1,
+    ));
+    setRange({ startDate: autoStart, endDate: activeCycle.to });
+  }, [expenses.items, activeCycle.to]);
   const activeCycleRangeText = useMemo(() => {
     try {
       const f = new Date(activeCycle.from);
