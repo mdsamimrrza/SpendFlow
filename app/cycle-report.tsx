@@ -18,7 +18,7 @@ import { fetchUserSettingsHistory } from '@/services/settingsHistory';
 import type { UserSettingsPeriod } from '@/types';
 import { formatMoney, sumExpenses } from '@/utils/format';
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 6;
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 
 const parseISODate = (iso: string) =>
@@ -28,7 +28,7 @@ const parseISODate = (iso: string) =>
  * Cycle report — opened by tapping a Month-by-Month card on the Budget &
  * Reports screen (params from/to, inclusive both ends). One financial cycle
  * at a glance: summary hero, the main-page stock trend graph, the main-page
- * category breakdown, and the cycle's transactions paginated 10 per page. Web mirror:
+ * category breakdown, and the cycle's transactions paginated 6 per page. Web mirror:
  * app/(dashboard)/profit-loss/cycle/page.tsx.
  */
 export default function CycleReportScreen() {
