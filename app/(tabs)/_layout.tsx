@@ -3,12 +3,18 @@ import { Tabs } from 'expo-router';
 import { BarChart3, CalendarClock, Home, List, Settings } from 'lucide-react-native';
 import { useLanguage } from '@/hooks/useLanguage';
 import { useTheme } from '@/hooks/useTheme';
+import { UpdateCard } from '@/components/UpdateCard';
 
 export default function TabsLayout() {
   const theme = useTheme();
   const { t } = useLanguage();
 
   return (
+    <>
+      {/* In-app update check: card when a newer APK is published, blocking
+          modal when this build is below min_version. Renders nothing when
+          this build is up to date or no release is published. */}
+      <UpdateCard />
     <Tabs
       screenOptions={{
         headerShown: false,
@@ -59,5 +65,6 @@ export default function TabsLayout() {
         }}
       />
     </Tabs>
+    </>
   );
 }
