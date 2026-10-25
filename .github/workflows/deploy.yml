@@ -21,16 +21,11 @@ jobs:
           # @supabase/* requires Node >= 22
           node-version: 22
 
-      - name: 🧶 Enable Yarn (repo uses yarn 4 via corepack)
-        run: corepack enable
-
       - name: 🚀 Install EAS CLI
         run: npm install -g eas-cli
 
       - name: 📦 Install Dependencies
-        # yarn.lock is the canonical lockfile; the stale package-lock.json
-        # was removed because it drifted out of sync and broke `npm ci`.
-        run: yarn install --immutable
+        run: npm ci
 
       - name: 🔐 Restore Firebase configuration
         env:
