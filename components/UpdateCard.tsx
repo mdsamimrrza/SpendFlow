@@ -44,7 +44,9 @@ export function UpdateCard() {
   if (!hardBlock && dismissed) return null;
 
   const download = () => {
-    if (release.apk_url) void Linking.openURL(release.apk_url);
+    // Only open https URLs from the public release row — never arbitrary
+    // schemes, even though only service_role can write the row today.
+    if (release.apk_url.startsWith('https://')) void Linking.openURL(release.apk_url);
   };
 
   const body = (

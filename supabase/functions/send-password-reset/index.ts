@@ -65,8 +65,14 @@ Deno.serve(async (req: Request) => {
   // client sends its origin. audit run-1: relying only on the scheme check +
   // the deployed GoTrue allowlist left the binding unverifiable in-repo, so
   // when PASSWORD_RESET_ALLOWED_ORIGINS is set (comma-separated exact
-  // origins) it becomes a hard in-function gate; the GoTrue allowlist stays
-  // as the second layer.
+  // origins) it becomes a hard in-function gate. audit run-2 (2026-10-25):
+  // the gate now FAILS CLOSED — an unset allowlist rejects every non-local
+  // origin instead of accepting any https:// origin, because this endpoint
+  // is unauthenticated (verify_jwt = false) and the caller fully controls
+  // `origin`, which is embedded into the recovery email's redirectTo. Set
+  // PASSWORD_RESET_ALLOWED_ORIGINS (e.g. the deployed web app's exact
+  // origin) BEFORE deploying, or web-channel resets will answer bad_request.
+  // The GoTrue dashboard allowlist stays as the second layer.
   let redirectTo = MOBILE_REDIRECT;
   if (channel === 'web') {
     try {
@@ -77,7 +83,8 @@ Deno.serve(async (req: Request) => {
         .map((s) => s.trim().toLowerCase())
         .filter(Boolean);
       const isLocalDev = u.hostname === 'localhost' || u.hostname === '127.0.0.1';
-      if (allowlist.length > 0 ? !allowlist.includes(origin.toLowerCase()) && !isLocalDev : u.protocol !== 'https:' && !isLocalDev) {
+      const allowed = isLocalDev || allowlist.includes(origin.toLowerCase());
+      if (!allowed) {
         return json({ success: false, code: 'bad_request' });
       }
       redirectTo = `${origin}/auth/callback`;
