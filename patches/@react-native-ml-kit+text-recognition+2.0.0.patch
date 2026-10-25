@@ -16,14 +16,25 @@ index 421bcfc..f91cfe0 100644
 -  s.dependency 'GoogleMLKit/TextRecognitionKorean', '8.0.0'
  end
  
+diff --git a/node_modules/@react-native-ml-kit/text-recognition/android/.gitignore b/node_modules/@react-native-ml-kit/text-recognition/android/.gitignore
+new file mode 100644
+index 0000000..6125af2
+--- /dev/null
++++ b/node_modules/@react-native-ml-kit/text-recognition/android/.gitignore
+@@ -0,0 +1,4 @@
++*.iml
++gradle/
++gradlew
++gradlew.bat
 diff --git a/node_modules/@react-native-ml-kit/text-recognition/android/build.gradle b/node_modules/@react-native-ml-kit/text-recognition/android/build.gradle
-index 6a2e36f..6724b43 100644
+index 6a2e36f..808482b 100644
 --- a/node_modules/@react-native-ml-kit/text-recognition/android/build.gradle
 +++ b/node_modules/@react-native-ml-kit/text-recognition/android/build.gradle
-@@ -63,12 +63,4 @@ dependencies {
+@@ -62,13 +62,10 @@ dependencies {
+     //noinspection GradleDynamicVersion
      implementation 'com.facebook.react:react-native:+'  // From node_modules
      // To recognize Latin script
-     implementation 'com.google.mlkit:text-recognition:16.0.1'
+-    implementation 'com.google.mlkit:text-recognition:16.0.1'
 -    // To recognize Chinese script
 -    implementation 'com.google.mlkit:text-recognition-chinese:16.0.1'
 -    // To recognize Devanagari script
@@ -32,6 +43,12 @@ index 6a2e36f..6724b43 100644
 -    implementation 'com.google.mlkit:text-recognition-japanese:16.0.1'
 -    // To recognize Korean script
 -    implementation 'com.google.mlkit:text-recognition-korean:16.0.1'
++    // SpendFlow patch: UNBUNDLED via Google Play services — the OCR model
++    // (~10.5MB libmlkit_google_ocr_pipeline.so) is no longer packaged in the
++    // APK; Play delivers it on install (see the DEPENDENCIES meta-data in the
++    // app manifest). Same com.google.mlkit.vision.* API surface as the bundled
++    // artifact, so no Java changes are needed.
++    implementation 'com.google.android.gms:play-services-mlkit-text-recognition:19.0.1'
  }
 diff --git a/node_modules/@react-native-ml-kit/text-recognition/android/src/main/java/com/rnmlkit/textrecognition/TextRecognitionModule.java b/node_modules/@react-native-ml-kit/text-recognition/android/src/main/java/com/rnmlkit/textrecognition/TextRecognitionModule.java
 index 004bfb3..28f89d3 100644
