@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Animated, Easing, FlatList, Pressable, RefreshControl, View } from 'react-native';
 import { Link, useFocusEffect, useRouter } from 'expo-router';
 import { ArrowRight, Plus, ReceiptText } from 'lucide-react-native';
-import { format as formatDate } from 'date-fns';
 import { Avatar } from '@/components/ui/Avatar';
 import { BudgetLimitHeroCard } from '@/components/expense/BudgetLimitHeroCard';
 import { BillsDueStrip } from '@/components/expense/BillsDueStrip';
@@ -38,7 +37,7 @@ export default function HomeScreen() {
   const { isPrivacyMode } = usePrivacy();
   const theme = useTheme();
   const router = useRouter();
-  const { rates, status: rateStatus, fetchedAt: rateFetchedAt } = useExchangeRates();
+  const { rates } = useExchangeRates();
   // Financial data screen: block screenshots / screen recording while mounted.
   usePrivacyScreen();
   // Dashboard derivations are memoized: without this, every render (including
@@ -407,16 +406,6 @@ export default function HomeScreen() {
               prevMonthIncome={prevMonthIncome}
               budgetRatioBase={budgetRatioBase}
             />
-
-            {/* Rate-basis disclosure: names the tier behind every converted
-                figure — live provider quote, past-TTL cache (with its fetch
-                date), or the offline baseline — so conversions are provable,
-                not presumed. */}
-            <Text variant="caption" muted style={{ fontSize: 11, fontWeight: '500', textAlign: 'center', marginTop: 2 }}>
-              {rateStatus === 'estimated' || !rateFetchedAt
-                ? t('fx_basis_estimated')
-                : `${t(rateStatus === 'live' ? 'fx_basis_live' : 'fx_basis_cached')} · ${formatDate(rateFetchedAt, 'MMM d')}`}
-            </Text>
 
             {/* 2.5 BILLS DUE — open recurring slots with one-tap Mark Paid */}
             <BillsDueStrip />
