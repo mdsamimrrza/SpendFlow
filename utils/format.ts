@@ -5,22 +5,25 @@ import { Expense, PeriodKey, UserProfile } from '@/types';
 
 let globalPrivacyMode = false;
 
+// Last-resort display rates when no resolver/rate context can answer — keep
+// in sync with FALLBACK_UNITS_PER_USD in services/exchange.ts (refreshed
+// 2026-10-13 from the er-api daily fix).
 const DEFAULT_RATES: Record<string, number> = {
   USD: 1.0,
-  // 94.84 INR/USD × 1.60 (NRB peg) — kept peg-consistent by construction.
-  NPR: 151.74,
-  INR: 94.84,
+  // 95.91 INR/USD × 1.60 (NRB peg) — kept peg-consistent by construction.
+  NPR: 153.45,
+  INR: 95.91,
   QAR: 3.64,
-  GBP: 0.738,
-  EUR: 0.86,
+  GBP: 0.7566,
+  EUR: 0.8952,
   AED: 3.6725,
   SAR: 3.75,
-  CAD: 1.378,
-  AUD: 1.386,
-  JPY: 153.8,
-  SGD: 1.265,
-  MYR: 4.06,
-  KRW: 1341.0,
+  CAD: 1.4274,
+  AUD: 1.4365,
+  JPY: 158.54,
+  SGD: 1.2808,
+  MYR: 4.0833,
+  KRW: 1333.74,
 };
 
 export function convertCurrency(

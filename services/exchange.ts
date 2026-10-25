@@ -20,19 +20,28 @@ export const NPR_PER_INR = 1.6;
 // Last-resort approximation when neither DB cache nor the API can answer.
 // Pegged currencies (QAR/AED/SAR) are resolved by PEGGED_USD_PER_UNIT instead,
 // and NPR is derived from INR (see fallbackUsdPerUnit) — so NPR has no entry
-// here by design. Values refreshed 2026-09-16; keep roughly current-era so the
-// worst case is a small drift, never the old ~12% INR gap.
+// here by design. Values refreshed 2026-10-13 from the er-api daily fix
+// (cross-checked vs the ECB fix, within 0.2%); keep roughly current-era so the
+// worst case is a small drift, never the old ~12% INR gap. Keep in sync with
+// DEFAULT_RATES in utils/format.ts.
 const FALLBACK_UNITS_PER_USD: Record<string, number> = {
   USD: 1,
-  INR: 95.99,
+  INR: 95.91,
   QAR: 3.64,
-  GBP: 0.742,
-  MYR: 4.0844,
-  KRW: 1360.36,
-  JPY: 155.08,
-  AUD: 1.4031,
-  CAD: 1.3913,
+  GBP: 0.7566,
+  MYR: 4.0833,
+  KRW: 1333.74,
+  JPY: 158.54,
+  AUD: 1.4365,
+  CAD: 1.4274,
 };
+
+// Floating currencies SpendFlow resolves live quotes for — the per-currency
+// median set in loadLatestUnitsPerUsd, and the same list the fetch-exchange-
+// rates Edge Function warms into exchange_rates daily (16:30 UTC, ECB
+// fixings). Pegged (QAR/AED/SAR) and peg-derived (NPR) currencies never enter
+// this path: they resolve by constant or INR derivation.
+const FLOATING_SYMBOLS = ['INR', 'GBP', 'MYR', 'KRW', 'JPY', 'AUD', 'CAD'] as const;
 
 // ── Session rate memory ─────────────────────────────────────────────────────
 // Historical rates never change, so they are remembered for the whole session;
@@ -210,6 +219,15 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+/** Middle value for an odd count, mean of the two middles for an even count. */
+function medianOf(values: number[]): number | null {
+  if (values.length === 0) return null;
+  if (values.length === 1) return values[0];
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = sorted.length >> 1;
+  return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
 function fallbackUsdPerUnit(currency: string): number {
   // NPR is pegged to INR — derive from INR's fallback, never an NPR entry.
   if (currency === 'NPR') {
@@ -301,9 +319,14 @@ export function createExchangeService(client: SupabaseClient) {
     return hi >= 0 ? list[hi].rate : null;
   }
 
-  // One live-rates call (primary API, then fallback) answers every remaining
-  // currency at once — replaces the old per-currency historical fetches that
-  // made balance loading take many seconds.
+  // One live-rates pass answers every remaining currency at once (replaces the
+  // old per-currency historical fetches that made balance loading take many
+  // seconds). All sources run CONCURRENTLY and the tracked floating currencies
+  // take the PER-CURRENCY MEDIAN across every provider that answered — so a
+  // single provider publishing a stale or outlier fix (the 2026-10-13 case:
+  // er-api INR 95.91 vs ECB 95.78 for the same day) can no longer move a
+  // displayed number on its own. Non-tracked currencies keep the first
+  // full-map provider's value; a Frankfurter miss just shrinks the median set.
   let latestAt = 0;
   let latestUnits: Record<string, number> | null = null;
   async function loadLatestUnitsPerUsd(): Promise<Record<string, number> | null> {
@@ -319,23 +342,42 @@ export function createExchangeService(client: SupabaseClient) {
     const keyedUrl = process.env.EXCHANGE_RATE_API_KEY
       ? `https://v6.exchangerate-api.com/v6/${process.env.EXCHANGE_RATE_API_KEY}/latest/USD`
       : null;
-    const urls = keyedUrl ? [primary, fallbackApi, keyedUrl] : [primary, fallbackApi];
-    for (const url of urls) {
-      const data = (await fetchJsonWithTimeout(url, 8_000)) as
-        | { rates?: Record<string, number> }
-        | null;
-      if (data?.rates && typeof data.rates === 'object') {
-        latestUnits = data.rates;
-        // Nepal–India peg: never consume a market NPR rate — derive it.
-        const inrPerUsd = Number(latestUnits.INR);
-        if (Number.isFinite(inrPerUsd) && inrPerUsd > 0) {
-          latestUnits.NPR = inrPerUsd * NPR_PER_INR;
-        }
-        latestAt = Date.now();
-        return latestUnits;
-      }
+    // Third opinion for the median: ECB reference rates via Frankfurter — the
+    // only provider here with a genuinely independent underlying feed.
+    const frankfurterUrl = `https://api.frankfurter.dev/v1/latest?base=USD&symbols=${FLOATING_SYMBOLS.join(',')}`;
+
+    type UnitsResponse = { rates?: Record<string, number> };
+    const candidateUrls: string[] = keyedUrl ? [primary, fallbackApi, keyedUrl] : [primary, fallbackApi];
+    const settled = await Promise.allSettled([
+      ...candidateUrls.map(
+        (url) => fetchJsonWithTimeout(url, 8_000) as Promise<UnitsResponse | null>,
+      ),
+      fetchJsonWithTimeout(frankfurterUrl, 8_000) as Promise<UnitsResponse | null>,
+    ]);
+    const maps = settled
+      .map((r) => (r.status === 'fulfilled' ? r.value : null))
+      .filter((d): d is UnitsResponse => !!d?.rates && typeof d.rates === 'object');
+
+    // First successful full map wins as the base; Frankfurter (last) only
+    // covers FLOATING_SYMBOLS, so it contributes medians but never the base.
+    const base = maps[0]?.rates;
+    if (!base) return null;
+    const merged: Record<string, number> = { ...base };
+    for (const ccy of FLOATING_SYMBOLS) {
+      const values = maps
+        .map((m) => Number(m.rates?.[ccy]))
+        .filter((v) => Number.isFinite(v) && v > 0);
+      const median = medianOf(values);
+      if (median !== null) merged[ccy] = round8(median);
     }
-    return null;
+    // Nepal–India peg: never consume a market NPR rate — derive it.
+    const inrPerUsd = Number(merged.INR);
+    if (Number.isFinite(inrPerUsd) && inrPerUsd > 0) {
+      merged.NPR = inrPerUsd * NPR_PER_INR;
+    }
+    latestUnits = merged;
+    latestAt = Date.now();
+    return latestUnits;
   }
 
   async function getRate(currency: string, date: string): Promise<number> {
@@ -358,10 +400,12 @@ export function createExchangeService(client: SupabaseClient) {
     if (!isIsoDate(date)) return fallbackUsdPerUnit(ccy);
 
     // CURRENT-rate requests (date >= today) go API-FIRST — web parity
-    // (docs/SYNC-STRATEGY §6.1, web fix 2026-09-15): no job refreshes
-    // `exchange_rates`, so any row — however recent — can be months old and
-    // silently price today's figures with a stale rate (web measured a frozen
-    // INR ≈ 95.2 row vs 95.96 live, ~0.7% off every current-value display).
+    // (docs/SYNC-STRATEGY §6.1, web fix 2026-09-15). The `exchange_rates`
+    // table IS warmed daily now (pg_cron 16:30 UTC → fetch-exchange-rates
+    // Edge Function, ECB fixings via Frankfurter — verified live 2026-10-13),
+    // but even yesterday's row can lag a fast market, and any date the job
+    // missed still rots — so live quotes stay the primary source and the
+    // table remains the offline fallback of any age.
     // Tier order mirrors web exactly: frankfurter (ECB reference) → er-api
     // live → table (offline fallback, any age) → static fallback. DATED
     // requests keep the table-first byte-compat order below, unchanged.

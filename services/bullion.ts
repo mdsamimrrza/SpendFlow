@@ -3,11 +3,12 @@ import { getKathmanduToday, OfficialNepalGoldRate } from '@/services/nepalGold';
 
 const DEFAULT_RATES: Record<string, number> = {
   USD: 1.0,
-  // 94.84 INR/USD × 1.60 (NRB peg) — kept peg-consistent by construction.
-  NPR: 151.74,
-  INR: 94.84,
+  // 95.91 INR/USD × 1.60 (NRB peg) — kept peg-consistent by construction.
+  // Refreshed 2026-10-13; keep in sync with utils/format.ts DEFAULT_RATES.
+  NPR: 153.45,
+  INR: 95.91,
   QAR: 3.64,
-  GBP: 0.738,
+  GBP: 0.7566,
 };
 
 function convertCurrency(
@@ -600,7 +601,7 @@ export async function buildBullionMarketHistoryAll(
   if (rows.length < 2) return empty;
 
   const ratesByDate = await fetchHistoricalUnitsPerUsd(rows.map((r) => r.date), ccy);
-  const staticRate = ccy === 'NPR' ? 151.74 : DEFAULT_RATES[ccy] ?? 1;
+  const staticRate = ccy === 'NPR' ? DEFAULT_RATES.NPR : DEFAULT_RATES[ccy] ?? 1;
 
   const isNPR = ccy === 'NPR';
   const isINR = ccy === 'INR';
@@ -673,7 +674,7 @@ export async function buildBullionMarketHistory(
   if (rows.length < 2) return [];
 
   const ratesByDate = await fetchHistoricalUnitsPerUsd(rows.map((r) => r.date), ccy);
-  const staticRate = ccy === 'NPR' ? 151.74 : DEFAULT_RATES[ccy] ?? 1;
+  const staticRate = ccy === 'NPR' ? DEFAULT_RATES.NPR : DEFAULT_RATES[ccy] ?? 1;
 
   const isNPR = ccy === 'NPR';
   const isINR = ccy === 'INR';
