@@ -457,12 +457,7 @@ onboarding_country_title: 'आपका देश',
   bullion_calc_title: 'तत्काल धातु मूल्य कैलकुलेटर',
   bullion_guide_title: 'बुलियन मानक और खरीद गाइड',
 
-  // ── FX / "आज की दर पर" ──
-  curAtTodayRate: 'आज की दर पर',
-  curAtTxnRate: 'लेन-देन की तारीख की दर पर',
-  fx_basis_live: 'लाइव दरें',
-  fx_basis_cached: 'कैश की गई दरें',
-  fx_basis_estimated: 'ऑफ़लाइन दर अनुमान',
+  // ── FX ──
 
   // ── ट्रांसफर ──
   transfer_title: 'पैसे ट्रांसफर करें',
