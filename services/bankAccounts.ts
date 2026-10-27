@@ -278,6 +278,23 @@ export async function seedDefaultAccounts(userId: string, currency = 'NPR'): Pro
     return existing;
   }
 
+  // Atomic server-side seed (2026-10-27): the old check-then-insert loop
+  // raced against itself — the dashboard fires loadAccounts from useEffect
+  // AND useFocusEffect, and every concurrent caller saw "empty", so fresh
+  // users accumulated duplicate pairs (one test user: 5 accounts in 800 ms).
+  // The RPC takes a per-user advisory lock, re-checks emptiness inside the
+  // lock, and inserts exactly once. Requires migration
+  // 20261027010000_atomic_seed_default_accounts.sql; if it is not applied
+  // yet, the legacy loop below still seeds (racily) rather than failing.
+  const { data: seeded, error: rpcError } = await supabase
+    .rpc('seed_default_accounts_if_empty', { p_user_id: userId, p_currency: currency });
+  if (!rpcError && Array.isArray(seeded) && seeded.length > 0) {
+    try {
+      await AsyncStorage.setItem(`${SEEDED_KEY}${userId}`, 'true');
+    } catch {}
+    return seeded as BankAccount[];
+  }
+
   const defaults: BankAccountInput[] = [
     {
       name: 'Main Bank Account',
