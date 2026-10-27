@@ -6,10 +6,9 @@
 // supabase.auth.resetPasswordForEmail directly. It adds what the raw GoTrue
 // /recover endpoint cannot:
 //
-//   * ACCOUNT EXISTENCE CHECK — the requested email is checked against Auth
-//     BEFORE any mail is sent; unknown emails get a clear "no_account" answer
-//     (owner-requested UX, 2026-09-15). This re-enables account enumeration
-//     that audit P3-9 had deliberately closed, so it is paid for with:
+//   * ACCOUNT EXISTENCE CHECK — the requested email is checked against the
+//     users mirror BEFORE any mail is sent; unknown emails get a clear
+//     "no_account" answer (owner-requested UX, 2026-09-15), paid for with:
 //   * SERVER-SIDE COOLDOWN — every attempt (FOUND or NOT FOUND alike) stamps
 //     a per-email-hash 60s cooldown in public.password_reset_cooldown,
 //     enforced in the database so it holds across function instances and
@@ -17,6 +16,14 @@
 //     than one per minute per address, from anywhere.
 //   * No mail is ever sent to an unregistered address (nothing to leak,
 //     nothing to bounce-track).
+//
+// Existence check via public.users (2026-10-27 FIX): the earlier
+// admin/generate_link probe updates GoTrue's recovery_sent_at, which ARMS the
+// per-email send limiter — the /recover right after was then always rejected
+// with 429 over_email_send_rate_limit, so every registered user got
+// send_failed, deterministically, on every attempt. users.email is
+// server-authoritative (sync_users_email_from_auth trigger), so the mirror is
+// a faithful existence oracle with zero rate-limit side effects.
 //
 // Contract (always HTTP 200 so both clients parse one shape; logical status
 // in the body):
@@ -62,17 +69,13 @@ Deno.serve(async (req: Request) => {
   const channel = parsed.channel === 'native' ? 'native' : 'web';
 
   // Web recovery links must bounce back to the web app's own callback. The
-  // client sends its origin. audit run-1: relying only on the scheme check +
-  // the deployed GoTrue allowlist left the binding unverifiable in-repo, so
-  // when PASSWORD_RESET_ALLOWED_ORIGINS is set (comma-separated exact
-  // origins) it becomes a hard in-function gate. audit run-2 (2026-10-25):
-  // the gate now FAILS CLOSED — an unset allowlist rejects every non-local
-  // origin instead of accepting any https:// origin, because this endpoint
-  // is unauthenticated (verify_jwt = false) and the caller fully controls
-  // `origin`, which is embedded into the recovery email's redirectTo. Set
-  // PASSWORD_RESET_ALLOWED_ORIGINS (e.g. the deployed web app's exact
-  // origin) BEFORE deploying, or web-channel resets will answer bad_request.
-  // The GoTrue dashboard allowlist stays as the second layer.
+  // client sends its origin. audit run-1 + run-2: the binding fails CLOSED —
+  // only origins listed in PASSWORD_RESET_ALLOWED_ORIGINS (comma-separated
+  // exact origins, e.g. the deployed web app's) pass, plus localhost for
+  // development. An unset allowlist rejects every non-local origin instead of
+  // accepting any https:// origin, because this endpoint is unauthenticated
+  // and the caller fully controls `origin`. The GoTrue dashboard allowlist
+  // stays as the second layer.
   let redirectTo = MOBILE_REDIRECT;
   if (channel === 'web') {
     try {
@@ -174,38 +177,22 @@ Deno.serve(async (req: Request) => {
     }
   };
 
-  // ── Existence check: admin generate_link does NOT send mail; it answers ────
-  // 404 error_code=user_not_found (current GoTrue; older builds used 400) for
-  // unregistered addresses and returns the link for registered ones. Using it
-  // (instead of /recover) is what lets us tell the difference BEFORE a mail
-  // goes out.
-  const linkRes = await fetch(`${supabaseUrl}/auth/v1/admin/generate_link`, {
-    method: 'POST',
-    headers: {
-      apikey: serviceKey,
-      Authorization: `Bearer ${serviceKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ type: 'recovery', email, password: 'unused-placeholder!' }),
-  });
-  if (linkRes.status === 404 || linkRes.status === 400) {
-    // 404 is today's hosted GoTrue answer; 400 kept for older builds. If a
-    // 400 turns out to be something else (e.g. bad request shape), surface it
-    // as send_failed instead — never claim "no account" on an unknown error.
-    let notFound = linkRes.status === 404;
-    try {
-      const errBody = await linkRes.json();
-      if (errBody?.error_code === 'user_not_found') notFound = true;
-    } catch {
-      // body unreadable
-    }
-    if (notFound) {
-      return json({ success: false, code: 'no_account' });
-    }
+  // ── Existence check via the users mirror (no GoTrue side effects). ─────────
+  // On lookup failure we still attempt the send: GoTrue silently ignores
+  // unknown addresses, so the worst case is a lost "no_account" nicety, never
+  // a broken reset for a real user.
+  const userRes = await fetch(
+    `${supabaseUrl}/rest/v1/users?select=id&email=eq.${encodeURIComponent(email)}`,
+    { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` } },
+  );
+  let accountExists = true;
+  if (userRes.ok) {
+    const matched = (await userRes.json()) as { id: string }[];
+    accountExists = Array.isArray(matched) && matched.length > 0;
   }
-  if (!linkRes.ok) {
+  if (!accountExists) {
     await rollbackCooldown();
-    return json({ success: false, code: 'send_failed' });
+    return json({ success: false, code: 'no_account' });
   }
 
   // ── Send the recovery mail. ───────────────────────────────────────────────
