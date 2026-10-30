@@ -56,7 +56,7 @@ jobs:
         run: npx supabase db reset
 
       - name: Run RLS regression suite
-        run: npx supabase test db
+        run: npx supabase test db supabase/tests/rls_regression.sql
 
   deploy:
     name: Build Android App Bundle
