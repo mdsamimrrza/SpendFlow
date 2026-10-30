@@ -97,8 +97,12 @@
       }
     },
 
+    "updates": {
+      "url": "https://u.expo.dev/db912006-55b7-4be4-9a0a-42f8935bbf17"
+    },
+
     "runtimeVersion": {
-      "policy": "sdkVersion"
+      "policy": "appVersion"
     }
   }
 }

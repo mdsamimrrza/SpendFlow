@@ -293,8 +293,11 @@ npx eas build -p android --profile preview
 # Build Production Android AAB (Google Play)
 npx eas build -p android --profile production
 
-# Publish Instant Over-The-Air Update (OTA)
-npx eas update --branch production --message "Release update"
+# Publish a JavaScript, UI, or asset update to production
+npx eas update --channel production --message "Release update"
+
+# Test the same class of update on the preview APK first
+npx eas update --channel preview --message "Preview update"
 ```
 
 ---
