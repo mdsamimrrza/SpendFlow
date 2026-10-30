@@ -285,12 +285,15 @@ npx tsc --noEmit
 cd android && .\gradlew.bat assembleRelease
 ```
 
-### EAS Production Builds
+### EAS Builds and Updates
 ```bash
-# Build Standalone Android APK (Preview Profile)
+# Build a preview APK, which receives only preview OTA updates
 npx eas build -p android --profile preview
 
-# Build Production Android AAB (Google Play)
+# Build the signed website APK, which receives production OTA updates
+npx eas build -p android --profile website
+
+# Build the production Android AAB for Google Play
 npx eas build -p android --profile production
 
 # Publish a JavaScript, UI, or asset update to production
@@ -299,6 +302,17 @@ npx eas update --channel production --message "Release update"
 # Test the same class of update on the preview APK first
 npx eas update --channel preview --message "Preview update"
 ```
+
+Every push to `main` first runs validation and database/RLS checks in GitHub
+Actions. If they pass, it queues the signed `website` APK build on EAS using the
+production environment and update channel. Download that artifact from the EAS
+dashboard and publish it on the website. The `website` profile auto-increments
+Android's version code, so users can install it over the previous website APK.
+
+EAS Update applies JavaScript, UI, translation, and asset fixes to compatible
+installed builds. Changes to native dependencies, Android permissions, or
+`app.json` native configuration require a new APK and a deliberate bump to the
+top-level `version` in `app.json`; `runtimeVersion` follows that app version.
 
 ---
 

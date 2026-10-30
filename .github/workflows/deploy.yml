@@ -59,9 +59,9 @@ jobs:
         run: npx supabase test db supabase/tests/rls_regression.sql
 
   deploy:
-    name: Build Android App Bundle
+    name: Build website Android APK on EAS
     needs: [validate, database]
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     environment: GOOGLE_SERVICES_JSON
 
@@ -88,8 +88,8 @@ jobs:
           test -n "$GOOGLE_SERVICES_JSON"
           printf '%s' "$GOOGLE_SERVICES_JSON" > google-services.json
 
-      - name: Trigger EAS production App Bundle build
-        run: eas build --platform android --profile production --non-interactive --no-wait
+      - name: Trigger EAS website APK build
+        run: eas build --platform android --profile website --non-interactive --no-wait
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
