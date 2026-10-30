@@ -5,6 +5,23 @@ import { NPR_PER_INR, seedTodayRatesFromUnitsPerUsd } from '@/services/exchange'
 const RATES_STORAGE_KEY = 'spendflow_exchange_rates_cache';
 const CACHE_EXPIRY_MS = 6 * 60 * 60 * 1000; // 6 hours
 
+// Last-resort display rates for cold starts and provider failures. Keep this
+// in sync with FALLBACK_UNITS_PER_USD in services/exchange.ts.
+const DEFAULT_RATES: Record<string, number> = {
+  USD: 1,
+  NPR: 151.86,
+  INR: 94.9508,
+  GBP: 0.746681,
+  AED: 3.6725,
+  SAR: 3.7544,
+  QAR: 3.64569,
+  MYR: 4.0583,
+  KRW: 1333.93,
+  JPY: 157.228,
+  AUD: 1.42231,
+  CAD: 1.39469
+};
+
 // Nepal Rastra Bank peg (1 INR = 1.60 NPR, fixed since 1993): the live API's
 // NPR rate is a floating-market value and must never be consumed as-is —
 // every rate map that leaves this module derives NPR from its INR rate.
@@ -16,7 +33,7 @@ function applyNprPeg(rates: Record<string, number>): Record<string, number> {
   return rates;
 }
 
-let inMemoryRates: Record<string, number> = {};
+let inMemoryRates: Record<string, number> = { ...DEFAULT_RATES };
 let inMemoryStatus: RateStatus = 'estimated';
 let inMemoryFetchedAt: number | null = null;
 
@@ -32,7 +49,7 @@ async function fetchExchangeRates(): Promise<Record<string, number>> {
     const parsed: RatesCache = JSON.parse(rawCache);
     const isFresh = Date.now() - parsed.timestamp < CACHE_EXPIRY_MS;
     if (parsed.rates && Object.keys(parsed.rates).length > 0 && isFresh) {
-      inMemoryRates = applyNprPeg({ ...parsed.rates });
+      inMemoryRates = applyNprPeg({ ...DEFAULT_RATES, ...parsed.rates });
       inMemoryFetchedAt = parsed.timestamp;
       inMemoryStatus = 'live';
       seedTodayRatesFromUnitsPerUsd(inMemoryRates);
@@ -52,7 +69,7 @@ async function fetchExchangeRates(): Promise<Record<string, number>> {
     throw new Error('Exchange rate API returned invalid data');
   }
 
-  const newRates: Record<string, number> = applyNprPeg({ ...data.rates });
+  const newRates: Record<string, number> = applyNprPeg({ ...DEFAULT_RATES, ...data.rates });
 
   inMemoryRates = newRates;
   inMemoryStatus = 'live';
@@ -88,8 +105,8 @@ function convertCurrency(
 ): number {
   if (fromCurrency === toCurrency || !amount) return amount;
 
-  const fromRate = rates[fromCurrency] ?? 1;
-  const toRate = rates[toCurrency] ?? 1;
+  const fromRate = rates[fromCurrency] ?? DEFAULT_RATES[fromCurrency] ?? 1;
+  const toRate = rates[toCurrency] ?? DEFAULT_RATES[toCurrency] ?? 1;
 
   if (fromRate <= 0) return amount;
 

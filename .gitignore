@@ -73,6 +73,7 @@ Thumbs.db
 
 # ── Agent local working files (session plans — not repo material) ─────────────
 .zcode/
+.tmp_push/
 
 # ── Temp ──────────────────────────────────────────────────────────────────────
 .temp/

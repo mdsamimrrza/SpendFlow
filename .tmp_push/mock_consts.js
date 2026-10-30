@@ -1,1 +1,0 @@
-module.exports = { default: { expoConfig: { extra: { eas: { projectId: "db912006-55b7-4be4-9a0a-42f8935bbf17" } } }, executionEnvironment: "bare" }, executionEnvironment: "bare", appOwnership: "expo" };

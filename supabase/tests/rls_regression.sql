@@ -144,7 +144,7 @@ grant execute on all functions in schema test to authenticated, anon;
 drop table if exists tap_out;
 create temp table tap_out (ord serial, line text);
 
-insert into tap_out (line) select plan(49);
+insert into tap_out (line) select plan(50);
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Constant identities + fixture IDs (functions, not tables — no RLS).
@@ -347,6 +347,11 @@ insert into tap_out (line) select is(
   test.as_user(test.alice(), $$ insert into public.bank_accounts (user_id, name) values (test.bob(), 'Hijack') $$),
   'err 42501',
   'bank_accounts: insert for another user rejected by RLS'
+);
+insert into tap_out (line) select is(
+  test.as_user(test.alice(), $$ select * from public.seed_default_accounts_if_empty(test.bob(), 'NPR') $$),
+  'err 42501',
+  'bank_accounts: default-account RPC rejects another user'
 );
 insert into tap_out (line) select is(
   test.as_user(test.alice(), $$ insert into public.notifications (user_id, type, title, body) values (test.bob(), 'test', 'Hijack', 'Hijack') $$),
