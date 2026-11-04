@@ -12,42 +12,52 @@
 // Without this plugin, every EAS/prebuild build silently shipped without the
 // password-save feature and the OCR pre-download. JS-side guards make both
 // degrade gracefully, but this plugin makes them work as designed.
+//
+// SDK 58 note: prebuild now points platformProjectRoot at android/app/src/main
+// (SDK 57 pointed at android/), and the MainApplication.kt template only has a
+// COMMENTED add() example — both broke the original injection, which is why
+// the first SDK 58 EAS build failed with "Unresolved reference
+// 'credentialmanager'". Both shapes are handled below.
 const { withAppBuildGradle, withAndroidManifest, withDangerousMod } = require('expo/config-plugins');
 const fs = require('fs');
 const path = require('path');
 
 const SRC_DIR = path.join(__dirname, 'credential-manager-src');
-const REL_PKG_DIR = path.join('app', 'src', 'main', 'java', 'com', 'samimrrza', 'spendflow', 'credentialmanager');
 
 function withCredentialManagerSources(config) {
   return withDangerousMod(config, [
     'android',
     (cfg) => {
-      const platformRoot = path.join(cfg.modRequest.platformProjectRoot, 'app', 'src', 'main');
-      const dest = path.join(platformRoot, REL_PKG_DIR);
+      // Resolve the app/src/main dir for both SDK 57 (android/) and
+      // SDK 58 (android/app/src/main) platformProjectRoot shapes.
+      const platformRoot = cfg.modRequest.platformProjectRoot;
+      const srcMain = platformRoot.endsWith(path.join('app', 'src', 'main'))
+        ? platformRoot
+        : path.join(platformRoot, 'app', 'src', 'main');
+      const dest = path.join(srcMain, 'java', 'com', 'samimrrza', 'spendflow', 'credentialmanager');
       fs.mkdirSync(dest, { recursive: true });
       for (const file of fs.readdirSync(SRC_DIR)) {
         fs.copyFileSync(path.join(SRC_DIR, file), path.join(dest, file));
       }
-      // Register the package in MainApplication.kt (idempotent).
+      // Register the package in MainApplication.kt (idempotent per edit).
       const mainAppPath = path.join(
-        platformRoot, 'java', 'com', 'samimrrza', 'spendflow', 'MainApplication.kt',
+        srcMain, 'java', 'com', 'samimrrza', 'spendflow', 'MainApplication.kt',
       );
       if (fs.existsSync(mainAppPath)) {
         let kt = fs.readFileSync(mainAppPath, 'utf8');
-        if (!kt.includes('CredentialManagerPackage')) {
+        if (!kt.includes('com.samimrrza.spendflow.credentialmanager.CredentialManagerPackage')) {
           kt = kt.replace(
             /(import com\.facebook\.react\.ReactApplication)/,
             'import com.samimrrza.spendflow.credentialmanager.CredentialManagerPackage\n$1',
           );
-          // Insert ahead of the first package registration so autolinked
-          // packages and ours coexist.
-          kt = kt.replace(
-            /(\n\s+add\()(?=[A-Z])/,
-            '$1CredentialManagerPackage())\n$1',
-          );
-          fs.writeFileSync(mainAppPath, kt);
         }
+        if (!kt.includes('add(CredentialManagerPackage())')) {
+          kt = kt.replace(
+            /(PackageList\(this\)\.packages\.apply \{)/,
+            '$1\n          add(CredentialManagerPackage())',
+          );
+        }
+        fs.writeFileSync(mainAppPath, kt);
       }
       return cfg;
     },
