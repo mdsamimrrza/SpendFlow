@@ -6,6 +6,12 @@ import * as Haptics from 'expo-haptics';
 import { useLanguage } from '@/hooks/useLanguage';
 
 const BIOMETRIC_STORAGE_KEY = '@spendflow_biometric_lock_enabled';
+// Persisted while a camera/gallery capture is in flight. If Android kills the
+// activity while the camera is open (low-RAM devices do this routinely), the
+// return is a COLD start: every in-memory suppression ref is gone and the
+// startup lock below would re-prompt biometrics after every receipt photo.
+// A fresh marker lets loadPreference skip that one lock.
+const CAPTURE_IN_FLIGHT_KEY = '@spendflow_capture_in_flight';
 
 interface SecurityContextValue {
   isBiometricEnabled: boolean;
@@ -43,6 +49,9 @@ export function SecurityProvider({ children }: PropsWithChildren) {
   const captureCountRef = useRef(0);
   const captureGraceUntilRef = useRef(0);
   const CAPTURE_GRACE_MS = 2 * 60 * 1000;
+  // Short window held after a capture resume absorbs devices that emit a
+  // second background→active bounce while the camera/picker activity finishes.
+  const CAPTURE_SETTLE_MS = 15 * 1000;
 
   // 1. Check Hardware & Enrolled Biometrics
   useEffect(() => {
@@ -80,7 +89,16 @@ export function SecurityProvider({ children }: PropsWithChildren) {
         const enabled = stored === 'true';
         setIsBiometricEnabled(enabled);
         if (enabled && Platform.OS !== 'web') {
-          setIsLocked(true);
+          // A fresh capture marker means the previous instance died while the
+          // camera/gallery was open — this "startup" is actually a return from
+          // a capture, so skip the one-time lock (and consume the marker).
+          const marker = Number((await AsyncStorage.getItem(CAPTURE_IN_FLIGHT_KEY)) ?? 0);
+          const captureDied = marker > 0 && Date.now() - marker < CAPTURE_GRACE_MS;
+          if (captureDied) {
+            await AsyncStorage.removeItem(CAPTURE_IN_FLIGHT_KEY).catch(() => {});
+          } else {
+            setIsLocked(true);
+          }
         }
       } catch {
         setIsBiometricEnabled(false);
@@ -150,12 +168,15 @@ export function SecurityProvider({ children }: PropsWithChildren) {
 
   const beginSystemCapture = useCallback(() => {
     captureCountRef.current += 1;
+    // Survives an activity kill while the camera is open (see key comment).
+    void AsyncStorage.setItem(CAPTURE_IN_FLIGHT_KEY, String(Date.now())).catch(() => {});
   }, []);
 
   const endSystemCapture = useCallback(() => {
     // Clamp at 0: the suppression may already have been force-consumed by the
     // grace logic if the capture was abandoned without settling.
     captureCountRef.current = Math.max(0, captureCountRef.current - 1);
+    void AsyncStorage.removeItem(CAPTURE_IN_FLIGHT_KEY).catch(() => {});
   }, []);
 
   const authenticateRef = useRef(authenticate);
@@ -168,7 +189,12 @@ export function SecurityProvider({ children }: PropsWithChildren) {
     const subscription = AppState.addEventListener('change', (nextAppState) => {
       const leaving = appStateRef.current.match(/inactive|background/) !== null;
       const enteringBackground = nextAppState.match(/inactive|background/) !== null;
-      if (leaving && enteringBackground && captureCountRef.current > 0) {
+      // No `leaving` requirement: on Android the camera opens straight
+      // active→background, so `leaving` is false there and the grace would
+      // never arm — then a promise that settles before the 'active' event
+      // (Android fires onActivityResult before onResume) leaves count at 0
+      // and the resume locks. Arming on any background-with-capture covers it.
+      if (enteringBackground && captureCountRef.current > 0) {
         // App is being covered by the camera/picker while a capture is in
         // flight — arm the trust window instead of preparing to lock.
         captureGraceUntilRef.current = Date.now() + CAPTURE_GRACE_MS;
@@ -181,7 +207,7 @@ export function SecurityProvider({ children }: PropsWithChildren) {
           // Returning from a system capture with the photo — trust this one
           // resume, then re-arm locking for any later genuine background.
           captureCountRef.current = 0;
-          captureGraceUntilRef.current = 0;
+          captureGraceUntilRef.current = Date.now() + CAPTURE_SETTLE_MS;
         } else {
           setIsLocked(true);
           void authenticateRef.current?.();
