@@ -39,7 +39,7 @@ export function SecurityProvider({ children }: PropsWithChildren) {
   const [isLocked, setIsLocked] = useState(false);
   const [isBiometricSupported, setIsBiometricSupported] = useState(false);
   const [biometricTypeName, setBiometricTypeName] = useState('Fingerprint');
-  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+  const appStateRef = useRef<AppStateStatus>((AppState.currentState ?? 'active') as AppStateStatus);
   const isAuthenticatingRef = useRef(false);
   // System-capture suppression (see beginSystemCapture). The grace timestamp
   // covers the race where the picker's promise settles after the 'active'

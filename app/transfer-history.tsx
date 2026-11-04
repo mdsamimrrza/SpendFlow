@@ -469,7 +469,7 @@ export default function TransferHistoryScreen() {
                     {t('transfer_showing')} {visible.length} / {filtered.length}
                   </Text>
                 </View>
-              ) : null
+              ) : undefined
             }
             renderItem={({ item }) => {
               const crossCurrency = item.from_currency !== item.to_currency;
@@ -530,7 +530,7 @@ export default function TransferHistoryScreen() {
                       <Text variant="caption" muted numberOfLines={2} style={{ fontSize: 10.5, fontStyle: 'italic' }}>
                         {item.notes}
                       </Text>
-                    ) : null}
+                    ) : undefined}
                   </View>
 
                   <Pressable onPress={() => setToDelete(item)} hitSlop={8}>

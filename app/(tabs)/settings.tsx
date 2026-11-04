@@ -1560,7 +1560,7 @@ export default function SettingsScreen() {
         visible={signOutModalOpen}
         transparent
         animationType="fade"
-        onRequestClose={() => !signingOut && setSignOutModalOpen(false)}
+        onRequestClose={() => { if (!signingOut) setSignOutModalOpen(false); }}
       >
         <Pressable
           onPress={() => !signingOut && setSignOutModalOpen(false)}

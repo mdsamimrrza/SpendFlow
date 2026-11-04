@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, type ComponentRef } from 'react';
 import {
   Modal,
   Pressable,
@@ -86,7 +86,7 @@ export function CalendarModal({
   // so the user can scroll years without affecting the calendar yet)
   const [pickerYear, setPickerYear] = useState<number>(getYear(currentMonth));
 
-  const yearScrollRef = useRef<ScrollView>(null);
+  const yearScrollRef = useRef<ComponentRef<typeof ScrollView> | null>(null);
 
   // Sync state when modal (re)opens
   React.useEffect(() => {

@@ -531,7 +531,7 @@ export default function HomeScreen() {
                 <ArrowRight size={14} color={theme.colors.primary} />
               </Pressable>
             </Link>
-          ) : null
+          ) : undefined
         }
         ListEmptyComponent={
           (expenses.error && expenses.items.length === 0) ? (
@@ -549,7 +549,7 @@ export default function HomeScreen() {
               actionLabel={t('home_add_expense')}
               onAction={() => router.push('/expense/add')}
             />
-          ) : null
+          ) : undefined
         }
       />
 

@@ -1032,7 +1032,7 @@ export default function AuthScreen() {
                 biometric toggle the button is simply full-width. */}
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 2 }}>
               <Pressable
-                onPress={form.handleSubmit(submit, showValidationError)}
+                onPress={() => { void form.handleSubmit(submit, showValidationError)(); }}
                 disabled={emailLoading || googleLoading}
                 style={({ pressed }) => ({
                   flex: 1,
@@ -1226,7 +1226,7 @@ export default function AuthScreen() {
         visible={forgotModalOpen}
         transparent
         animationType="fade"
-        onRequestClose={() => !resetLoading && setForgotModalOpen(false)}
+        onRequestClose={() => { if (!resetLoading) setForgotModalOpen(false); }}
       >
         <Pressable
           onPress={() => !resetLoading && setForgotModalOpen(false)}

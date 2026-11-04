@@ -1,8 +1,8 @@
 # SpendFlow Developer & Agent Rules
 
 ## 1. Core Framework & Versioning
-- **Expo SDK 57**: Always reference the exact versioned Expo docs at <https://docs.expo.dev/versions/v57.0.0/> before writing code or modifying configs.
-- **React Native 0.86+ & React 19**: Strictly maintain type safety across all screens, services, hooks, and components (`npx tsc --noEmit` must pass with 0 errors).
+- **Expo SDK 58**: Always reference the exact versioned Expo docs at <https://docs.expo.dev/versions/v58.0.0/> before writing code or modifying configs. (Upgraded from SDK 57 on 2026-11-04; edge-to-edge is mandatory on Android 15+ — `react-native-edge-to-edge` is deprecated and must NOT be re-added.)
+- **React Native 0.88 & React 19**: Strictly maintain type safety across all screens, services, hooks, and components (`npx tsc --noEmit` must pass with 0 errors). RN 0.88 ref rule: component refs are typed `useRef<ComponentRef<typeof View> | null>(null)` — the bare `useRef<View>` form no longer carries instance methods.
 
 ---
 

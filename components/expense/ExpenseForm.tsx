@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState, type ComponentRef } from 'react';
 import {
   Alert,
   Image,
@@ -150,9 +150,9 @@ export function ExpenseForm({
   // History toolbar) so their ScrollView scrolls natively on Android without
   // fighting the form's outer ScrollView for the drag gesture. The anchor's
   // window rect is measured at open time to position the panel below the row.
-  const categoryAnchorRef = useRef<View | null>(null);
-  const accountAnchorRef = useRef<View | null>(null);
-  const planAnchorRef = useRef<View | null>(null);
+  const categoryAnchorRef = useRef<ComponentRef<typeof View> | null>(null);
+  const accountAnchorRef = useRef<ComponentRef<typeof View> | null>(null);
+  const planAnchorRef = useRef<ComponentRef<typeof View> | null>(null);
   // Panel placement, computed once at open time from the anchor card's window
   // rect: `top` when the list fits below the card, `bottom` when it must flip
   // ABOVE the card (bottom-of-screen cards), `scrollMax` = the ScrollView
@@ -503,9 +503,9 @@ export function ExpenseForm({
   }
 
   // ── 12-hour numeric time entry helpers ──
-  const hourInputRef = useRef<TextInput | null>(null);
-  const minuteInputRef = useRef<TextInput | null>(null);
-  const scrollRef = useRef<ScrollView>(null);
+  const hourInputRef = useRef<ComponentRef<typeof TextInput> | null>(null);
+  const minuteInputRef = useRef<ComponentRef<typeof TextInput> | null>(null);
+  const scrollRef = useRef<ComponentRef<typeof ScrollView> | null>(null);
   const accountCardY = useRef<number>(0);
   const timeMatch = (form.time || '').match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
   const timePeriod = (timeMatch ? timeMatch[3].toUpperCase() : 'PM') as 'AM' | 'PM';
@@ -1083,7 +1083,7 @@ export function ExpenseForm({
 
   const openDropdown = (
     kind: 'category' | 'account' | 'plan',
-    ref: React.RefObject<View | null>,
+    ref: React.RefObject<ComponentRef<typeof View> | null>,
   ) => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
     // Clear first so the panel only mounts once the fresh rect arrives —
@@ -1133,7 +1133,7 @@ export function ExpenseForm({
 
   const toggleDropdown = (
     kind: 'category' | 'account' | 'plan',
-    ref: React.RefObject<View | null>,
+    ref: React.RefObject<ComponentRef<typeof View> | null>,
   ) => {
     const isOpen =
       kind === 'category' ? categoryDropdownOpen : kind === 'account' ? accountDropdownOpen : planDropdownOpen;

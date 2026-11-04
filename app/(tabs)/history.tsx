@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, type ComponentRef } from 'react';
 import {
   ActivityIndicator,
   Dimensions,
@@ -115,9 +115,9 @@ export default function HistoryScreen() {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const listRef = useRef<SectionList>(null);
-  const timeframeBtnRef = useRef<View>(null);
-  const categoryBtnRef = useRef<View>(null);
-  const sortBtnRef = useRef<View>(null);
+  const timeframeBtnRef = useRef<ComponentRef<typeof View> | null>(null);
+  const categoryBtnRef = useRef<ComponentRef<typeof View> | null>(null);
+  const sortBtnRef = useRef<ComponentRef<typeof View> | null>(null);
   const [timeframePos, setTimeframePos] = useState<{ top: number; left?: number; right?: number }>({ top: 240, left: 16 });
   const [categoryPos, setCategoryPos] = useState<{ top: number; left?: number; right?: number }>({ top: 240, left: 60 });
   const [sortPos, setSortPos] = useState<{ top: number; left?: number; right?: number }>({ top: 240, right: 16 });
@@ -1514,7 +1514,7 @@ export default function HistoryScreen() {
                 </ScrollView>
               ) : null}
             </View>
-          ) : null
+          ) : undefined
         }
       />
 

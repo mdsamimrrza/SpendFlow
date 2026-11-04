@@ -1490,7 +1490,7 @@ export default function ProfileScreen() {
         visible={signOutAllOpen}
         transparent
         animationType="fade"
-        onRequestClose={() => !signingOutAll && setSignOutAllOpen(false)}
+        onRequestClose={() => { if (!signingOutAll) setSignOutAllOpen(false); }}
       >
         <Pressable
           onPress={() => !signingOutAll && setSignOutAllOpen(false)}
