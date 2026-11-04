@@ -105,6 +105,45 @@ jobs:
           EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
           EXPO_PUBLIC_SUPABASE_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_KEY }}
 
+      - name: Fetch built APK from EAS
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          eas build:list --platform android --profile website --non-interactive --limit 1 --json > build.json
+          ARTIFACT_URL=$(jq -r '.[0].artifact.buildUrl // empty' build.json)
+          BUILD_STATUS=$(jq -r '.[0].status' build.json)
+          test "$BUILD_STATUS" = "FINISHED" || { echo "EAS build not FINISHED (status: $BUILD_STATUS)"; exit 1; }
+          test -n "$ARTIFACT_URL" || { echo "No artifact URL on the latest build"; exit 1; }
+          curl -L --fail --max-time 600 -o spendFlow.apk "$ARTIFACT_URL"
+          # Sanity: real APK = zip magic + sane size
+          head -c 2 spendFlow.apk | grep -q "PK" || { echo "Downloaded file is not an APK"; exit 1; }
+          SIZE=$(stat -c %s spendFlow.apk)
+          test "$SIZE" -gt 10000000 || { echo "APK suspiciously small ($SIZE bytes)"; exit 1; }
+          echo "APK size: $SIZE bytes"
+
+      - name: Publish APK to Supabase Storage (spendFlow_apk/spendFlow.apk)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          test -n "$SUPABASE_SERVICE_ROLE_KEY" || { echo "Set repo secret SUPABASE_SERVICE_ROLE_KEY to enable APK publishing"; exit 1; }
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST             "$SUPABASE_URL/storage/v1/object/spendFlow_apk/spendFlow.apk"             -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY"             -H "apikey: $SUPABASE_SERVICE_ROLE_KEY"             -H "Content-Type: application/vnd.android.package-archive"             -H "x-upsert: true"             --data-binary @spendFlow.apk)
+          test "$CODE" = 200 || { echo "Storage upload failed (HTTP $CODE)"; exit 1; }
+          echo "Published to Supabase Storage (HTTP $CODE)"
+
+      - name: Update in-app release row (app_releases)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          VERSION=$(jq -r '.expo.version' app.json)
+          APK_URL="$SUPABASE_URL/storage/v1/object/public/spendFlow_apk/spendFlow.apk?download=SpendFlow.apk"
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH             "$SUPABASE_URL/rest/v1/app_releases?platform=eq.android"             -H "apikey: $SUPABASE_SERVICE_ROLE_KEY"             -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY"             -H "Content-Type: application/json"             -H "Prefer: return=minimal"             -d "{\"latest_version\":\"$VERSION\",\"apk_url\":\"$APK_URL\"}")
+          if [ "$CODE" = 404 ]; then
+            curl -s -X POST "$SUPABASE_URL/rest/v1/app_releases"               -H "apikey: $SUPABASE_SERVICE_ROLE_KEY"               -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY"               -H "Content-Type: application/json"               -H "Prefer: return=minimal"               -d "{\"platform\":\"android\",\"latest_version\":\"$VERSION\",\"apk_url\":\"$APK_URL\"}"
+          fi
+          echo "app_releases -> latest_version $VERSION (HTTP $CODE)
+
   ota-update:
     name: Publish EAS Update (manual, JS-only)
     if: github.event_name == 'workflow_dispatch'
