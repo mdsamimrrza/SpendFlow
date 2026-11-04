@@ -103,6 +103,8 @@ export default function RecurringScreen() {
   const [deletingRule, setDeletingRule] = useState(false);
   // Remove-installment confirmation for a BOOKED auto_charge cycle (same reason)
   const [cancelTargetId, setCancelTargetId] = useState<string | null>(null);
+  // Discard confirmation for a half-filled plan form (A14) — designed dialog
+  const [discardOpen, setDiscardOpen] = useState(false);
   const [showFormModal, setShowFormModal] = useState(false);
   const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
   const [amount, setAmount] = useState('');
@@ -236,20 +238,22 @@ export default function RecurringScreen() {
     setShowFormModal(true);
   }
 
-  function closeFormModal() {
-    if (Number(amount) > 0 || description.trim()) {
-      // Audit A14: confirm before wiping a half-filled recurring form.
-      Alert.alert('Discard changes?', 'You have unsaved changes.', [
-        { text: 'Keep editing', style: 'cancel' },
-        { text: 'Discard', style: 'destructive', onPress: () => { setShowFormModal(false); setEditingRuleId(null); setAmount(''); setDescription(''); setSelectedAccountId(null); } },
-      ]);
-      return;
-    }
+  function resetFormAndClose() {
     setShowFormModal(false);
     setEditingRuleId(null);
     setAmount('');
     setDescription('');
     setSelectedAccountId(null);
+  }
+
+  function closeFormModal() {
+    if (Number(amount) > 0 || description.trim()) {
+      // Audit A14: confirm before wiping a half-filled recurring form —
+      // through the designed dialog, same as delete/remove confirmations.
+      setDiscardOpen(true);
+      return;
+    }
+    resetFormAndClose();
   }
 
   function handleDeleteRule(ruleId: string) {
@@ -2013,6 +2017,20 @@ export default function RecurringScreen() {
         loading={busyRuleId === cancelTargetId}
         onCancel={() => setCancelTargetId(null)}
         onConfirm={() => void confirmCancelOccurrence()}
+      />
+
+      {/* Discard confirmation for the half-filled plan form (A14) */}
+      <ConfirmDialog
+        visible={discardOpen}
+        title={t('discard_title') || 'Discard changes?'}
+        message={t('discard_message') || 'You have unsaved changes.'}
+        confirmLabel={t('common_discard') || 'Discard'}
+        cancelLabel={t('discard_keep_editing') || 'Keep editing'}
+        onCancel={() => setDiscardOpen(false)}
+        onConfirm={() => {
+          setDiscardOpen(false);
+          resetFormAndClose();
+        }}
       />
 
       {/* ── Floating Action Button (+) ── */}

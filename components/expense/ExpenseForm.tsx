@@ -464,7 +464,7 @@ export function ExpenseForm({
   const isFormDirty = Boolean(
     (Number(form.amount) || 0) > 0 || (form.description ?? '').trim() || (form.notes ?? '').trim(),
   );
-  const confirmDiscard = useDiscardGuard(isFormDirty, () => {
+  const { confirmDiscard, dialog: discardDialog } = useDiscardGuard(isFormDirty, () => {
     if (router.canGoBack()) {
       router.back();
     } else {
@@ -3377,6 +3377,7 @@ export function ExpenseForm({
       {/* Local host: expense/add is modal-presented (Android window above the
           root host). Topmost-host arbitration keeps toasts single-rendered. */}
       <ToastHost />
+      {discardDialog}
     </KeyboardAvoidingView>
   );
 }

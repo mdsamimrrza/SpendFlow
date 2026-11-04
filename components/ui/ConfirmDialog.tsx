@@ -10,6 +10,7 @@ export function ConfirmDialog({
   title,
   message,
   confirmLabel = 'Delete',
+  cancelLabel,
   loading = false,
   onCancel,
   onConfirm,
@@ -18,6 +19,7 @@ export function ConfirmDialog({
   title: string;
   message: string;
   confirmLabel?: string;
+  cancelLabel?: string;
   loading?: boolean;
   onCancel: () => void;
   onConfirm: () => void;
@@ -41,7 +43,7 @@ export function ConfirmDialog({
             <Pressable onPress={onCancel} hitSlop={8}><X size={19} color={theme.colors.textMuted} /></Pressable>
           </View>
           <View style={{ flexDirection: 'row', gap: 10, width: '100%' }}>
-            <Button title="Cancel" variant="secondary" onPress={onCancel} style={{ flex: 1, minWidth: 0, height: 50 }} />
+            <Button title={cancelLabel ?? 'Cancel'} variant="secondary" onPress={onCancel} style={{ flex: 1, minWidth: 0, height: 50 }} />
             <Button title={confirmLabel} variant="destructive" loading={loading} onPress={onConfirm} style={{ flex: 1, minWidth: 0, height: 50 }} />
           </View>
         </Pressable>
