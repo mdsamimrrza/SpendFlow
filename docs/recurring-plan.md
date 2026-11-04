@@ -57,8 +57,28 @@ Swap unique index `expenses_recurring_rule_date_unique (recurring_rule_id, date)
      `paidDate + cycle`;
   3. idempotent via unique slot index (double-tap / two-device race = one row).
 - **New `skipCurrentOccurrence(userId, ruleId)`** — advance chain one slot, insert nothing.
+  Now runs through the server-side `skip_recurring_occurrence` RPC (migration
+  `20261027030000`) so it is atomic against the nightly auto-charge poster:
+  an open slot just advances the chain; if the poster already booked the slot
+  (auto_charge), the booking is hard-deleted in the same transaction
+  (`cancelled_booking = true`) and the chain stays forward. Falls back to the
+  client-side advance when the RPC isn't deployed yet.
+- **New `cancelRecurringOccurrence(userId, ruleId)`** — removes an already-BOOKED
+  auto_charge installment (same RPC, requires `cancelled_booking`): deletes the
+  occurrence, keeps the chain forward — the cycle is cancelled, not re-opened,
+  so the poster never re-books it. pay_on_due bookings use
+  `undoLatestOccurrencePayment` instead (their money really moved).
 - **New `undoLatestOccurrencePayment(userId, ruleId)`** — delete the newest occurrence row
   and pull `next_due_date` back one slot; only allowed for the most recent slot.
+
+**Server poster (`20261027030000`, audit A20):** nightly pg_cron `spendflow-auto-charge-post`
+(03:00 UTC) posts due slots for every active auto_charge rule directly
+(`post_due_auto_charge_expenses()`), unconditionally — no balance gating
+(mandate semantics) — idempotent via the `(recurring_rule_id, recurring_due_date)`
+unique index. `advance_recurring_date()` mirrors the client `nextDate()` exactly
+(daily +1, weekly +7, custom +interval_days, else +1 calendar month) so server
+and client chains can never diverge. Manual `pay_on_due` rules are never touched
+by the server; they wait for Mark Paid indefinitely.
 
 ## 3. Add Expense form — `components/expense/ExpenseForm.tsx` (mobile + web identical)
 
@@ -88,8 +108,10 @@ Rule card redesign — paid state derived from the latest occurrence row:
                    [ Mark Paid ]  [ Skip this cycle ]
 ```
 
-- Pending slot → `[Mark Paid]` (calls `markOccurrencePaid`, today's date) +
-  `[Skip this cycle]`; after a just-posted payment offer `[Not paid — undo]`
+- Pending slot → `[Mark Paid]` (opens Add Expense prefilled with the plan) +
+  `[Skip this cycle]`; the payment is only posted after the user reviews and
+  saves the form. Add Expense applies its normal linked-account balance guard;
+  after a just-posted payment offer `[Not paid — undo]`
   (calls `undoLatestOccurrencePayment`; most recent slot only).
 - Timeline strip: past slots from actual rows (✓ + late N), current slot
   (pending/due/paid), 2 future slots as grey chain positions.
@@ -138,10 +160,10 @@ tab only (§3). On save the form calls `payPlanFromForm()`:
    cycle — "everything starts counting from today" (validity-style plans like
    the 28-day recharge).
 
-This is deliberately different from the Recurring tab's Mark Paid, which keeps
-the schedule-locked advance (slot + cycle, late noted but not moved). The
-explicit form path means "I'm paying now and the cycle restarts from this
-payment"; the tab path means "record the scheduled payment".
+This is deliberately different from the Recurring tab's former direct Mark
+Paid write. Dashboard and Recurring-tab Mark Paid now open this same form path,
+so every payment is reviewed, balance-checked, and saved through the normal
+expense flow.
 
 ## 7. Phases
 

@@ -61,7 +61,7 @@ import { useAccountBalances } from '@/hooks/useAccountBalances';
 import { useLanguage } from '@/hooks/useLanguage';
 import { useSecurity } from '@/hooks/useSecurity';
 import { useTheme } from '@/hooks/useTheme';
-import { listBankAccounts, seedDefaultAccounts } from '@/services/bankAccounts';
+import { listBankAccounts, subscribeAccountsChanged } from '@/services/bankAccounts';
 import { listCategories } from '@/services/categories';
 import { convertExpense } from '@/services/exchange';
 import { getExpense, softDeleteExpense } from '@/services/expenses';
@@ -74,6 +74,8 @@ import {
 import { deleteReceipt, uploadReceipt } from '@/services/receipts';
 import { ReceiptScan, scanReceipt } from '@/services/receiptOcr';
 import { showToast, ToastHost } from '@/components/ui/Toast';
+import { getErrorMessage } from '@/utils/errors';
+import { useDiscardGuard } from '@/hooks/useDiscardGuard';
 import { useReceiptUrl } from '@/hooks/useReceiptUrl';
 import { BankAccount, Category, ExpenseInput, PaymentMethod, RecurringRule, TransactionType } from '@/types';
 import { currentFormattedTime, formatMoney, formatTimeForInput, isoDate, parseTimeInput } from '@/utils/format';
@@ -103,7 +105,13 @@ const schema = z.object({
 const EXPENSE_QUICK_TAGS = ['Lunch', 'Coffee', 'Groceries', 'Fuel', 'Uber / Ride', 'Dinner', 'Medicine', 'Utilities'];
 const INCOME_QUICK_TAGS = ['Salary', 'Freelance Project', 'Dividend', 'Rental Income', 'Bonus', 'Cashback', 'Client Payment'];
 
-export function ExpenseForm({ expenseId }: { expenseId?: string }) {
+export function ExpenseForm({
+  expenseId,
+  recurringRuleId,
+}: {
+  expenseId?: string;
+  recurringRuleId?: string;
+}) {
   const { profile, session } = useAuth();
   const userId = profile?.id ?? session?.user?.id;
   const { t } = useLanguage();
@@ -307,10 +315,10 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
   // Profile hydration can finish after this screen mounts while offline. Apply the
   // cached preferred currency once, but never overwrite a currency the user picked.
   useEffect(() => {
-    if (!expenseId && profile?.preferred_currency && !currencyManuallySelected.current) {
+    if (!expenseId && !recurringRuleId && profile?.preferred_currency && !currencyManuallySelected.current) {
       setForm((current) => ({ ...current, currency: profile.preferred_currency }));
     }
-  }, [expenseId, profile?.preferred_currency]);
+  }, [expenseId, profile?.preferred_currency, recurringRuleId]);
 
   // Recurring rules for the duplicate-bill chip — add mode only; cached first,
   // then the server list (same paint pattern as the rest of the app).
@@ -319,6 +327,43 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
     void getCachedRecurringRules(userId).then(setRulesCache).catch(() => undefined);
     void listRecurringRules(userId).then(setRulesCache).catch(() => undefined);
   }, [userId, expenseId]);
+
+  useEffect(() => {
+    if (!userId || expenseId || !recurringRuleId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const cached = await getCachedRecurringRules(userId);
+        const rules = cached.some((rule) => rule.id === recurringRuleId)
+          ? cached
+          : await listRecurringRules(userId);
+        const rule = rules.find((item) => item.id === recurringRuleId);
+        if (!rule) throw new Error('This recurring plan is no longer available.');
+        if (cancelled) return;
+        setRulesCache(rules);
+        setPayPlan(rule);
+        setForm((current) => ({
+          ...current,
+          amount: Number(rule.amount),
+          category_id: rule.category_id,
+          currency: rule.currency,
+          description: rule.description ?? '',
+          date: isoDate(),
+          payment_method: rule.payment_method,
+          bank_account_id: rule.bank_account_id ?? null,
+          type: 'expense',
+        }));
+        setRawAmount(String(rule.amount));
+      } catch (err) {
+        if (!cancelled) {
+          setError(getErrorMessage(err, 'Could not load this recurring plan.'));
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, expenseId, recurringRuleId]);
 
   const loadCategories = async () => {
     if (!userId) return [];
@@ -332,38 +377,49 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
     if (!userId) return [];
     // Paint the cached list instantly, then swap in the server list.
     let nextAccounts = await listBankAccounts(userId, (cached) => setAccounts(cached));
-    if (nextAccounts.length === 0) {
-      nextAccounts = await seedDefaultAccounts(userId, profile?.preferred_currency || 'NPR');
-    }
     setAccounts(nextAccounts);
-    if (autoSelectNewest && nextAccounts.length > 0) {
+    if (nextAccounts.length === 0) {
+      setForm((prev) => ({ ...prev, bank_account_id: null }));
+    } else if (autoSelectNewest && nextAccounts.length > 0) {
       const newest = nextAccounts[nextAccounts.length - 1];
       if (newest) {
         setForm((prev) => ({ ...prev, bank_account_id: newest.id }));
       }
-    } else if (!form.bank_account_id && nextAccounts.length > 0) {
-      const def = nextAccounts.find((a) => a.is_default) || nextAccounts[0];
-      setForm((prev) => ({ ...prev, bank_account_id: def.id }));
+    } else if (nextAccounts.length > 0) {
+      if (!form.bank_account_id || !nextAccounts.some((a) => a.id === form.bank_account_id)) {
+        if (!recurringRuleId || !form.bank_account_id) {
+          const def = nextAccounts.find((a) => a.is_default) || nextAccounts[0];
+          setForm((prev) => ({ ...prev, bank_account_id: def ? def.id : null }));
+        }
+      }
     }
     return nextAccounts;
   };
 
   useEffect(() => {
     if (!userId) return;
+    const unsub = subscribeAccountsChanged(() => {
+      void loadAccounts();
+    });
+    return () => unsub();
+  }, [userId]);
+
+  useEffect(() => {
+    if (!userId) return;
     loadCategories().then((nextCategories) => {
-      if (nextCategories && !expenseId && nextCategories[0]) {
+      if (nextCategories && !expenseId && !recurringRuleId && nextCategories[0]) {
         const firstCat = nextCategories.find((c) => (form.type === 'income' ? c.type === 'income' : c.type !== 'income')) ?? nextCategories[0];
         setForm((current) => ({ ...current, category_id: firstCat.id }));
       }
     });
 
     loadAccounts().then((nextAccounts) => {
-      if (nextAccounts && !expenseId && nextAccounts.length > 0 && !form.bank_account_id) {
+      if (nextAccounts && !expenseId && !recurringRuleId && nextAccounts.length > 0 && !form.bank_account_id) {
         const def = nextAccounts.find((a) => a.is_default) || nextAccounts[0];
         setForm((prev) => ({ ...prev, bank_account_id: def.id }));
       }
     });
-  }, [expenseId, userId]);
+  }, [expenseId, recurringRuleId, userId]);
 
   useEffect(() => {
     // audit run-1: require a confirmed userId before the record read — without
@@ -398,11 +454,29 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
         // A saved note must be visible immediately in edit mode.
         setNotesOpen(Boolean(expense.notes));
       })
-      .catch((err) => setError(err instanceof Error ? err.message : 'Could not load this expense.'));
+      .catch((err) => setError(getErrorMessage(err, 'Could not load this expense.')));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expenseId, userId]);
 
+  // Audit A14: Android back / header back must not silently discard a
+  // half-typed entry. Anything typed into the amount or notes marks the form
+  // dirty and routes every exit through the discard confirm.
+  const isFormDirty = Boolean(
+    (Number(form.amount) || 0) > 0 || (form.description ?? '').trim() || (form.notes ?? '').trim(),
+  );
+  const confirmDiscard = useDiscardGuard(isFormDirty, () => {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/');
+    }
+  });
+
   function handleBack() {
+    if (isFormDirty) {
+      confirmDiscard(); // the Alert drives the actual exit
+      return;
+    }
     if (router.canGoBack()) {
       router.back();
     } else {
@@ -569,6 +643,10 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
 
   async function pickImage(fromCamera: boolean) {
     setError(null);
+    // Suppression starts before the permission prompt: the permission dialog
+    // is itself a system window that can background the app and re-prompt
+    // biometrics on return, before the picker even launches.
+    beginSystemCapture();
     try {
       if (fromCamera) {
         const permission = await ImagePicker.requestCameraPermissionsAsync();
@@ -587,23 +665,17 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
       // The camera/gallery is a separate Android activity: without the capture
       // suppression the app treats returning with the photo as a fresh
       // foreground and re-prompts biometrics on every attach.
-      beginSystemCapture();
-      let result;
-      try {
-        result = fromCamera
-          ? await ImagePicker.launchCameraAsync({
-            mediaTypes: ['images'],
-            quality: 0.8,
-            base64: true,
-          })
-          : await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ['images'],
-            quality: 0.8,
-            base64: true,
-          });
-      } finally {
-        endSystemCapture();
-      }
+      let result = fromCamera
+        ? await ImagePicker.launchCameraAsync({
+          mediaTypes: ['images'],
+          quality: 0.8,
+          base64: true,
+        })
+        : await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ['images'],
+          quality: 0.8,
+          base64: true,
+        });
 
       if (!result.canceled && result.assets[0]) {
         const asset = result.assets[0];
@@ -650,11 +722,14 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('common_error'));
+      setError(getErrorMessage(err, t('common_error')));
+    } finally {
+      endSystemCapture();
     }
   }
 
   async function submit() {
+    if (saving) return;
     setError(null);
     const parsed = schema.safeParse(form);
     if (!parsed.success) {
@@ -665,6 +740,25 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
     const txType = form.type ?? 'expense';
     const amount = Number(parsed.data.amount);
     const selectedAccountId = parsed.data.bank_account_id ?? null;
+
+    if (!selectedAccountId || accounts.length === 0) {
+      setError(t('expense_no_account'));
+      Alert.alert(
+        t('expense_no_account_title') || 'No Account Found',
+        t('expense_no_account'),
+        [
+          { text: t('common_cancel'), style: 'cancel' },
+          {
+            text: t('expense_add_account'),
+            onPress: () => {
+              setEditingAccount(null);
+              setAccountModalOpen(true);
+            },
+          },
+        ],
+      );
+      return;
+    }
 
     // ── Insufficient-balance guard (expenses only) ──────────────────────────
     // Income always adds money — no cap needed.
@@ -783,7 +877,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
       handleBack();
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('common_error'));
+      setError(getErrorMessage(err, t('common_error')));
     } finally {
       setSaving(false);
     }
@@ -810,28 +904,40 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
     const top = [...byCat.entries()]
       .map(([id, v]) => ({ category: categories.find((c) => c.id === id), last: v.last, count: v.count }))
       .filter((x) => !!x.category && (isIncome ? x.category.type === 'income' : x.category.type !== 'income'))
-      .sort((a, b) => b.count - a.count || b.last.localeCompare(a.last))
-      .slice(0, 5);
+      .sort((a, b) => b.count - a.count || b.last.localeCompare(a.last));
     return { byCat, top };
   }, [expenses.items, categories, form.date, isIncome]);
 
-  // Circle row = current pick first (so it's always visible and ringed),
-  // then the recents behind it, capped at five plus the ▦ All button.
+  // Circle row fits the SCREEN: as many 60px chips as the width allows (the
+  // ▦ All button trails at the end, reachable by scroll), ordered by actual
+  // usage — a fresh user sees the default order until they start spending.
+  const categoryVisibleCount = Math.max(3, Math.floor((screenWidth - 48) / 70));
   const categoryRow = useMemo(() => {
+    const matches = (c: Category) => (isIncome ? c.type === 'income' : c.type !== 'income');
     const seen = new Set<string>();
     const list: Category[] = [];
-    if (selectedCategory && ((form.type ?? 'expense') === 'income' ? selectedCategory.type === 'income' : selectedCategory.type !== 'income')) {
+    // Current pick always leads so the selection ring stays on screen.
+    if (selectedCategory && matches(selectedCategory)) {
       list.push(selectedCategory);
       seen.add(selectedCategory.id);
     }
+    // Then usage-sorted (count desc, then most-recent) — empty for a fresh
+    // user, so they simply see the default order until they start spending.
     for (const u of categoryUsage.top) {
-      if (u.category && !seen.has(u.category.id)) {
+      if (u.category && matches(u.category) && !seen.has(u.category.id)) {
         list.push(u.category);
         seen.add(u.category.id);
       }
     }
-    return list.slice(0, 5);
-  }, [selectedCategory, categoryUsage, form.type]);
+    // Unused categories keep their natural order behind the used ones.
+    for (const c of categories) {
+      if (matches(c) && !seen.has(c.id)) {
+        list.push(c);
+        seen.add(c.id);
+      }
+    }
+    return list.slice(0, Math.max(1, categoryVisibleCount - 1));
+  }, [selectedCategory, categoryUsage, form.type, categories, categoryVisibleCount]);
 
   // ── Pay-from-plan selection: fill the form from the rule, keep the date at
   // today, and flag the submit path to book this slot and re-anchor the
@@ -934,7 +1040,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
                 showToast({ type: 'success', message: t('bin_moved_toast') });
                 handleBack();
               })
-              .catch((err) => setError(err instanceof Error ? err.message : 'Could not delete this expense.'));
+              .catch((err) => setError(getErrorMessage(err, 'Could not delete this expense.')));
           },
         },
         {
@@ -947,7 +1053,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
                 showToast({ type: 'success', message: t('bin_moved_toast') });
                 handleBack();
               })
-              .catch((err) => setError(err instanceof Error ? err.message : 'Could not delete this expense.'));
+              .catch((err) => setError(getErrorMessage(err, 'Could not delete this expense.')));
           },
         },
       ],
@@ -1038,7 +1144,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
   return (
     <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: theme.colors.background }}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 36}
     >
       <View style={{ flex: 1 }}>
@@ -1086,6 +1192,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
               accessibilityRole="button"
               accessibilityLabel={t('common_back')}
               onPress={handleBack}
+              hitSlop={8}
               style={{
                 width: 40,
                 height: 40,
@@ -1228,6 +1335,39 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
               </Text>
             </Pressable>
           </View>
+
+          {/* ── NO ACCOUNT WARNING BANNER (When all accounts deleted / 0 accounts) ── */}
+          {accounts.length === 0 ? (
+            <View
+              style={{
+                backgroundColor: theme.isDark ? 'rgba(239, 68, 68, 0.15)' : '#FEE2E2',
+                borderWidth: 1.5,
+                borderColor: theme.isDark ? 'rgba(239, 68, 68, 0.4)' : '#FCA5A5',
+                borderRadius: theme.radius.md,
+                padding: 14,
+                gap: 10,
+              }}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <AlertCircle size={18} color={theme.colors.danger} />
+                <Text style={{ color: theme.colors.danger, fontWeight: '800', fontSize: 14 }}>
+                  {t('expense_no_account_title') || 'No Account Found'}
+                </Text>
+              </View>
+              <Text style={{ color: theme.colors.text, fontSize: 13, lineHeight: 18 }}>
+                {t('expense_no_account')}
+              </Text>
+              <Button
+                title={t('expense_add_account')}
+                icon={Plus}
+                onPress={() => {
+                  setEditingAccount(null);
+                  setAccountModalOpen(true);
+                }}
+                style={{ alignSelf: 'flex-start' }}
+              />
+            </View>
+          ) : null}
 
           {/* ── PART OF A PLAN badge (edit mode, rule-linked row) ── */}
           {expenseId && planRuleId ? (
@@ -1476,7 +1616,9 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
                       </View>
                       <Text
                         numberOfLines={1}
-                        style={{
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.75}
+                          style={{
                           width: 60,
                           textAlign: 'center',
                           fontSize: 10.5,
@@ -1625,6 +1767,8 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
                     </View>
                     <Text
                       numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.75}
                       style={{
                         width: 60,
                         textAlign: 'center',
@@ -1704,11 +1848,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
                 <Pressable
                   onPress={() => {
                     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    const sel = accounts.find((a) => a.id === form.bank_account_id);
-                    if (sel) {
-                      setEditingAccount(sel);
-                      setAccountModalOpen(true);
-                    }
+                    router.push('/accounts' as any);
                   }}
                   hitSlop={8}
                   style={{
@@ -1736,94 +1876,126 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
               ) : null}
             </View>
 
-            {/* ── Icon-circle row (same design as the category picker above):
-                the current pick leads, then the richest accounts; the dashed
-                ▦ All opens the full in-place list with live balances. ── */}
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              keyboardShouldPersistTaps="handled"
-              contentContainerStyle={{ gap: 10, paddingVertical: 4, paddingRight: 4 }}
-            >
-              {accountRow.map((acc) => {
-                const isSelected = form.bank_account_id === acc.id;
-                const accent = acc.color || theme.colors.primary;
-                return (
-                  <Pressable
-                    key={acc.id}
-                    onPress={() => {
-                      setForm((prev) => ({ ...prev, bank_account_id: acc.id }));
-                      setAccountDropdownOpen(false);
-                      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
-                    }}
-                    style={{ width: 60, alignItems: 'center', gap: 5 }}
-                  >
-                    <View
-                      style={{
-                        width: 46,
-                        height: 46,
-                        borderRadius: 23,
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        borderWidth: isSelected ? 2 : 1,
-                        borderColor: isSelected ? accent : theme.colors.border,
-                        backgroundColor: isSelected ? `${accent}18` : theme.colors.surfaceElevated,
-                      }}
-                    >
-                      <CategoryIcon name={acc.icon} size={20} color={isSelected ? accent : theme.colors.text} />
-                    </View>
-                    <Text
-                      numberOfLines={1}
-                      style={{
-                        width: 60,
-                        textAlign: 'center',
-                        fontSize: 10.5,
-                        fontWeight: isSelected ? '800' : '600',
-                        color: isSelected ? accent : theme.colors.textMuted,
-                        includeFontPadding: false,
-                      }}
-                    >
-                      {acc.name}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-
-              <Pressable
-                onPress={() => toggleDropdown('account', accountAnchorRef)}
-                style={{ width: 60, alignItems: 'center', gap: 5 }}
+            {accounts.length === 0 ? (
+              <View
+                style={{
+                  backgroundColor: theme.isDark ? 'rgba(239, 68, 68, 0.12)' : '#FEE2E2',
+                  borderWidth: 1.5,
+                  borderColor: theme.isDark ? 'rgba(239, 68, 68, 0.35)' : '#FCA5A5',
+                  borderRadius: theme.radius.md,
+                  padding: 14,
+                  gap: 10,
+                  marginTop: 4,
+                }}
               >
-                <View
-                  style={{
-                    width: 46,
-                    height: 46,
-                    borderRadius: 23,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    borderWidth: 1.6,
-                    borderStyle: 'dashed',
-                    borderColor: accountDropdownOpen ? theme.colors.primary : theme.colors.textMuted,
-                    backgroundColor: accountDropdownOpen
-                      ? (theme.isDark ? 'rgba(99,102,241,0.14)' : 'rgba(79,70,229,0.06)')
-                      : 'transparent',
-                  }}
-                >
-                  <LayoutGrid size={18} color={accountDropdownOpen ? theme.colors.primary : theme.colors.textMuted} />
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <AlertCircle size={18} color={theme.colors.danger} />
+                  <Text style={{ color: theme.colors.danger, fontWeight: '800', fontSize: 14 }}>
+                    {t('expense_no_account_title') || 'No Account Found'}
+                  </Text>
                 </View>
-                <Text
-                  style={{
-                    width: 60,
-                    textAlign: 'center',
-                    fontSize: 10.5,
-                    fontWeight: '800',
-                    color: accountDropdownOpen ? theme.colors.primary : theme.colors.textMuted,
-                    includeFontPadding: false,
-                  }}
-                >
-                  {t('expense_all') || 'All'}
+                <Text style={{ color: theme.colors.text, fontSize: 12.5, lineHeight: 18 }}>
+                  {t('expense_no_account')}
                 </Text>
-              </Pressable>
-            </ScrollView>
+                <Button
+                  title={t('expense_add_account')}
+                  icon={Plus}
+                  onPress={() => {
+                    setEditingAccount(null);
+                    setAccountModalOpen(true);
+                  }}
+                  style={{ alignSelf: 'flex-start' }}
+                />
+              </View>
+            ) : (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={{ gap: 10, paddingVertical: 4, paddingRight: 4 }}
+              >
+                {accountRow.map((acc) => {
+                  const isSelected = form.bank_account_id === acc.id;
+                  const accent = acc.color || theme.colors.primary;
+                  return (
+                    <Pressable
+                      key={acc.id}
+                      onPress={() => {
+                        setForm((prev) => ({ ...prev, bank_account_id: acc.id }));
+                        setAccountDropdownOpen(false);
+                        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+                      }}
+                      style={{ width: 60, alignItems: 'center', gap: 5 }}
+                    >
+                      <View
+                        style={{
+                          width: 46,
+                          height: 46,
+                          borderRadius: 23,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          borderWidth: isSelected ? 2 : 1,
+                          borderColor: isSelected ? accent : theme.colors.border,
+                          backgroundColor: isSelected ? `${accent}18` : theme.colors.surfaceElevated,
+                        }}
+                      >
+                        <CategoryIcon name={acc.icon} size={20} color={isSelected ? accent : theme.colors.text} />
+                      </View>
+                      <Text
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.75}
+                          style={{
+                          width: 60,
+                          textAlign: 'center',
+                          fontSize: 10.5,
+                          fontWeight: isSelected ? '800' : '600',
+                          color: isSelected ? accent : theme.colors.textMuted,
+                          includeFontPadding: false,
+                        }}
+                      >
+                        {acc.name}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+
+                <Pressable
+                  onPress={() => toggleDropdown('account', accountAnchorRef)}
+                  style={{ width: 60, alignItems: 'center', gap: 5 }}
+                >
+                  <View
+                    style={{
+                      width: 46,
+                      height: 46,
+                      borderRadius: 23,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      borderWidth: 1.6,
+                      borderStyle: 'dashed',
+                      borderColor: accountDropdownOpen ? theme.colors.primary : theme.colors.textMuted,
+                      backgroundColor: accountDropdownOpen
+                        ? (theme.isDark ? 'rgba(99,102,241,0.14)' : 'rgba(79,70,229,0.06)')
+                        : 'transparent',
+                    }}
+                  >
+                    <LayoutGrid size={18} color={accountDropdownOpen ? theme.colors.primary : theme.colors.textMuted} />
+                  </View>
+                  <Text
+                    style={{
+                      width: 60,
+                      textAlign: 'center',
+                      fontSize: 10.5,
+                      fontWeight: '800',
+                      color: accountDropdownOpen ? theme.colors.primary : theme.colors.textMuted,
+                      includeFontPadding: false,
+                    }}
+                  >
+                    {t('expense_all') || 'All'}
+                  </Text>
+                </Pressable>
+              </ScrollView>
+            )}
 
             {/* Zero-height anchor: measured when ▦ All is tapped; the panel
                 itself renders in the root-level overlay below. Balances stay
@@ -2226,7 +2398,11 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
                         position: 'relative',
                       })}
                     >
-                      <Text style={{ fontSize: 22 }}>{pm.icon}</Text>
+                      <CategoryIcon
+                        name={pm.icon}
+                        size={22}
+                        color={isSelected ? theme.colors.primary : theme.colors.text}
+                      />
                       <Text style={{ fontSize: 12.5, fontWeight: '800', color: isSelected ? theme.colors.primary : theme.colors.text }}>
                         {pm.label}
                       </Text>
@@ -2773,7 +2949,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
               showToast({ type: 'success', message: t('bin_moved_toast') });
               handleBack();
             }).catch((err) => {
-              setError(err instanceof Error ? err.message : 'Could not delete this expense.');
+              setError(getErrorMessage(err, 'Could not delete this expense.'));
             });
           }}
         />

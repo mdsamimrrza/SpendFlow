@@ -16,7 +16,7 @@
 
     "android": {
       "package": "com.samimrrza.spendflow",
-      "versionCode": 3,
+      "versionCode": 46,
 
       "googleServicesFile": "./google-services.json",
 
@@ -83,7 +83,8 @@
       "expo-status-bar",
       "expo-web-browser",
       "./plugins/with-android-build-config",
-      "./plugins/with-android-backup-rules"
+      "./plugins/with-android-backup-rules",
+ "./plugins/with-spendflow-native"
     ],
 
     "experiments": {

@@ -3,6 +3,7 @@ import { Check, ChevronDown } from 'lucide-react-native';
 import { useState } from 'react';
 import { useTheme } from '@/hooks/useTheme';
 import { Text } from './Text';
+import { CategoryIcon } from './CategoryIcon';
 
 export type SelectOption<T extends string> = { label: string; value: T; flag?: string };
 
@@ -16,7 +17,9 @@ export function Select<T extends string>({ label, value, options, onChange }: { 
   // which made country names vanish behind flags in the country picker.
   const renderWithFlag = (flag: string | undefined, text: string) => (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.spacing.sm, flexShrink: 1 }}>
-      {flag ? <Text variant="label">{flag}</Text> : null}
+      {/* CategoryIcon draws lucide-name icons (e.g. 'utensils') and passes
+          country-flag emojis through as text — one renderer for both. */}
+      {flag ? <CategoryIcon name={flag} size={16} color={theme.colors.text} /> : null}
       <Text variant="label" style={{ flexShrink: 1 }}>{text}</Text>
     </View>
   );

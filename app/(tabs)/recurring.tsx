@@ -24,12 +24,16 @@ import {
   RotateCcw,
   Sparkles,
   Trash2,
+  Wallet,
   X,
 } from 'lucide-react-native';
 import { addDays, differenceInCalendarDays, format, parseISO } from 'date-fns';
+import { useRouter } from 'expo-router';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { CalendarModal } from '@/components/ui/CalendarModal';
+import { CategoryIcon } from '@/components/ui/CategoryIcon';
+import { getErrorMessage } from '@/utils/errors';
 import { Card } from '@/components/ui/Card';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Input } from '@/components/ui/Input';
@@ -41,26 +45,29 @@ import { Text } from '@/components/ui/Text';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
 import { PAYMENT_METHODS } from '@/constants/app';
 import { useAuth } from '@/hooks/useAuth';
+import { useAccountBalances } from '@/hooks/useAccountBalances';
 import { notifyExpensesChanged } from '@/hooks/useExpenses';
 import { useLanguage } from '@/hooks/useLanguage';
 import { usePrivacy } from '@/hooks/usePrivacy';
 import { useTheme } from '@/hooks/useTheme';
+import { listBankAccounts, subscribeAccountsChanged } from '@/services/bankAccounts';
 import { listCategories } from '@/services/categories';
+import { convertExpense } from '@/services/exchange';
 import {
   createRecurringRule,
   deleteRecurringRule,
   listRecurringRules,
   listRuleOccurrences,
-  markOccurrencePaid,
   nextDueDate as advanceDueDate,
   RuleOccurrence,
   skipCurrentOccurrence,
+  cancelRecurringOccurrence,
   subscribeRecurringRulesChanged,
   undoLatestOccurrencePayment,
   updateRecurringRule,
 } from '@/services/recurring';
 import { notifyRecurringBillDue } from '@/services/notifications';
-import { Category, PaymentMethod, RecurringFrequency, RecurringMode, RecurringRule } from '@/types';
+import { BankAccount, Category, PaymentMethod, RecurringFrequency, RecurringMode, RecurringRule } from '@/types';
 import { convertCurrency, formatMoney, isoDate } from '@/utils/format';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
 
@@ -69,9 +76,14 @@ export default function RecurringScreen() {
   const { t } = useLanguage();
   const { isPrivacyMode } = usePrivacy();
   const theme = useTheme();
+  const router = useRouter();
   const [rules, setRules] = useState<RecurringRule[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [accounts, setAccounts] = useState<BankAccount[]>([]);
+  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  // Single-source live account balances (shared hook with ExpenseForm & Accounts)
+  const { liveBalances, balanceById, refresh: refreshBalances } = useAccountBalances(profile?.id, accounts);
   // Booked installments for every rule — powers the paid state, DUE badges,
   // and the timeline strips (one query, newest slot first).
   const [occurrences, setOccurrences] = useState<RuleOccurrence[]>([]);
@@ -89,6 +101,8 @@ export default function RecurringScreen() {
   // Designed delete confirmation (the plain system Alert looked foreign here)
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
   const [deletingRule, setDeletingRule] = useState(false);
+  // Remove-installment confirmation for a BOOKED auto_charge cycle (same reason)
+  const [cancelTargetId, setCancelTargetId] = useState<string | null>(null);
   const [showFormModal, setShowFormModal] = useState(false);
   const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
   const [amount, setAmount] = useState('');
@@ -105,12 +119,14 @@ export default function RecurringScreen() {
   async function load(): Promise<RecurringRule[]> {
     if (!profile?.id) return [];
     // Cache-paint first (instant), then swap in the authoritative server list.
-    const [nextRules, nextCategories] = await Promise.all([
+    const [nextRules, nextCategories, nextAccounts] = await Promise.all([
       listRecurringRules(profile.id, (cached) => setRules(cached)),
       listCategories(profile.id, (cached) => setCategories(cached)),
+      listBankAccounts(profile.id),
     ]);
     setRules(nextRules);
     setCategories(nextCategories);
+    setAccounts(nextAccounts);
     setCategoryId((current) => current || nextCategories[0]?.id || '');
     // Booked installments drive paid states / DUE badges / timelines.
     try {
@@ -124,14 +140,14 @@ export default function RecurringScreen() {
   const handleRefresh = async () => {
     setRefreshing(true);
     try {
-      await load();
+      await Promise.all([load(), refreshBalances()]);
     } finally {
       setRefreshing(false);
     }
   };
 
   useEffect(() => {
-    load().catch((error) => Alert.alert(t('common_error'), error.message));
+    load().catch((error) => Alert.alert(t('common_error'), getErrorMessage(error, t('common_error'))));
   }, [profile?.id]);
 
   // A plan restored from the Bin (or purged there) must repaint this tab even
@@ -144,8 +160,17 @@ export default function RecurringScreen() {
     [profile?.id],
   );
 
+  // Re-fetch accounts and live balances whenever accounts change elsewhere
+  useEffect(
+    () =>
+      subscribeAccountsChanged(() => {
+        load().catch(() => undefined);
+      }),
+    [profile?.id],
+  );
+
   const categoryOptions = useMemo(
-    () => categories.map((category) => ({ label: `${category.icon} ${category.name}`, value: category.id })),
+    () => categories.map((category) => ({ label: category.name, value: category.id, flag: category.icon })),
     [categories],
   );
 
@@ -167,6 +192,17 @@ export default function RecurringScreen() {
   }, [rules, preferredCurrency, rates]);
 
   function openCreateModal() {
+    if (accounts.length === 0) {
+      Alert.alert(
+        t('expense_no_account_title') || 'No Account Found',
+        t('recurring_no_account') || t('expense_no_account'),
+        [
+          { text: t('common_cancel'), style: 'cancel' },
+          { text: t('expense_add_account'), onPress: () => router.push('/accounts' as any) },
+        ],
+      );
+      return;
+    }
     setSelectedRule(null);
     setEditingRuleId(null);
     setAmount('');
@@ -177,6 +213,8 @@ export default function RecurringScreen() {
     setNextDueDate(isoDate());
     setPaymentMethod('Cash');
     setCategoryId(categories[0]?.id || '');
+    const def = accounts.find((a) => a.is_default) || accounts[0];
+    setSelectedAccountId(def?.id || null);
     setShowFormModal(true);
   }
 
@@ -191,14 +229,27 @@ export default function RecurringScreen() {
     setRuleMode(rule.mode ?? 'pay_on_due');
     setNextDueDate(rule.next_due_date);
     setPaymentMethod((rule.payment_method as PaymentMethod) || 'Cash');
+    const existingAccountId = rule.bank_account_id && accounts.some((a) => a.id === rule.bank_account_id)
+      ? rule.bank_account_id
+      : (accounts.find((a) => a.is_default)?.id || accounts[0]?.id || null);
+    setSelectedAccountId(existingAccountId);
     setShowFormModal(true);
   }
 
   function closeFormModal() {
+    if (Number(amount) > 0 || description.trim()) {
+      // Audit A14: confirm before wiping a half-filled recurring form.
+      Alert.alert('Discard changes?', 'You have unsaved changes.', [
+        { text: 'Keep editing', style: 'cancel' },
+        { text: 'Discard', style: 'destructive', onPress: () => { setShowFormModal(false); setEditingRuleId(null); setAmount(''); setDescription(''); setSelectedAccountId(null); } },
+      ]);
+      return;
+    }
     setShowFormModal(false);
     setEditingRuleId(null);
     setAmount('');
     setDescription('');
+    setSelectedAccountId(null);
   }
 
   function handleDeleteRule(ruleId: string) {
@@ -223,14 +274,43 @@ export default function RecurringScreen() {
   }
 
   async function handleSaveRule() {
+    if (saving) return;
     if (!profile?.id || !amount || Number(amount) <= 0 || !categoryId) {
       Alert.alert(t('common_error'), t('expense_amount_placeholder') || 'Please enter a valid amount');
+      return;
+    }
+    if (!selectedAccountId || accounts.length === 0) {
+      Alert.alert(
+        t('expense_no_account_title') || 'No Account Found',
+        t('recurring_no_account') || t('expense_no_account'),
+        [
+          { text: t('common_cancel'), style: 'cancel' },
+          { text: t('expense_add_account'), onPress: () => router.push('/accounts' as any) },
+        ],
+      );
       return;
     }
     const interval = Number(intervalDays);
     if (frequency === 'custom' && (!Number.isInteger(interval) || interval < 1 || interval > 365)) {
       Alert.alert(t('common_error'), t('recurring_interval_invalid') || 'Custom cycle needs a repeat length of 1–365 days.');
       return;
+    }
+
+    // Balance check before proceeding
+    const targetAccount = accounts.find((a) => a.id === selectedAccountId);
+    if (targetAccount) {
+      const liveBal = balanceById.get(selectedAccountId) ?? Number(targetAccount.initial_balance || 0);
+      const reqInAcct = await convertExpense(
+        { amount: Number(amount), currency: preferredCurrency, date: isoDate(), exchange_rate_to_usd: null },
+        targetAccount.currency || 'NPR',
+      ).catch(() => Number(amount));
+      if (reqInAcct > liveBal) {
+        Alert.alert(
+          t('transfer_insufficient_title') || 'Insufficient Balance',
+          `${t('recurring_insufficient_balance') || 'Insufficient balance in the selected account.'}\n\nAvailable: ${formatMoney(liveBal, targetAccount.currency || preferredCurrency)}\nRequired: ${formatMoney(reqInAcct, targetAccount.currency || preferredCurrency)}`,
+        );
+        return;
+      }
     }
 
     setSaving(true);
@@ -259,6 +339,7 @@ export default function RecurringScreen() {
           mode: ruleMode,
           next_due_date: resolvedNextDue,
           payment_method: paymentMethod,
+          bank_account_id: selectedAccountId,
         }, profile.id);
       } else {
         // CREATE NEW RECURRING RULE
@@ -272,6 +353,7 @@ export default function RecurringScreen() {
           mode: ruleMode,
           next_due_date: nextDueDate,
           payment_method: paymentMethod,
+          bank_account_id: selectedAccountId,
         });
 
         // Trigger Smart Bill Reminder
@@ -289,7 +371,24 @@ export default function RecurringScreen() {
       closeFormModal();
       await load();
     } catch (error) {
-      Alert.alert(t('common_error'), error instanceof Error ? error.message : t('common_error'));
+      const message = getErrorMessage(error, t('common_error'));
+      if (message.startsWith('No bank account or wallet exists') || message.includes('No bank account')) {
+        Alert.alert(
+          t('expense_no_account_title') || 'No Account Found',
+          t('recurring_no_account') || t('expense_no_account'),
+          [
+            { text: t('common_cancel'), style: 'cancel' },
+            { text: t('expense_add_account'), onPress: () => router.push('/accounts' as any) },
+          ],
+        );
+      } else if (message.includes('Insufficient account balance')) {
+        Alert.alert(
+          t('transfer_insufficient_title') || 'Insufficient Balance',
+          t('recurring_insufficient_balance') || 'Insufficient balance in the selected account.',
+        );
+      } else {
+        Alert.alert(t('common_error'), message);
+      }
     } finally {
       setSaving(false);
     }
@@ -299,23 +398,39 @@ export default function RecurringScreen() {
   // All three go through the shared service writes so phone, web and the
   // login-time generator can never double-book a slot (unique slot index).
 
-  async function runRuleAction(ruleId: string, action: 'paid' | 'skip' | 'undo') {
+  async function runRuleAction(ruleId: string, action: 'paid' | 'skip' | 'undo' | 'cancel') {
     if (!profile?.id) return;
     setBusyRuleId(ruleId);
     try {
       if (action === 'paid') {
-        const { lateDays } = await markOccurrencePaid(profile.id, ruleId);
-        notifyExpensesChanged();
-        showToast({
-          message:
-            lateDays > 0
-              ? `${t('recurring_marked_paid') || 'Payment recorded'} · ${t('recurring_late_days') || 'late'} ${lateDays}d`
-              : t('recurring_marked_paid') || 'Payment recorded',
-          type: 'success',
+        if (accounts.length === 0) {
+          Alert.alert(
+            t('expense_no_account_title') || 'No Account Found',
+            t('recurring_no_account') || t('expense_no_account'),
+            [
+              { text: t('common_cancel'), style: 'cancel' },
+              { text: t('expense_add_account'), onPress: () => router.push('/accounts' as any) },
+            ],
+          );
+          return;
+        }
+        router.push({
+          pathname: '/expense/add',
+          params: { recurringRuleId: ruleId },
         });
+        return;
       } else if (action === 'skip') {
-        await skipCurrentOccurrence(profile.id, ruleId);
-        showToast({ message: t('recurring_cycle_skipped') || 'This cycle was skipped', type: 'info' });
+        const skipped = await skipCurrentOccurrence(profile.id, ruleId);
+        if (skipped.cancelledBooking) {
+          // The poster booked this slot between render and tap — the RPC
+          // cancelled the booking instead of a plain advance.
+          notifyExpensesChanged();
+          showToast({ message: t('recurring_installment_cancelled') || 'Auto-charge removed — this cycle won\'t be charged', type: 'success' });
+        } else {
+          showToast({ message: t('recurring_cycle_skipped') || 'This cycle was skipped', type: 'info' });
+        }
+      } else if (action === 'cancel') {
+        setCancelTargetId(ruleId);
       } else {
         const undone = await undoLatestOccurrencePayment(profile.id, ruleId);
         if (!undone) {
@@ -329,9 +444,32 @@ export default function RecurringScreen() {
       // Keep the open detail sheet in sync with the freshly loaded rule.
       setSelectedRule((prev) => (prev ? nextRules.find((r) => r.id === ruleId) ?? null : null));
     } catch (error) {
-      Alert.alert(t('common_error'), error instanceof Error ? error.message : t('common_error'));
+      Alert.alert(t('common_error'), getErrorMessage(error, t('common_error')));
     } finally {
       setBusyRuleId(null);
+    }
+  }
+
+  async function confirmCancelOccurrence() {
+    const ruleId = cancelTargetId;
+    if (!ruleId || !profile?.id) return;
+    setBusyRuleId(ruleId);
+    try {
+      const cancelled = await cancelRecurringOccurrence(profile.id, ruleId);
+      if (!cancelled) {
+        showToast({ message: t('recurring_undo_not_recent') || 'Only the most recent payment can be undone', type: 'info' });
+      } else {
+        notifyExpensesChanged();
+        showToast({ message: t('recurring_installment_cancelled') || 'Auto-charge removed — this cycle won\'t be charged', type: 'success' });
+      }
+      const nextRules = await load();
+      // Keep the open detail sheet in sync with the freshly loaded rule.
+      setSelectedRule((prev) => (prev ? nextRules.find((r) => r.id === ruleId) ?? null : null));
+    } catch (error) {
+      Alert.alert(t('common_error'), getErrorMessage(error, t('common_error')));
+    } finally {
+      setBusyRuleId(null);
+      setCancelTargetId(null);
     }
   }
 
@@ -356,9 +494,15 @@ export default function RecurringScreen() {
     if (latest.recurring_due_date >= rule.next_due_date) return null; // current slot unpaid
     const late = differenceInCalendarDays(parseISO(latest.date), parseISO(latest.recurring_due_date));
     const paid = format(parseISO(latest.date), 'MMM d');
-    return late > 0
-      ? `✓ ${t('recurring_paid_short') || 'Paid'} ${paid} · ${t('recurring_late_days') || 'late'} ${late}d`
-      : `✓ ${t('recurring_paid_short') || 'Paid'} ${paid} · ${t('recurring_on_time') || 'on time'}`;
+    const timing = late > 0
+      ? `${t('recurring_late_days') || 'late'} ${late}d`
+      : t('recurring_on_time') || 'on time';
+    // The server poster books auto_charge cycles silently — wording must not
+    // claim a manual payment happened when it was an automatic posting.
+    if ((rule.mode ?? 'auto_charge') === 'auto_charge') {
+      return `${t('recurring_auto_charged_short') || 'Auto-charged'} ${paid} · ${timing}`;
+    }
+    return `✓ ${t('recurring_paid_short') || 'Paid'} ${paid} · ${timing}`;
   }
 
   async function toggleRuleActive(rule: RecurringRule) {
@@ -613,7 +757,11 @@ export default function RecurringScreen() {
                           justifyContent: 'center',
                         }}
                       >
-                        <Text style={{ fontSize: 20 }}>{rule.categories?.icon || '💳'}</Text>
+                        <CategoryIcon
+                          name={rule.categories?.icon || '💳'}
+                          size={20}
+                          color={theme.colors.text}
+                        />
                       </View>
 
                       <View style={{ gap: 2, flex: 1 }}>
@@ -775,7 +923,11 @@ export default function RecurringScreen() {
                     justifyContent: 'center',
                   }}
                 >
-                  <Text style={{ fontSize: 22 }}>{selectedRule?.categories?.icon || '💳'}</Text>
+                  <CategoryIcon
+                    name={selectedRule?.categories?.icon || '💳'}
+                    size={22}
+                    color={theme.colors.text}
+                  />
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text variant="h3" numberOfLines={1} style={{ fontWeight: '800', fontSize: 18 }}>
@@ -885,6 +1037,7 @@ export default function RecurringScreen() {
                           style={{
                             flexDirection: 'row',
                             alignItems: 'center',
+                            flexWrap: 'wrap',
                             gap: 8,
                             padding: 12,
                             borderRadius: 14,
@@ -917,6 +1070,33 @@ export default function RecurringScreen() {
                               <RotateCcw size={11} color={theme.colors.textMuted} />
                               <Text style={{ fontSize: 11, fontWeight: '700', color: theme.colors.textMuted }}>
                                 {t('recurring_not_paid_undo') || 'Not paid — undo'}
+                              </Text>
+                            </Pressable>
+                          ) : null}
+                          {/* Booked auto_charge cycles: cancel THIS installment outright
+                              (RPC removes the booking, chain stays). pay_on_due money
+                              really moved, so undo — not remove — is their lever. */}
+                          {(rule.mode ?? 'auto_charge') === 'auto_charge' && canUndo ? (
+                            <Pressable
+                              onPress={() => setCancelTargetId(rule.id)}
+                              disabled={busy}
+                              hitSlop={6}
+                              style={{
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                gap: 4,
+                                paddingHorizontal: 8,
+                                paddingVertical: 4,
+                                borderRadius: 8,
+                                backgroundColor: theme.colors.surfaceElevated,
+                                borderWidth: 1,
+                                borderColor: theme.isDark ? 'rgba(248,113,113,0.4)' : 'rgba(220,38,38,0.35)',
+                                opacity: busy ? 0.5 : 1,
+                              }}
+                            >
+                              <Trash2 size={11} color={theme.isDark ? '#F87171' : '#DC2626'} />
+                              <Text style={{ fontSize: 11, fontWeight: '700', color: theme.isDark ? '#F87171' : '#DC2626' }}>
+                                {t('recurring_remove_installment') || 'Remove'}
                               </Text>
                             </Pressable>
                           ) : null}
@@ -1358,6 +1538,107 @@ export default function RecurringScreen() {
                 onChange={setCategoryId}
               />
 
+              {/* Bank Account / Wallet Select */}
+              <View style={{ gap: theme.spacing.xs }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <Text variant="caption" muted style={{ fontWeight: '700' }}>
+                    {t('recurring_account') || 'Bank Account / Wallet'}
+                  </Text>
+                  {accounts.length > 0 && selectedAccountId ? (
+                    <Text variant="caption" style={{ color: theme.colors.primary, fontWeight: '700', fontSize: 11 }}>
+                      Live: {formatMoney(balanceById.get(selectedAccountId) ?? Number(accounts.find((a) => a.id === selectedAccountId)?.initial_balance || 0), accounts.find((a) => a.id === selectedAccountId)?.currency || preferredCurrency)}
+                    </Text>
+                  ) : null}
+                </View>
+
+                {accounts.length === 0 ? (
+                  <View
+                    style={{
+                      backgroundColor: theme.isDark ? 'rgba(239, 68, 68, 0.12)' : '#FEE2E2',
+                      borderWidth: 1.5,
+                      borderColor: theme.isDark ? 'rgba(239, 68, 68, 0.35)' : '#FCA5A5',
+                      borderRadius: theme.radius.md,
+                      padding: 14,
+                      gap: 10,
+                    }}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                      <AlertCircle size={18} color={theme.colors.danger} />
+                      <Text style={{ color: theme.colors.danger, fontWeight: '800', fontSize: 14 }}>
+                        {t('expense_no_account_title') || 'No Account Found'}
+                      </Text>
+                    </View>
+                    <Text style={{ color: theme.colors.text, fontSize: 12.5, lineHeight: 18 }}>
+                      {t('recurring_no_account') || t('expense_no_account')}
+                    </Text>
+                    <Button
+                      title={t('expense_add_account')}
+                      icon={Plus}
+                      onPress={() => {
+                        closeFormModal();
+                        router.push('/accounts' as any);
+                      }}
+                      style={{ alignSelf: 'flex-start' }}
+                    />
+                  </View>
+                ) : (
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={{ gap: 8, paddingVertical: 4 }}
+                  >
+                    {accounts.map((acc) => {
+                      const isSelected = selectedAccountId === acc.id;
+                      const liveBal = balanceById.get(acc.id) ?? Number(acc.initial_balance || 0);
+                      const accent = acc.color || theme.colors.primary;
+                      return (
+                        <PressableScale
+                          key={acc.id}
+                          activeScale={0.95}
+                          onPress={() => setSelectedAccountId(acc.id)}
+                          style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            gap: 8,
+                            paddingHorizontal: 12,
+                            paddingVertical: 10,
+                            borderRadius: theme.radius.md,
+                            backgroundColor: isSelected
+                              ? (theme.isDark ? 'rgba(99,102,241,0.2)' : 'rgba(79,70,229,0.08)')
+                              : theme.colors.surfaceElevated,
+                            borderWidth: 1.5,
+                            borderColor: isSelected ? accent : theme.colors.border,
+                          }}
+                        >
+                          <CategoryIcon name={acc.icon} size={18} color={isSelected ? accent : theme.colors.text} />
+                          <View style={{ gap: 1 }}>
+                            <Text
+                              style={{
+                                fontSize: 13,
+                                fontWeight: isSelected ? '800' : '600',
+                                color: isSelected ? accent : theme.colors.text,
+                              }}
+                            >
+                              {acc.name}
+                            </Text>
+                            <Text
+                              variant="caption"
+                              style={{
+                                fontSize: 10.5,
+                                fontWeight: '700',
+                                color: liveBal >= 0 ? theme.colors.income : theme.colors.danger,
+                              }}
+                            >
+                              {formatMoney(liveBal, acc.currency || preferredCurrency)}
+                            </Text>
+                          </View>
+                        </PressableScale>
+                      );
+                    })}
+                  </ScrollView>
+                )}
+              </View>
+
               {/* Frequency Selector */}
               <View style={{ gap: theme.spacing.xs }}>
                 <Text variant="caption" muted style={{ fontWeight: '700' }}>
@@ -1720,6 +2001,18 @@ export default function RecurringScreen() {
         loading={deletingRule}
         onCancel={() => setDeleteTargetId(null)}
         onConfirm={() => void confirmDeleteRule()}
+      />
+
+      {/* Remove-installment confirmation: hard-deletes the booked auto_charge
+          occurrence — destructive, so it gets the same designed gate as delete */}
+      <ConfirmDialog
+        visible={cancelTargetId !== null}
+        title={t('recurring_remove_installment_title') || 'Remove this auto-charge?'}
+        message={t('recurring_remove_installment_body') || 'The booked charge will be removed from your ledger and this cycle skipped. Your schedule continues from the next cycle.'}
+        confirmLabel={t('recurring_remove_installment') || 'Remove'}
+        loading={busyRuleId === cancelTargetId}
+        onCancel={() => setCancelTargetId(null)}
+        onConfirm={() => void confirmCancelOccurrence()}
       />
 
       {/* ── Floating Action Button (+) ── */}

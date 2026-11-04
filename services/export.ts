@@ -443,7 +443,7 @@ export async function exportPdf(
   const outflowRows = expenses
     .filter((e) => (e.type || 'expense') !== 'income')
     .map((e) => ({ record: e, converted: toExportCurrency(e) }));
-  const totalSpent = Math.round(outflowRows.reduce((sum, r) => sum + r.converted, 0));
+  const totalSpent = Math.round(outflowRows.reduce((sum, r) => sum + r.converted, 0) * 100) / 100;
   const totalTransactions = outflowRows.length;
   const categorySummary = groupByCategory(expenses, currency, resolver);
   const topCategory = categorySummary[0]?.label ?? 'N/A';

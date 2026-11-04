@@ -120,6 +120,7 @@ export default function ProfileScreen() {
 
   async function runImagePicker(fromCamera: boolean) {
     setAvatarSheetOpen(false);
+    beginSystemCapture();
     try {
       const permission = fromCamera
         ? await ImagePicker.requestCameraPermissionsAsync()
@@ -143,15 +144,10 @@ export default function ProfileScreen() {
       };
       // Same capture suppression as the receipt flow: the camera/picker is a
       // separate Android activity and would re-trigger the biometric lock.
-      beginSystemCapture();
-      let result;
-      try {
-        result = fromCamera
-          ? await ImagePicker.launchCameraAsync(options)
-          : await ImagePicker.launchImageLibraryAsync(options);
-      } finally {
-        endSystemCapture();
-      }
+      // beginSystemCapture already ran above, before the permission prompt.
+      let result = fromCamera
+        ? await ImagePicker.launchCameraAsync(options)
+        : await ImagePicker.launchImageLibraryAsync(options);
 
       if (result.canceled || !result.assets[0]) return;
       const asset = result.assets[0];
@@ -176,6 +172,8 @@ export default function ProfileScreen() {
         message: err instanceof Error ? err.message : 'Could not update the profile photo.',
         type: 'error',
       });
+    } finally {
+      endSystemCapture();
     }
   }
 

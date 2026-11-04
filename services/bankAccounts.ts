@@ -2,9 +2,28 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AccountType, BankAccount, BankAccountInput, Expense, Transfer } from '@/types';
 import { buildRateResolver } from '@/services/exchange';
 import { countryForCurrency } from '@/constants/countries';
+import { notifyExpensesChanged } from '@/hooks/useExpenses';
 import { supabase } from '@/utils/supabase';
 
 const ACCOUNTS_CACHE_PREFIX = '@spendflow_cached_accounts_';
+
+type AccountsChangeListener = () => void;
+const accountListeners = new Set<AccountsChangeListener>();
+
+export function notifyAccountsChanged() {
+  accountListeners.forEach((listener) => {
+    try {
+      listener();
+    } catch {}
+  });
+}
+
+export function subscribeAccountsChanged(listener: AccountsChangeListener): () => void {
+  accountListeners.add(listener);
+  return () => {
+    accountListeners.delete(listener);
+  };
+}
 
 export async function getCachedBankAccounts(userId?: string): Promise<BankAccount[]> {
   if (!userId) return [];
@@ -134,6 +153,7 @@ export async function createBankAccount(userId: string, input: BankAccountInput)
       }
       const created: BankAccount = { ...(retryData as BankAccount), account_type: desiredType };
       await addCreatedAccountToCache(userId, created, Boolean(newAccount.is_default));
+      notifyAccountsChanged();
       return created;
     }
     throw error;
@@ -141,6 +161,7 @@ export async function createBankAccount(userId: string, input: BankAccountInput)
 
   const created = data as BankAccount;
   await addCreatedAccountToCache(userId, created, Boolean(newAccount.is_default));
+  notifyAccountsChanged();
   return created;
 }
 
@@ -213,6 +234,7 @@ export async function updateBankAccount(
   };
   const next = cached.map((a) => (a.id === id ? updated : input.is_default ? { ...a, is_default: false } : a));
   await setCachedBankAccounts(userId, next);
+  notifyAccountsChanged();
   return updated;
 }
 
@@ -260,6 +282,8 @@ export async function deleteBankAccount(id: string, userId: string): Promise<voi
   const cached = await getCachedBankAccounts(userId);
   const next = cached.filter((a) => a.id !== id);
   await setCachedBankAccounts(userId, next);
+  notifyAccountsChanged();
+  notifyExpensesChanged();
 }
 
 export async function seedDefaultAccounts(userId: string, currency = 'NPR'): Promise<BankAccount[]> {

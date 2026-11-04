@@ -5,8 +5,22 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { ActivityIndicator, LogBox, Platform, View } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
+import {
+  useFonts,
+  Inter_400Regular,
+  Inter_500Medium,
+  Inter_600SemiBold,
+} from '@expo-google-fonts/inter';
+import {
+  JetBrainsMono_500Medium,
+  JetBrainsMono_700Bold,
+} from '@expo-google-fonts/jetbrains-mono';
+import * as SplashScreen from 'expo-splash-screen';
+
+SplashScreen.preventAutoHideAsync().catch(() => {});
 import { AuthProvider } from '@/store/AuthContext';
 import { ExchangeRateProvider } from '@/store/ExchangeRateContext';
+import { OfflineBanner } from '@/components/ui/OfflineBanner';
 import { LanguageProvider } from '@/store/LanguageContext';
 import { OnboardingProvider, useOnboarding } from '@/store/OnboardingContext';
 import { ThemeProvider } from '@/store/ThemeContext';
@@ -33,6 +47,14 @@ if (__DEV__) {
 }
 
 function RootNavigator() {
+  const [fontsLoaded, fontError] = useFonts({
+    Inter_400Regular,
+    Inter_500Medium,
+    Inter_600SemiBold,
+    JetBrainsMono_500Medium,
+    JetBrainsMono_700Bold,
+  });
+
   const { session, loading } = useAuth();
   const theme = useTheme();
   const insets = useSafeAreaInsets();
@@ -40,7 +62,14 @@ function RootNavigator() {
   const router = useRouter();
   const segments = useSegments();
   const segmentKey = segments.join('/');
-  const isLoading = loading || onboardingDone === null;
+
+  useEffect(() => {
+    if (fontsLoaded || fontError) {
+      SplashScreen.hideAsync().catch(() => {});
+    }
+  }, [fontsLoaded, fontError]);
+
+  const isLoading = loading || onboardingDone === null || (!fontsLoaded && !fontError);
 
   // SafeAreaProvider already accounts for each device's status bar and cutout.
   const topPadding = Platform.OS === 'web' ? 0 : insets.top;
@@ -127,7 +156,8 @@ export default function Layout() {
               <ThemeProvider>
                 <PrivacyProvider>
                   <OnboardingProvider>
-                    <RootNavigator />
+                    <OfflineBanner />
+            <RootNavigator />
                   </OnboardingProvider>
                 </PrivacyProvider>
               </ThemeProvider>

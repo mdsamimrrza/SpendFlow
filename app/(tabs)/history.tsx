@@ -52,6 +52,7 @@ import { CalendarModal, DateRange } from '@/components/ui/CalendarModal';
 import { Card } from '@/components/ui/Card';
 import { CategoryIcon } from '@/components/ui/CategoryIcon';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Input } from '@/components/ui/Input';
 import { PressableScale } from '@/components/ui/PressableScale';
 import { Select } from '@/components/ui/Select';
@@ -1377,6 +1378,14 @@ export default function HistoryScreen() {
           expenses.loading ? (
             <View style={{ paddingVertical: theme.spacing['4xl'], alignItems: 'center' }}>
               <ActivityIndicator size="large" color={theme.colors.primary} />
+            </View>
+          ) : expenses.error && expenses.items.length === 0 ? (
+            <View style={{ paddingHorizontal: theme.spacing.lg }}>
+              <ErrorBanner
+                message={t('expenses_error') || "Couldn't load your expenses. Tap to retry."}
+                retryLabel={t('common_retry') || 'Retry'}
+                onRetry={() => void expenses.refresh(true)}
+              />
             </View>
           ) : (
             <EmptyState

@@ -108,7 +108,22 @@ export async function listExpenses(userId: string, page = 0, filters?: ExpenseFi
   // so it matches the cache-paint ordering used before the network resolves.
   const items = page === 0 ? sortExpenses(serverItems, sort) : serverItems;
 
-  if (page === 0) await AsyncStorage.setItem(`${EXPENSE_CACHE_PREFIX}${userId}`, JSON.stringify(items));
+  // Only an UNFILTERED load may refresh the shared instant-paint cache. A
+  // History search/date query writing here poisoned the cache that every
+  // screen's offline paint — and the account-balance path — reads, showing
+  // wrong data until the next unfiltered fetch (audit 2026-10-27, A4).
+  const unfiltered =
+    !filters?.search &&
+    !filters?.fromDate &&
+    !filters?.toDate &&
+    !filters?.categoryIds?.length &&
+    !filters?.bankAccountId &&
+    (filters?.minAmount === undefined || filters?.minAmount === null) &&
+    (filters?.maxAmount === undefined || filters?.maxAmount === null) &&
+    (!filters?.type || filters?.type === 'All');
+  if (page === 0 && unfiltered) {
+    await AsyncStorage.setItem(`${EXPENSE_CACHE_PREFIX}${userId}`, JSON.stringify(items));
+  }
   return { items, hasMore: filters?.fetchAll ? false : serverItems.length === PAGE_SIZE };
 }
 
@@ -206,6 +221,14 @@ function stripExportQuote(value: string | null | undefined, maxLength: number): 
 export async function createExpense(userId: string, input: ExpenseInput) {
   const transactionType = input.type || 'expense';
   const sanitizedBankAccountId = isValidUUID(input.bank_account_id) ? input.bank_account_id : null;
+  if (!sanitizedBankAccountId) {
+    throw new Error('No bank account or wallet exists. Add an account and balance before saving this transaction.');
+  }
+  const accounts = await listBankAccounts(userId);
+  const account = accounts.find((a) => a.id === sanitizedBankAccountId);
+  if (!account) {
+    throw new Error('No bank account or wallet exists. Add an account and balance before saving this transaction.');
+  }
   const amount = validateAmount(input.amount);
   const date = validateDate(input.date);
   const sanitizedInput = {
@@ -217,12 +240,17 @@ export async function createExpense(userId: string, input: ExpenseInput) {
 
   const snapshot = await getRate(input.currency || 'USD', date).catch(() => undefined);
 
+  // Idempotency stamp: one sync id per save attempt. A client retry that
+  // replays the same insert is rejected by the per-user partial unique index
+  // (migration 20261027020000) instead of silently creating a second record —
+  // the safety net that existed before that index was dropped.
   const values = {
     ...sanitizedInput,
     type: transactionType,
     user_id: userId,
     amount,
     date,
+    client_sync_id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`,
     ...(snapshot ? { exchange_rate_to_usd: snapshot, base_currency: 'USD' } : {}),
   };
   const result = await supabase.from('expenses').insert(values).select(selection).single();
@@ -234,6 +262,16 @@ export async function createExpense(userId: string, input: ExpenseInput) {
 export async function updateExpense(id: string, input: ExpenseInput, userId?: string | null) {
   const transactionType = input.type || 'expense';
   const sanitizedBankAccountId = isValidUUID(input.bank_account_id) ? input.bank_account_id : null;
+  if (!sanitizedBankAccountId) {
+    throw new Error('No bank account or wallet exists. Add an account and balance before saving this transaction.');
+  }
+  if (userId) {
+    const accounts = await listBankAccounts(userId);
+    const account = accounts.find((a) => a.id === sanitizedBankAccountId);
+    if (!account) {
+      throw new Error('No bank account or wallet exists. Add an account and balance before saving this transaction.');
+    }
+  }
   const amount = validateAmount(input.amount);
   const date = validateDate(input.date);
   const sanitizedInput = {

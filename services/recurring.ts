@@ -2,12 +2,55 @@ import { addDays, addMonths, addWeeks, format, isBefore, parseISO } from 'date-f
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { PaymentMethod, RecurringFrequency, RecurringMode, RecurringRule } from '@/types';
+import { PaymentMethod, RecurringFrequency, RecurringMode, RecurringRule, BankAccount } from '@/types';
 import { validateAmount } from '@/services/validation';
-import { getRate } from '@/services/exchange';
+import { convertExpense, getRate } from '@/services/exchange';
+import { computeAccountBalances, listBankAccounts } from '@/services/bankAccounts';
+import { listExpenses } from '@/services/expenses';
+import { listTransfers } from '@/services/transfers';
 import { supabase } from '@/utils/supabase';
 
 const selection = '*, categories(name, icon, color)';
+const NO_ACCOUNT_MESSAGE = 'No bank account or wallet exists. Add an account and balance before saving this transaction.';
+const INSUFFICIENT_BALANCE_MESSAGE = 'Insufficient account balance.';
+
+/** One balance snapshot shared across a rule's due-slot validation (audit
+ * 2026-10-27, A21: the slot loop used to re-fetch accounts + the whole
+ * expenses table + transfers per slot — identical data every iteration). */
+interface RecurringBalanceContext {
+  accounts: BankAccount[];
+  balances: (BankAccount & { live_balance: number })[];
+}
+
+async function loadRecurringBalanceContext(userId: string): Promise<RecurringBalanceContext> {
+  const accounts = await listBankAccounts(userId);
+  const [{ items: expenses }, transfers] = await Promise.all([
+    listExpenses(userId, 0, { fetchAll: true }),
+    listTransfers(userId),
+  ]);
+  const balances = await computeAccountBalances(accounts, expenses, transfers);
+  return { accounts, balances };
+}
+
+async function assertRecurringPaymentCanProceed(
+  userId: string,
+  accountId: string | null | undefined,
+  amount: number,
+  currency: string,
+  date: string,
+  context?: RecurringBalanceContext,
+) {
+  if (!accountId) throw new Error(NO_ACCOUNT_MESSAGE);
+  const { accounts, balances } = context ?? (await loadRecurringBalanceContext(userId));
+  const account = accounts.find((item) => item.id === accountId);
+  if (!account) throw new Error(NO_ACCOUNT_MESSAGE);
+  const liveBalance = balances.find((item) => item.id === accountId)?.live_balance ?? 0;
+  const required = await convertExpense(
+    { amount, currency, date, exchange_rate_to_usd: null },
+    account.currency || 'NPR',
+  ).catch(() => amount);
+  if (required > liveBalance) throw new Error(INSUFFICIENT_BALANCE_MESSAGE);
+}
 
 /** One booked installment row, trimmed for the paid-state UI. */
 export interface RuleOccurrence {
@@ -144,6 +187,11 @@ async function advanceRuleChain(
   return Boolean(data);
 }
 
+/** True when the RPC itself isn't deployed yet (migration not applied server-side). */
+function isMissingFunctionError(error: { code?: string; message?: string }): boolean {
+  return error.code === 'PGRST202' || error.code === '42883' || /function .* does not exist/i.test(error.message ?? '');
+}
+
 export async function createRecurringRule(userId: string, input: {
   amount: number;
   category_id: string;
@@ -168,12 +216,49 @@ export async function createRecurringRule(userId: string, input: {
       throw new Error('Custom cycle needs a repeat length of 1–365 days.');
     }
   }
+  let bankAccountId = input.bank_account_id ?? null;
+  const accounts = await listBankAccounts(userId);
+  if (accounts.length === 0) {
+    throw new Error('No bank account or wallet exists. Add an account and balance before creating a recurring plan.');
+  }
+  if (bankAccountId && !accounts.some((a) => a.id === bankAccountId)) {
+    bankAccountId = null;
+  }
+  if (!bankAccountId) {
+    const defaultAccount = accounts.find((account) => account.is_default);
+    if (defaultAccount) {
+      bankAccountId = defaultAccount.id;
+    } else if (accounts.length > 0) {
+      const [{ items: expenses }, transfers] = await Promise.all([
+        listExpenses(userId, 0, { fetchAll: true }),
+        listTransfers(userId),
+      ]);
+      const balances = await computeAccountBalances(accounts, expenses, transfers);
+      const usage = new Map<string, number>();
+      for (const expense of expenses) {
+        if (expense.bank_account_id) {
+          usage.set(expense.bank_account_id, (usage.get(expense.bank_account_id) || 0) + 1);
+        }
+      }
+      bankAccountId = [...balances]
+        .sort((a, b) => {
+          const balanceDiff = Number(b.live_balance) - Number(a.live_balance);
+          if (balanceDiff !== 0) return balanceDiff;
+          return (usage.get(b.id) || 0) - (usage.get(a.id) || 0);
+        })[0]?.id ?? null;
+    }
+  }
+  if (!bankAccountId) {
+    throw new Error('No bank account or wallet exists. Add an account and balance before creating a recurring plan.');
+  }
+  await assertRecurringPaymentCanProceed(userId, bankAccountId, amount, input.currency || 'USD', input.next_due_date);
   const snapshot = await getRate(input.currency || 'USD', input.next_due_date).catch(() => undefined);
   const { data, error } = await supabase
     .from('recurring_rules')
     .insert({
       user_id: userId,
       ...input,
+      bank_account_id: bankAccountId,
       amount,
       description: input.description?.trim().slice(0, 500) || null,
       interval_days: input.frequency === 'custom' ? input.interval_days ?? null : null,
@@ -223,6 +308,17 @@ export async function updateRecurringRule(
     const days = Number(input.interval_days);
     if (!Number.isInteger(days) || days < 1 || days > 365) {
       throw new Error('Custom cycle needs a repeat length of 1–365 days.');
+    }
+  }
+  if (userId) {
+    const accounts = await listBankAccounts(userId);
+    if (accounts.length === 0) {
+      throw new Error(NO_ACCOUNT_MESSAGE);
+    }
+    if (input.bank_account_id !== undefined) {
+      if (!input.bank_account_id || !accounts.some((a) => a.id === input.bank_account_id)) {
+        throw new Error(NO_ACCOUNT_MESSAGE);
+      }
     }
   }
   // Ownership is enforced by RLS; the explicit user scope is defense in depth.
@@ -286,6 +382,8 @@ export async function deleteRecurringRule(id: string, userId?: string | null) {
  * explicit markOccurrencePaid() tap, so no row exists until money actually left.
  */
 export async function generateDueRecurringExpenses(userId: string) {
+  const accounts = await listBankAccounts(userId);
+  if (accounts.length === 0) return 0;
   const rules = await listRecurringRules(userId);
   const today = new Date();
   let generated = 0;
@@ -293,12 +391,22 @@ export async function generateDueRecurringExpenses(userId: string) {
   for (const rule of rules.filter(
     (item) => item.is_active && (item.mode ?? 'auto_charge') === 'auto_charge',
   )) {
+    if (!rule.bank_account_id || !accounts.some((a) => a.id === rule.bank_account_id)) continue;
     // 1. Collect every due occurrence slot for this rule before touching the
-    //    network. The global cap matches the previous serial loop.
+    //    network. ONE balance context is loaded per rule and shared by every
+    //    slot check (the data is identical across iterations — nothing is
+    //    inserted between them), instead of a full-table fetch per slot.
+    const context = await loadRecurringBalanceContext(userId);
     const dueSlots: string[] = [];
     let cursor = parseISO(rule.next_due_date);
     while (!isBefore(today, cursor) && generated + dueSlots.length < 100) {
-      dueSlots.push(format(cursor, 'yyyy-MM-dd'));
+      const slotDate = format(cursor, 'yyyy-MM-dd');
+      try {
+        await assertRecurringPaymentCanProceed(userId, rule.bank_account_id, Number(rule.amount), rule.currency || 'USD', slotDate, context);
+        dueSlots.push(slotDate);
+      } catch {
+        break;
+      }
       cursor = nextDate(cursor, rule.frequency, rule.interval_days);
     }
     if (dueSlots.length === 0) continue;
@@ -373,9 +481,17 @@ export async function markOccurrencePaid(
     .single();
   if (ruleError) throw ruleError;
   const rule = ruleRow as RecurringRule;
+  if (!rule.bank_account_id) {
+    throw new Error(NO_ACCOUNT_MESSAGE);
+  }
+  const accounts = await listBankAccounts(userId);
+  if (!accounts.some((a) => a.id === rule.bank_account_id)) {
+    throw new Error(NO_ACCOUNT_MESSAGE);
+  }
 
   const slot = rule.next_due_date;
   const paymentDate = paidDate ?? format(new Date(), 'yyyy-MM-dd');
+  await assertRecurringPaymentCanProceed(userId, rule.bank_account_id, Number(rule.amount), rule.currency || 'USD', paymentDate);
   const lateDays = Math.max(
     0,
     Math.round((parseISO(paymentDate).getTime() - parseISO(slot).getTime()) / 86_400_000),
@@ -417,13 +533,40 @@ export async function markOccurrencePaid(
 }
 
 /**
- * Skips the current slot without booking money: the chain moves forward one
- * position and this installment simply never exists in the ledger.
+ * Skips the current cycle without keeping money in the ledger. Runs through
+ * the server-side skip_recurring_occurrence RPC (migration 20261027030000),
+ * which is atomic against the nightly auto-charge poster: an open slot just
+ * advances the chain, and if the poster already booked this slot the booking
+ * is removed in the same transaction (cancelled_booking = true). Falls back
+ * to the client-side chain advance when the RPC isn't deployed yet — in that
+ * state the slot is always unbooked here, because the Skip button only shows
+ * for open slots and the legacy path never touches bookings.
  */
 export async function skipCurrentOccurrence(
   userId: string,
   ruleId: string,
-): Promise<{ rule: RecurringRule; skippedSlot: string }> {
+): Promise<{ rule: RecurringRule; skippedSlot: string; cancelledBooking?: boolean }> {
+  const { data: rpcData, error: rpcError } = await supabase
+    .rpc('skip_recurring_occurrence', { p_rule_id: ruleId });
+  if (!rpcError) {
+    const result = (rpcData ?? null) as { skipped_slot?: string; cancelled_booking?: boolean } | null;
+    if (!result?.skipped_slot) {
+      throw new Error('Only the most recent cycle can be skipped.');
+    }
+    const { data: updated, error: fetchError } = await supabase
+      .from('recurring_rules')
+      .select(selection)
+      .eq('id', ruleId)
+      .single();
+    if (fetchError) throw fetchError;
+    return {
+      rule: updated as RecurringRule,
+      skippedSlot: result.skipped_slot,
+      cancelledBooking: result.cancelled_booking ?? false,
+    };
+  }
+  if (!isMissingFunctionError(rpcError)) throw rpcError;
+
   const { data: ruleRow, error } = await supabase
     .from('recurring_rules')
     .select(selection)
@@ -439,10 +582,39 @@ export async function skipCurrentOccurrence(
   const { data: updated, error: fetchError } = await supabase
     .from('recurring_rules')
     .select(selection)
-    .eq('id', rule.id)
+    .eq('id', ruleId)
     .single();
   if (fetchError) throw fetchError;
   return { rule: updated as RecurringRule, skippedSlot: slot };
+}
+
+/**
+ * Removes an already-BOOKED auto_charge installment (the nightly poster or a
+ * device booked it and moved the chain past it): deletes the occurrence and
+ * keeps the chain forward, so the cycle is cancelled — the poster will not
+ * re-book it. Returns null when the newest booking isn't the one the chain
+ * just stepped off (older history stays). pay_on_due bookings use
+ * undoLatestOccurrencePayment instead — their money really moved, so
+ * re-opening the slot is the correct lever, not silent cancellation.
+ */
+export async function cancelRecurringOccurrence(
+  userId: string,
+  ruleId: string,
+): Promise<{ rule: RecurringRule; cancelledSlot: string } | null> {
+  const { data: rpcData, error } = await supabase
+    .rpc('skip_recurring_occurrence', { p_rule_id: ruleId });
+  if (error) throw error;
+  const result = (rpcData ?? null) as { skipped_slot?: string; cancelled_booking?: boolean } | null;
+  if (!result?.skipped_slot || !result.cancelled_booking) return null;
+
+  const { data: updated, error: fetchError } = await supabase
+    .from('recurring_rules')
+    .select(selection)
+    .eq('id', ruleId)
+    .eq('user_id', userId)
+    .single();
+  if (fetchError) throw fetchError;
+  return { rule: updated as RecurringRule, cancelledSlot: result.skipped_slot };
 }
 
 /**

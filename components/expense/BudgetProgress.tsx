@@ -20,6 +20,7 @@ import {
 } from 'lucide-react-native';
 import { CategoryBudgetFormModal } from '@/components/expense/CategoryBudgetFormModal';
 import { Card } from '@/components/ui/Card';
+import { CategoryIcon } from '@/components/ui/CategoryIcon';
 import { Text } from '@/components/ui/Text';
 import { useAuth } from '@/hooks/useAuth';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
@@ -257,7 +258,7 @@ export function BudgetProgress({
                         justifyContent: 'center',
                       }}
                     >
-                      <Text style={{ fontSize: 16 }}>{category.icon}</Text>
+                      <CategoryIcon name={category.icon} size={16} color={theme.colors.text} />
                     </View>
                     <View style={{ flex: 1 }}>
                       <Text style={{ fontSize: 13, fontWeight: '800', color: theme.colors.text }} numberOfLines={1}>

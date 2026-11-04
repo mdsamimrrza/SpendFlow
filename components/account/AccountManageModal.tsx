@@ -62,6 +62,8 @@ interface AccountManageModalProps {
   onClose: () => void;
   onSaved: () => void;
   accountToEdit?: BankAccount | null;
+  /** Live account list — lets the modal guard against duplicate names. */
+  existingAccounts?: BankAccount[];
 }
 
 export function AccountManageModal({
@@ -69,6 +71,7 @@ export function AccountManageModal({
   onClose,
   onSaved,
   accountToEdit,
+  existingAccounts,
 }: AccountManageModalProps) {
   const theme = useTheme();
   const { profile, session } = useAuth();

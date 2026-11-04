@@ -34,8 +34,10 @@ import { FinancialHealthScoreCard } from '@/components/expense/FinancialHealthSc
 import { FinancialInsights } from '@/components/expense/FinancialInsights';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { CategoryIcon } from '@/components/ui/CategoryIcon';
 import { PrivacyEyeButton } from '@/components/ui/PrivacyEyeButton';
 import { Text } from '@/components/ui/Text';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
 import { CalendarModal, DateRange } from '@/components/ui/CalendarModal';
 import { useAuth } from '@/hooks/useAuth';
@@ -224,6 +226,13 @@ export default function AnalyticsScreen() {
         />
       }
     >
+      {expenses.error ? (
+        <ErrorBanner
+          message={t('expenses_error') || "Couldn't load your expenses. Tap to retry."}
+          retryLabel={t('common_retry') || 'Retry'}
+          onRetry={() => void expenses.refresh(true)}
+        />
+      ) : null}
       {/* ── 1. TOP APP BAR ── */}
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
         <View style={{ gap: 2 }}>
@@ -609,9 +618,16 @@ export default function AnalyticsScreen() {
                   <Text variant="h2" style={{ fontSize: 20, fontWeight: '800', fontVariant: ['tabular-nums'], color: theme.colors.text }}>
                     {peakItem ? formatMoney(peakItem.amount, preferredCurrency) : '—'}
                   </Text>
-                  <Text variant="caption" muted style={{ fontSize: 11 }} numberOfLines={1}>
-                    {peakItem ? `${peakItem.expense.categories?.icon || '💳'} ${peakItem.expense.description || peakItem.expense.categories?.name || 'Expense'}` : 'No purchases'}
-                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <CategoryIcon
+                      name={peakItem ? peakItem.expense.categories?.icon || '💳' : '💳'}
+                      size={13}
+                      color={theme.colors.textMuted}
+                    />
+                    <Text variant="caption" muted style={{ fontSize: 11, flexShrink: 1 }} numberOfLines={1}>
+                      {peakItem ? peakItem.expense.description || peakItem.expense.categories?.name || 'Expense' : 'No purchases'}
+                    </Text>
+                  </View>
                 </Card>
               </Pressable>
 

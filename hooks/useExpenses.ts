@@ -162,6 +162,7 @@ export function useExpenses(userId?: string, filters?: ExpenseFilters, sort: Sor
   const [error, setError] = useState<string | null>(null);
   const loadingPage = useRef(false);
   const lastLoadedAt = useRef(0);
+  const seq = useRef(0);
 
   const loadPage = useCallback(
     async (pageToLoad = 0, replace = false) => {
@@ -170,6 +171,7 @@ export function useExpenses(userId?: string, filters?: ExpenseFilters, sort: Sor
         return;
       }
       loadingPage.current = true;
+      const requestSeq = ++seq.current;
       setError(null);
       if (pageToLoad === 0 && !replace) setRefreshing(true);
       else if (pageToLoad > 0) setLoadingMore(true);
@@ -194,24 +196,38 @@ export function useExpenses(userId?: string, filters?: ExpenseFilters, sort: Sor
       }
 
       try {
+        // requestSeq was stamped at entry (above): a newer request (filter
+        // change, refresh) supersedes any in-flight older one — without the
+        // token, a slow response from the OLD filter could resolve after the
+        // new one and overwrite the list with stale-filter data.
         const pageData = await listExpenses(userId, pageToLoad, filters, sort);
+        if (requestSeq !== seq.current) return;
         // Always replace on page 0 (fresh fetch), append on subsequent pages
         setItems((current) => (replace || pageToLoad === 0 ? pageData.items : [...current, ...pageData.items]));
         setHasMore(pageData.hasMore);
         setPage(pageToLoad);
         if (pageToLoad === 0) lastLoadedAt.current = Date.now();
       } catch (err) {
-        // Only fall back to cache on initial load (page 0)
-        if (pageToLoad === 0) {
+        if (seq.current !== requestSeq) {
+          // superseded — leave state to the newer request
+        } else if (pageToLoad === 0) {
+          // Only fall back to cache on initial load (page 0). The cache is
+          // run through the active filters/sort exactly like the paint path —
+          // painting it raw once showed deleted and other-filter rows.
           const cached = await getCachedExpenses(userId);
-          if (cached.length) setItems(cached);
+          const filtered = filterAndSortCachedExpenses(cached, filters, sort);
+          if (filtered.length) setItems(filtered);
         }
-        setError(err instanceof Error ? err.message : 'Could not load expenses.');
+        if (seq.current === requestSeq) {
+          setError(err instanceof Error ? err.message : 'Could not load expenses.');
+        }
       } finally {
-        loadingPage.current = false;
-        setLoading(false);
-        setLoadingMore(false);
-        setRefreshing(false);
+        if (seq.current === requestSeq) {
+          loadingPage.current = false;
+          setLoading(false);
+          setLoadingMore(false);
+          setRefreshing(false);
+        }
       }
     },
     [filterKey, sort, userId],

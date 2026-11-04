@@ -1,5 +1,7 @@
+import { useLocalSearchParams } from 'expo-router';
 import { ExpenseForm } from '@/components/expense/ExpenseForm';
 
 export default function AddExpenseScreen() {
-  return <ExpenseForm />;
+  const params = useLocalSearchParams<{ recurringRuleId?: string }>();
+  return <ExpenseForm recurringRuleId={params.recurringRuleId} />;
 }

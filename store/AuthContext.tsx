@@ -1,4 +1,5 @@
 import { Session } from '@supabase/supabase-js';
+import { Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, PropsWithChildren, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as Linking from 'expo-linking';
@@ -119,6 +120,7 @@ async function handleOAuthUrl(url: string, onRecovery?: () => void) {
 
 export function AuthProvider({ children }: PropsWithChildren) {
   const [session, setSession] = useState<Session | null>(null);
+  const sessionRef = useRef<Session | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const userId = session?.user?.id ?? null;
@@ -139,6 +141,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
    *  biometric quick unlock + the normal Google/password form). A session
    *  disappearing (signed out elsewhere / expired) drops the soft-lock. */
   const applySession = useCallback((next: Session | null) => {
+    sessionRef.current = next;
     if (softLockedRef.current && next) {
       rememberedSessionRef.current = next;
       setSession(null);
@@ -390,6 +393,14 @@ export function AuthProvider({ children }: PropsWithChildren) {
         setSession(nextSession);
         setLoading(false);
         return;
+      }
+      // Audit 2026-10-27 (A15): a session that dies WITHOUT the user signing
+      // out (server-side revocation, refresh-token failure) used to just
+      // null out — the app "logged itself out" silently. Say so.
+      if (event === 'SIGNED_OUT' && sessionRef.current) {
+        // Server-side revocation / refresh failure — tell the user instead of
+        // silently dropping them on the login screen.
+        Alert.alert('Session expired', 'Please sign in again.');
       }
       applySession(nextSession);
       setLoading(false);

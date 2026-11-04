@@ -23,6 +23,7 @@ import {
 } from 'lucide-react-native';
 import { AccountManageModal } from '@/components/account/AccountManageModal';
 import { Button } from '@/components/ui/Button';
+import { useDiscardGuard } from '@/hooks/useDiscardGuard';
 import { CategoryIcon } from '@/components/ui/CategoryIcon';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Text } from '@/components/ui/Text';
@@ -180,7 +181,14 @@ export default function TransferScreen() {
     if (toOpen) setToOpen(false);
   };
 
+  const isFormDirty = Boolean((Number(rawAmount) || 0) > 0 || notes.trim());
+  useDiscardGuard(isFormDirty, () => {
+    if (router.canGoBack()) router.back();
+    else router.replace('/');
+  });
   const handleBack = () => {
+    if (isFormDirty) return; // discard guard Alert drives the exit
+
     if (router.canGoBack()) {
       router.back();
     } else {

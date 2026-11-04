@@ -2,17 +2,16 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Pressable, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { AlertCircle, ArrowRight, CheckCircle2 } from 'lucide-react-native';
+import { CategoryIcon } from '@/components/ui/CategoryIcon';
 import { PressableScale } from '@/components/ui/PressableScale';
 import { showToast } from '@/components/ui/Toast';
 import { Text } from '@/components/ui/Text';
 import { useAuth } from '@/hooks/useAuth';
-import { notifyExpensesChanged } from '@/hooks/useExpenses';
 import { useLanguage } from '@/hooks/useLanguage';
 import { useTheme } from '@/hooks/useTheme';
 import {
   listRecurringRules,
   listRuleOccurrences,
-  markOccurrencePaid,
   RuleOccurrence,
 } from '@/services/recurring';
 import { RecurringRule } from '@/types';
@@ -81,10 +80,10 @@ export function BillsDueStrip() {
     if (!userId) return;
     setBusyId(rule.id);
     try {
-      await markOccurrencePaid(userId, rule.id);
-      notifyExpensesChanged();
-      showToast({ message: t('recurring_marked_paid') || 'Payment recorded', type: 'success' });
-      await load();
+      router.push({
+        pathname: '/expense/add',
+        params: { recurringRuleId: rule.id },
+      });
     } catch (err) {
       showToast({
         message: err instanceof Error ? err.message : t('common_error'),
@@ -161,7 +160,7 @@ export function BillsDueStrip() {
             borderTopColor: theme.colors.border,
           }}
         >
-          <Text style={{ fontSize: 18 }}>{rule.categories?.icon || '💳'}</Text>
+          <CategoryIcon name={rule.categories?.icon || '💳'} size={18} color={theme.colors.text} />
           <View style={{ flex: 1, gap: 1, minWidth: 0 }}>
             <Text numberOfLines={1} style={{ fontSize: 13.5, fontWeight: '800', color: theme.colors.text }}>
               {rule.description || rule.categories?.name || 'Subscription'}

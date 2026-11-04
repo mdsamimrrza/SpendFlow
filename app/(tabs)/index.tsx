@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Easing, FlatList, Pressable, RefreshControl, View } from 'react-native';
+import { Alert, Animated, Easing, FlatList, Pressable, RefreshControl, View } from 'react-native';
 import { Link, useFocusEffect, useRouter } from 'expo-router';
 import { ArrowRight, Plus, ReceiptText } from 'lucide-react-native';
 import { Avatar } from '@/components/ui/Avatar';
@@ -8,6 +8,7 @@ import { BillsDueStrip } from '@/components/expense/BillsDueStrip';
 import { WeeklyDigest } from '@/components/expense/WeeklyDigest';
 import { CategoryBreakdown } from '@/components/expense/Charts';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { ExpenseItem } from '@/components/expense/ExpenseItem';
 import { PressableScale } from '@/components/ui/PressableScale';
 import { ProfileQuickCard } from '@/components/ui/ProfileQuickCard';
@@ -28,6 +29,7 @@ import { usePrivacyScreen } from '@/hooks/usePrivacyScreen';
 import { useTheme } from '@/hooks/useTheme';
 import * as Haptics from 'expo-haptics';
 import { showToast } from '@/components/ui/Toast';
+import { listBankAccounts } from '@/services/bankAccounts';
 import { currentMonthRange, getCycleMeta, getCycleLabel, getMonthlyBudget, isoDate, sumExpenses, formatMoney } from '@/utils/format';
 import { CURRENCY_DETAILS } from '@/constants/app';
 
@@ -86,12 +88,30 @@ export default function HomeScreen() {
       .slice(0, 4);
   }, [expenses.items, preferredCurrency, theme.colors.primary]);
 
+  const quickPickBusy = useRef(false);
   const handleQuickPick = useCallback(
     (tpl: QuickTemplate) => {
+      if (quickPickBusy.current) return;
+      quickPickBusy.current = true;
       setQuickAddOpen(false);
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
       void (async () => {
         try {
+          const uid = profile?.id ?? session?.user?.id;
+          if (!uid) return;
+          const userAccounts = await listBankAccounts(uid);
+          if (userAccounts.length === 0) {
+            Alert.alert(
+              t('expense_no_account_title') || 'No Account Found',
+              t('expense_no_account'),
+              [
+                { text: t('common_cancel'), style: 'cancel' },
+                { text: t('expense_add_account'), onPress: () => router.push('/accounts' as any) },
+              ],
+            );
+            return;
+          }
+          const defaultAcct = userAccounts.find((a) => a.is_default) || userAccounts[0];
           await expenses.save({
             amount: tpl.amount,
             category_id: tpl.category_id,
@@ -100,16 +120,18 @@ export default function HomeScreen() {
             date: isoDate(),
             time: null,
             payment_method: tpl.payment_method,
-            bank_account_id: null,
+            bank_account_id: defaultAcct.id,
             type: 'expense',
           });
           showToast({ message: t('quick_add_done'), type: 'success' });
         } catch (err) {
           showToast({ message: err instanceof Error ? err.message : t('common_error'), type: 'error' });
+        } finally {
+          quickPickBusy.current = false;
         }
       })();
     },
-    [expenses.save, t],
+    [expenses.save, profile?.id, session?.user?.id, router, t],
   );
 
 
@@ -171,6 +193,24 @@ export default function HomeScreen() {
     (expense: import('@/types').Expense) => {
       void (async () => {
         try {
+          const uid = profile?.id ?? session?.user?.id;
+          if (!uid) return;
+          const userAccounts = await listBankAccounts(uid);
+          if (userAccounts.length === 0) {
+            Alert.alert(
+              t('expense_no_account_title') || 'No Account Found',
+              t('expense_no_account'),
+              [
+                { text: t('common_cancel'), style: 'cancel' },
+                { text: t('expense_add_account'), onPress: () => router.push('/accounts' as any) },
+              ],
+            );
+            return;
+          }
+          const validAccountId = userAccounts.some((a) => a.id === expense.bank_account_id)
+            ? expense.bank_account_id
+            : (userAccounts.find((a) => a.is_default)?.id || userAccounts[0]?.id || null);
+
           await expenses.save({
             amount: Number(expense.amount) || 0,
             category_id: expense.category_id,
@@ -179,7 +219,7 @@ export default function HomeScreen() {
             date: isoDate(),
             time: null,
             payment_method: expense.payment_method,
-            bank_account_id: expense.bank_account_id ?? null,
+            bank_account_id: validAccountId,
             notes: expense.notes ?? null,
             type: expense.type ?? 'expense',
           });
@@ -189,7 +229,18 @@ export default function HomeScreen() {
         }
       })();
     },
-    [expenses.save, t],
+    [expenses.save, profile?.id, session?.user?.id, router, t],
+  );
+
+  const handleDeleteRecent = useCallback(
+    (expense: import('@/types').Expense) => {
+      void expenses.remove(expense.id)
+        .then(() => showToast({ message: t('bin_moved_toast'), type: 'success' }))
+        .catch((err) => {
+          showToast({ message: err instanceof Error ? err.message : t('common_error'), type: 'error' });
+        });
+    },
+    [expenses.remove, t],
   );
 
   // Budget ratio for BudgetLimitHeroCard: convert both expenses and budget to the budget's currency
@@ -338,13 +389,22 @@ export default function HomeScreen() {
             refreshing={expenses.refreshing}
             onRefresh={() => {
               void (async () => {
+                let synced = false;
                 try {
                   await Promise.all([refreshProfile(true), expenses.refresh(true)]);
+                  synced = !expenses.error;
                 } catch {
-                  // Refresh is best-effort — the toast still confirms the gesture.
+                  // Refresh is best-effort — errors surface via expenses.error.
                 }
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
-                showToast({ message: t('home_synced'), type: 'success' });
+                if (synced) {
+                  showToast({ message: t('home_synced'), type: 'success' });
+                } else {
+                  showToast({
+                    message: t('offline_banner') || "You're offline — showing saved data",
+                    type: 'error',
+                  });
+                }
               })();
             }}
             tintColor={theme.colors.primary}
@@ -440,7 +500,13 @@ export default function HomeScreen() {
             </View>
           </View>
         }
-        renderItem={({ item }) => <ExpenseItem expense={item} onDuplicate={handleDuplicateRecent} />}
+        renderItem={({ item }) => (
+          <ExpenseItem
+            expense={item}
+            onDelete={handleDeleteRecent}
+            onDuplicate={handleDuplicateRecent}
+          />
+        )}
         ListFooterComponent={
           expenses.items.length > 3 ? (
             <Link href="/history" asChild>
@@ -468,7 +534,13 @@ export default function HomeScreen() {
           ) : null
         }
         ListEmptyComponent={
-          (expenses.items.length === 0) ? (
+          (expenses.error && expenses.items.length === 0) ? (
+            <ErrorBanner
+              message={t('expenses_error') || "Couldn't load your expenses. Tap to retry."}
+              retryLabel={t('common_retry') || 'Retry'}
+              onRetry={() => void expenses.refresh(true)}
+            />
+          ) : (expenses.items.length === 0) ? (
             <EmptyState
               icon={ReceiptText}
               title={t('home_no_expenses_title')}
