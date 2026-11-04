@@ -108,18 +108,26 @@ jobs:
       - name: Fetch built APK from EAS
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EXPECTED_SHA: ${{ github.sha }}
         run: |
-          eas build:list --platform android --profile website --non-interactive --limit 1 --json > build.json
-          ARTIFACT_URL=$(jq -r '.[0].artifact.buildUrl // empty' build.json)
-          BUILD_STATUS=$(jq -r '.[0].status' build.json)
-          test "$BUILD_STATUS" = "FINISHED" || { echo "EAS build not FINISHED (status: $BUILD_STATUS)"; exit 1; }
-          test -n "$ARTIFACT_URL" || { echo "No artifact URL on the latest build"; exit 1; }
-          curl -L --fail --max-time 600 -o spendFlow.apk "$ARTIFACT_URL"
-          # Sanity: real APK = zip magic + sane size
-          head -c 2 spendFlow.apk | grep -q "PK" || { echo "Downloaded file is not an APK"; exit 1; }
-          SIZE=$(stat -c %s spendFlow.apk)
-          test "$SIZE" -gt 10000000 || { echo "APK suspiciously small ($SIZE bytes)"; exit 1; }
-          echo "APK size: $SIZE bytes"
+          # The artifact URL can lag behind build completion on EAS's API —
+          # poll for the FINISHED build of THIS commit (never the previous one).
+          for i in 1 2 3 4 5 6; do
+            eas build:list --platform android --profile website --non-interactive --limit 5 --json > build.json
+            ARTIFACT_URL=$(jq -r --arg sha "$EXPECTED_SHA" '[.[] | select(.gitCommitHash == $sha and .status == "FINISHED")][0].artifact.buildUrl // empty' build.json)
+            if [ -n "$ARTIFACT_URL" ]; then
+              echo "Found FINISHED artifact for $EXPECTED_SHA (attempt $i)"
+              curl -L --fail --max-time 600 -o spendFlow.apk "$ARTIFACT_URL"
+              head -c 2 spendFlow.apk | grep -q "PK" || { echo "Downloaded file is not an APK"; exit 1; }
+              SIZE=$(stat -c %s spendFlow.apk)
+              test "$SIZE" -gt 10000000 || { echo "APK suspiciously small ($SIZE bytes)"; exit 1; }
+              echo "APK size: $SIZE bytes"
+              exit 0
+            fi
+            echo "attempt $i: no FINISHED artifact for $EXPECTED_SHA yet - waiting 60s"
+            sleep 60
+          done
+          echo "No FINISHED artifact for commit $EXPECTED_SHA after 6 attempts"; exit 1
 
       - name: Publish APK to Supabase Storage (spendFlow_apk/spendFlow.apk)
         env:
